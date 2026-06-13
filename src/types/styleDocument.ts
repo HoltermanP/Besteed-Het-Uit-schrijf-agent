@@ -55,4 +55,6 @@ export const acceptedStyleExtensions = [
   '.txt',
   '.md',
   '.csv',
+  '.html',
+  '.htm',
 ]

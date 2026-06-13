@@ -15,6 +15,9 @@
     "api/style-documents.js": {
       "maxDuration": 30,
       "includeFiles": "node_modules/.prisma/client/**"
+    },
+    "api/extract-text.js": {
+      "maxDuration": 30
     }
   }
 }

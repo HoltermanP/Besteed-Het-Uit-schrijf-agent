@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -13,6 +13,9 @@ import {
 } from 'lucide-react'
 import { getCompanyConfig, saveCompanyConfig } from '../lib/companyConfig'
 import { enrichCompanyFromWebsite } from '../lib/companyEnrichApi'
+import { readFileContent } from '../lib/extractTextApi'
+import FileUploadZone from '../components/FileUploadZone'
+import { acceptedStyleExtensions } from '../types/styleDocument'
 import type { CompanyConfig, CompanyFile } from '../types/companyConfig'
 import type { CompanyEnrichFields } from '../types/companyEnrich'
 import '../Admin.css'
@@ -25,7 +28,8 @@ export default function ConfigPage() {
   const [saved, setSaved] = useState(false)
   const [enriching, setEnriching] = useState(false)
   const [enrichStatus, setEnrichStatus] = useState('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [uploadingFiles, setUploadingFiles] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState('')
 
   const update = (patch: Partial<CompanyConfig>) => {
     setConfig((current) => ({ ...current, ...patch }))
@@ -41,16 +45,34 @@ export default function ConfigPage() {
 
   const handleFileUpload = async (files: FileList | null) => {
     if (!files?.length) return
-    const loaded: CompanyFile[] = await Promise.all(
-      Array.from(files).map(async (file) => ({
-        id: makeId(),
-        name: file.name,
-        content: await file.text(),
-        uploadedAt: new Date().toISOString(),
-      })),
-    )
-    update({ files: [...config.files, ...loaded] })
-    if (fileInputRef.current) fileInputRef.current.value = ''
+    setUploadingFiles(true)
+    setUploadStatus('Bestanden worden uitgelezen…')
+
+    const loaded: CompanyFile[] = []
+    const errors: string[] = []
+
+    for (const file of Array.from(files)) {
+      try {
+        const extracted = await readFileContent(file)
+        loaded.push({
+          id: makeId(),
+          name: file.name,
+          content: extracted.text,
+          uploadedAt: new Date().toISOString(),
+        })
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : `${file.name}: upload mislukt`)
+      }
+    }
+
+    if (loaded.length) {
+      update({ files: [...config.files, ...loaded] })
+      setUploadStatus(`${loaded.length} document(en) toegevoegd.`)
+    }
+    if (errors.length) {
+      setUploadStatus(errors.join(' · '))
+    }
+    setUploadingFiles(false)
   }
 
   const removeFile = (id: string) => {
@@ -235,19 +257,18 @@ export default function ConfigPage() {
             <Upload size={20} />
             <div>
               <h2>Documenten uploaden</h2>
-              <p>Bedrijfsdocumenten (.txt, .md, .csv) worden als bedrijfsbron opgeslagen.</p>
+              <p>Upload bedrijfsdocumenten als bron voor de schrijfagent. PDF en Office-bestanden worden automatisch uitgelezen.</p>
             </div>
           </div>
-          <label className="config-upload">
-            <Upload size={17} /> Bestanden kiezen
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept=".txt,.md,.csv,.json,text/plain,text/markdown"
-              onChange={(event) => handleFileUpload(event.target.files)}
-            />
-          </label>
+          <FileUploadZone
+            accept={acceptedStyleExtensions}
+            loading={uploadingFiles}
+            title="Sleep bedrijfsdocumenten hierheen of klik om te uploaden"
+            hint="Brochures, profielen, referenties — tekst wordt automatisch geëxtraheerd"
+            formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 12 MB per bestand"
+            onFiles={handleFileUpload}
+          />
+          {uploadStatus ? <p className="status config-enrich-status">{uploadStatus}</p> : null}
           {config.files.length ? (
             <ul className="config-file-list">
               {config.files.map((file) => (

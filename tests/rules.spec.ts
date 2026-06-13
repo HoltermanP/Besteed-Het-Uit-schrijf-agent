@@ -16,7 +16,7 @@ test('schrijfregelspagina laadt en toont formulier', async ({ page }) => {
 
 test('navigatie vanuit werkplek naar schrijfregels', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('link', { name: 'Schrijfregels' }).click()
+  await page.locator('.config-nav-link', { hasText: 'Schrijfregels' }).click()
   await expect(page).toHaveURL(/\/schrijfregels/)
 })
 

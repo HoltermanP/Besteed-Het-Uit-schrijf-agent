@@ -4,11 +4,11 @@ import type { TenderAnalysis } from '../../src/types/tenderAnalysis'
 
 const stageInstructions: Record<WriteDraftRequest['stage'], string> = {
   brons:
-    'Schrijf een volledige eerste versie van het gevraagde inschrijfstuk. Dek alle verplichte onderwerpen af. Houd je aan de volumelimiet als die in de leidraad staat; anders schrijf uitgebreid en volledig.',
+    'Schrijf een volledige, zeer uitgebreide eerste versie van het gevraagde inschrijfstuk. Werk elk verplicht onderwerp diepgaand uit met concrete voorbeelden, werkwijze, bewijs en toetsbaarheid. Houd je STRIKT aan de volumelimiet als die in de leidraad staat; anders schrijf uitvoerig — geen samenvatting.',
   zilver:
-    'Verbeter het bestaande concept: verwerk reviewopmerkingen, versterk bewijsvoering per beoordelingscriterium en vul inhoudelijke gaten. Respecteer volumelimieten; inkort alleen als de tekst te lang is.',
+    'Verbeter en breid het bestaande concept uit: verwerk reviewopmerkingen, versterk bewijsvoering per beoordelingscriterium en vul alle inhoudelijke gaten. Respecteer volumelimieten; inkort alleen als de tekst boven het maximum zit.',
   goud:
-    'Lever de definitieve versie: binnen woord- en/of karakterlimiet, geen herhaling, elke sectie toetsbaar aan beoordelingscriteria, exportklaar HTML.',
+    'Lever de definitieve versie: volledig, concreet en exportklaar. Binnen woord- en/of karakterlimiet als die gelden; anders zeer uitgebreid zonder inhoud weg te laten.',
 }
 
 const stageLabels: Record<WriteDraftRequest['stage'], string> = {
@@ -42,8 +42,10 @@ STIJL
 
 VOLUME (cruciaal)
 - Als de leidraad een maximum aantal woorden, karakters of pagina's noemt: blijf daar STRIKT onder (tel alleen zichtbare tekst, geen HTML-tags)
-- Als er geen maximum is: schrijf alles wat nodig is om alle verplichte onderwerpen volledig te beantwoorden — uitgebreid en concreet mag
-- Geen opvulling of herhaling; elke alinea moet inhoud toevoegen
+- Als er GEEN maximum is: schrijf ZEER uitgebreid — minimaal 2500 woorden totaal, tenzij de leidraad expliciet korter vraagt
+- Per verplicht onderwerp: minimaal 4–8 alinea's met concrete werkwijze, voorbeelden, KPI's, rollen, planning en bewijs
+- Dit is een volwaardig inschrijfstuk voor een aanbesteding, geen managementsamenvatting of bullet-only tekst
+- Geen opvulling of herhaling; wel volledige uitwerking van alle eisen
 
 OUTPUT (alleen HTML, geen markdown)
 - Eén <article class="proposal-doc">…</article>
@@ -53,10 +55,10 @@ OUTPUT (alleen HTML, geen markdown)
 - Geen tekst buiten het HTML-artikel`
 
 const DOC_CHAR_LIMITS: Record<WriteDraftDocument['type'], number> = {
-  tender: 14_000,
-  company: 8_000,
-  rules: 8_000,
-  training: 8_000,
+  tender: 40_000,
+  company: 20_000,
+  rules: 20_000,
+  training: 20_000,
 }
 
 function summarizeDocument(content: string, max: number): string {
@@ -96,11 +98,14 @@ function formatVolumeLimits(analysis: TenderAnalysis): string {
 
 function buildVolumeInstruction(analysis: TenderAnalysis | null | undefined): string {
   if (!analysis || !hasVolumeLimit(analysis)) {
-    return `VOLUME — GEEN LIMIET IN LEIDRAAD
-- Er is geen maximum aantal woorden of karakters gevonden
-- Schrijf alles wat nodig is: alle verplichte onderwerpen en beoordelingscriteria volledig uitwerken
-- Wees uitgebreid, concreet en onderbouwd — kort niet af om lengte te sparen
-- Geen herhaling of opvulling; wel volledigheid`
+    const mandatoryCount = analysis?.contentRequirements?.filter((item) => item.mandatory).length ?? 0
+    const minWords = Math.max(2500, mandatoryCount * 350)
+    return `VOLUME — GEEN MAXIMUM IN LEIDRAAD (schrijf zeer uitgebreid)
+- Er is geen maximum aantal woorden of karakters gevonden in de leidraad
+- Streef naar minimaal ${minWords.toLocaleString('nl-NL')} woorden totaal — liever te uitgebreid dan te kort
+- Per verplicht onderwerp: minimaal 4–8 alinea's, met concrete werkwijze, voorbeelden, KPI's, rollen, planning en bewijs
+- Werk alle beoordelingscriteria volledig uit; geen samenvattingen of staccato bullets als enige inhoud
+- Geen herhaling of opvulling; wel volledige, diepgaande uitwerking`
   }
 
   const lines = [
@@ -140,7 +145,11 @@ function buildVolumeInstruction(analysis: TenderAnalysis | null | undefined): st
 }
 
 function formatVolumeSummary(analysis: TenderAnalysis): string {
-  if (!hasVolumeLimit(analysis)) return 'geen limiet — schrijf volledig en uitgebreid'
+  if (!hasVolumeLimit(analysis)) {
+    const mandatoryCount = analysis.contentRequirements?.filter((item) => item.mandatory).length ?? 0
+    const minWords = Math.max(2500, mandatoryCount * 350)
+    return `geen maximum — schrijf zeer uitgebreid (streef min. ${minWords.toLocaleString('nl-NL')} woorden)`
+  }
 
   const parts: string[] = []
   if (analysis.targetWordCount) parts.push(`max. ${analysis.targetWordCount} woorden`)
@@ -260,7 +269,7 @@ function buildUserPrompt(request: WriteDraftRequest): string {
 
   const currentDraftBlock = request.currentDraft?.trim()
     ? `HUIDIG CONCEPT (uitgangspunt — structuur behouden tenzij leidraad anders vereist):
-${request.currentDraft.slice(0, 14_000)}`
+${request.currentDraft.slice(0, 40_000)}`
     : ''
 
   const volumeLimited = request.analysis ? hasVolumeLimit(request.analysis) : false
@@ -269,7 +278,7 @@ ${request.currentDraft.slice(0, 14_000)}`
     request.stage === 'brons'
       ? volumeLimited
         ? 'Schrijf het volledige inschrijfstuk binnen de volumelimiet uit de leidraad.'
-        : 'Schrijf het volledige inschrijfstuk — uitgebreid, met alle verplichte onderwerpen volledig uitgewerkt.'
+        : 'Schrijf het volledige inschrijfstuk zeer uitgebreid — minimaal 2500 woorden, met alle verplichte onderwerpen diepgaand uitgewerkt.'
       : request.stage === 'zilver'
         ? 'Verbeter het huidige concept; verwerk alle open reviewopmerkingen en respecteer volumelimieten.'
         : volumeLimited
@@ -333,8 +342,8 @@ function buildChatMessages(request: WriteDraftRequest) {
 
 function chatOptions(request: WriteDraftRequest) {
   return {
-    maxTokens: 16_000,
-    timeoutMs: 180_000,
+    maxTokens: 64_000,
+    timeoutMs: 300_000,
     effort: request.stage === 'goud' ? ('xhigh' as const) : ('high' as const),
   }
 }

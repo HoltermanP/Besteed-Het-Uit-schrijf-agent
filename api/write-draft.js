@@ -260,9 +260,9 @@ function resolveAiFromRequest(requestAi, envModelKey = "WRITER_MODEL") {
 
 // api-src/_lib/writeDraft.ts
 var stageInstructions = {
-  brons: "Schrijf een volledige eerste versie van het gevraagde inschrijfstuk. Dek alle verplichte onderwerpen af. Houd je aan de volumelimiet als die in de leidraad staat; anders schrijf uitgebreid en volledig.",
-  zilver: "Verbeter het bestaande concept: verwerk reviewopmerkingen, versterk bewijsvoering per beoordelingscriterium en vul inhoudelijke gaten. Respecteer volumelimieten; inkort alleen als de tekst te lang is.",
-  goud: "Lever de definitieve versie: binnen woord- en/of karakterlimiet, geen herhaling, elke sectie toetsbaar aan beoordelingscriteria, exportklaar HTML."
+  brons: "Schrijf een volledige, zeer uitgebreide eerste versie van het gevraagde inschrijfstuk. Werk elk verplicht onderwerp diepgaand uit met concrete voorbeelden, werkwijze, bewijs en toetsbaarheid. Houd je STRIKT aan de volumelimiet als die in de leidraad staat; anders schrijf uitvoerig \u2014 geen samenvatting.",
+  zilver: "Verbeter en breid het bestaande concept uit: verwerk reviewopmerkingen, versterk bewijsvoering per beoordelingscriterium en vul alle inhoudelijke gaten. Respecteer volumelimieten; inkort alleen als de tekst boven het maximum zit.",
+  goud: "Lever de definitieve versie: volledig, concreet en exportklaar. Binnen woord- en/of karakterlimiet als die gelden; anders zeer uitgebreid zonder inhoud weg te laten."
 };
 var stageLabels = {
   brons: "Brons",
@@ -294,8 +294,10 @@ STIJL
 
 VOLUME (cruciaal)
 - Als de leidraad een maximum aantal woorden, karakters of pagina's noemt: blijf daar STRIKT onder (tel alleen zichtbare tekst, geen HTML-tags)
-- Als er geen maximum is: schrijf alles wat nodig is om alle verplichte onderwerpen volledig te beantwoorden \u2014 uitgebreid en concreet mag
-- Geen opvulling of herhaling; elke alinea moet inhoud toevoegen
+- Als er GEEN maximum is: schrijf ZEER uitgebreid \u2014 minimaal 2500 woorden totaal, tenzij de leidraad expliciet korter vraagt
+- Per verplicht onderwerp: minimaal 4\u20138 alinea's met concrete werkwijze, voorbeelden, KPI's, rollen, planning en bewijs
+- Dit is een volwaardig inschrijfstuk voor een aanbesteding, geen managementsamenvatting of bullet-only tekst
+- Geen opvulling of herhaling; wel volledige uitwerking van alle eisen
 
 OUTPUT (alleen HTML, geen markdown)
 - E\xE9n <article class="proposal-doc">\u2026</article>
@@ -304,10 +306,10 @@ OUTPUT (alleen HTML, geen markdown)
 - Geen meta-sectie over schrijfkwaliteit, stijlbibliotheek of werkwijze van het schrijven
 - Geen tekst buiten het HTML-artikel`;
 var DOC_CHAR_LIMITS = {
-  tender: 14e3,
-  company: 8e3,
-  rules: 8e3,
-  training: 8e3
+  tender: 4e4,
+  company: 2e4,
+  rules: 2e4,
+  training: 2e4
 };
 function summarizeDocument(content, max) {
   const clean = content.replace(/\s+/g, " ").trim();
@@ -331,11 +333,14 @@ function formatVolumeLimits(analysis) {
 }
 function buildVolumeInstruction(analysis) {
   if (!analysis || !hasVolumeLimit(analysis)) {
-    return `VOLUME \u2014 GEEN LIMIET IN LEIDRAAD
-- Er is geen maximum aantal woorden of karakters gevonden
-- Schrijf alles wat nodig is: alle verplichte onderwerpen en beoordelingscriteria volledig uitwerken
-- Wees uitgebreid, concreet en onderbouwd \u2014 kort niet af om lengte te sparen
-- Geen herhaling of opvulling; wel volledigheid`;
+    const mandatoryCount = analysis?.contentRequirements?.filter((item) => item.mandatory).length ?? 0;
+    const minWords = Math.max(2500, mandatoryCount * 350);
+    return `VOLUME \u2014 GEEN MAXIMUM IN LEIDRAAD (schrijf zeer uitgebreid)
+- Er is geen maximum aantal woorden of karakters gevonden in de leidraad
+- Streef naar minimaal ${minWords.toLocaleString("nl-NL")} woorden totaal \u2014 liever te uitgebreid dan te kort
+- Per verplicht onderwerp: minimaal 4\u20138 alinea's, met concrete werkwijze, voorbeelden, KPI's, rollen, planning en bewijs
+- Werk alle beoordelingscriteria volledig uit; geen samenvattingen of staccato bullets als enige inhoud
+- Geen herhaling of opvulling; wel volledige, diepgaande uitwerking`;
   }
   const lines = [
     "VOLUME \u2014 HARDE LIMIET (niet overschrijden)",
@@ -367,7 +372,11 @@ function buildVolumeInstruction(analysis) {
   return lines.join("\n");
 }
 function formatVolumeSummary(analysis) {
-  if (!hasVolumeLimit(analysis)) return "geen limiet \u2014 schrijf volledig en uitgebreid";
+  if (!hasVolumeLimit(analysis)) {
+    const mandatoryCount = analysis.contentRequirements?.filter((item) => item.mandatory).length ?? 0;
+    const minWords = Math.max(2500, mandatoryCount * 350);
+    return `geen maximum \u2014 schrijf zeer uitgebreid (streef min. ${minWords.toLocaleString("nl-NL")} woorden)`;
+  }
   const parts = [];
   if (analysis.targetWordCount) parts.push(`max. ${analysis.targetWordCount} woorden`);
   if (analysis.targetCharCount) {
@@ -457,9 +466,9 @@ function buildUserPrompt(request) {
   const openComments = request.comments.filter((comment) => !comment.resolved).map((comment) => `- Fragment: ${comment.fragment}
   Opmerking: ${comment.note}`).join("\n");
   const currentDraftBlock = request.currentDraft?.trim() ? `HUIDIG CONCEPT (uitgangspunt \u2014 structuur behouden tenzij leidraad anders vereist):
-${request.currentDraft.slice(0, 14e3)}` : "";
+${request.currentDraft.slice(0, 4e4)}` : "";
   const volumeLimited = request.analysis ? hasVolumeLimit(request.analysis) : false;
-  const stageTask = request.stage === "brons" ? volumeLimited ? "Schrijf het volledige inschrijfstuk binnen de volumelimiet uit de leidraad." : "Schrijf het volledige inschrijfstuk \u2014 uitgebreid, met alle verplichte onderwerpen volledig uitgewerkt." : request.stage === "zilver" ? "Verbeter het huidige concept; verwerk alle open reviewopmerkingen en respecteer volumelimieten." : volumeLimited ? "Finaliseer het concept: binnen woord- en/of karakterlimiet, exportklaar." : "Finaliseer het concept: volledig en uitgebreid, zonder inhoud weg te laten.";
+  const stageTask = request.stage === "brons" ? volumeLimited ? "Schrijf het volledige inschrijfstuk binnen de volumelimiet uit de leidraad." : "Schrijf het volledige inschrijfstuk zeer uitgebreid \u2014 minimaal 2500 woorden, met alle verplichte onderwerpen diepgaand uitgewerkt." : request.stage === "zilver" ? "Verbeter het huidige concept; verwerk alle open reviewopmerkingen en respecteer volumelimieten." : volumeLimited ? "Finaliseer het concept: binnen woord- en/of karakterlimiet, exportklaar." : "Finaliseer het concept: volledig en uitgebreid, zonder inhoud weg te laten.";
   return `Fase: ${stageLabels[request.stage]} \u2014 ${stageInstructions[request.stage]}
 
 Project:
@@ -511,8 +520,8 @@ function buildChatMessages(request) {
 }
 function chatOptions(request) {
   return {
-    maxTokens: 16e3,
-    timeoutMs: 18e4,
+    maxTokens: 64e3,
+    timeoutMs: 3e5,
     effort: request.stage === "goud" ? "xhigh" : "high"
   };
 }

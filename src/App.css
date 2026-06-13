@@ -246,6 +246,17 @@ button:hover {
   color: #991b1b;
 }
 
+.source-upload-help {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.source-upload-help a {
+  color: #164f4a;
+}
+
 .source-panel-toolbar {
   display: flex;
   justify-content: flex-end;

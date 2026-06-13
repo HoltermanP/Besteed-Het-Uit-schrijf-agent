@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 test('schrijfstijlpagina laadt en toont upload', async ({ page }) => {
   await page.goto('/schrijfstijl')
   await expect(page.getByRole('heading', { name: 'Stijlbibliotheek' })).toBeVisible()
-  await expect(page.getByText('Ondersteund: PDF, Word, PowerPoint, Excel')).toBeVisible()
+  await expect(page.getByText('PDF, Word, PowerPoint, Excel, txt, md, csv')).toBeVisible()
 })
 
 test('navigatie vanuit werkplek naar schrijfstijl', async ({ page }) => {

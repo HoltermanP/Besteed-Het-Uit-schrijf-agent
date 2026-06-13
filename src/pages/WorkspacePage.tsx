@@ -37,6 +37,9 @@ import { buildHtmlDraft } from '../lib/buildDraft'
 import { revealDraftProgressively } from '../lib/draftProgress'
 import { analyzeTenderDocuments, countCharacters, countWords, reviewAgainstAnalysis } from '../lib/tenderAnalysis'
 import { assessSourceContent } from '../lib/sourceQuality'
+import { readFileContent } from '../lib/extractTextApi'
+import FileUploadZone from '../components/FileUploadZone'
+import { acceptedStyleExtensions } from '../types/styleDocument'
 import type { TenderAnalysis } from '../types/tenderAnalysis'
 import { exportPdfFromHtml, exportWordDocument } from '../lib/documentExport'
 import { isNeonConfigured, isWriterConfigured, migrateLegacyNeonUrl } from '../lib/apiConfig'
@@ -96,8 +99,8 @@ const stageMeta: Record<
 const sourceLabels: Record<SourceType, string> = {
   tender: 'Aanbesteding',
   company: 'Bedrijfsinfo',
-  rules: 'Rules',
-  training: 'Training',
+  rules: 'Schrijfregels',
+  training: 'Schrijfstijl',
 }
 
 const initialProject: TenderProject = {
@@ -439,17 +442,17 @@ export default function WorkspacePage() {
 
     for (const file of Array.from(files)) {
       try {
-        const content = await file.text()
-        const quality = assessSourceContent(content)
+        const extracted = await readFileContent(file)
+        const quality = assessSourceContent(extracted.text)
         if (quality.quality === 'error') {
-          skipped.push(`${file.name}: geen leesbare tekst`)
+          skipped.push(`${file.name}: ${quality.label.toLowerCase()}`)
           continue
         }
         added.push({
           id: makeId(),
           name: file.name,
           type: activeType,
-          content,
+          content: extracted.text,
           importedAt: new Date().toLocaleString('nl-NL', {
             year: 'numeric',
             month: '2-digit',
@@ -458,8 +461,8 @@ export default function WorkspacePage() {
             minute: '2-digit',
           }),
         })
-      } catch {
-        skipped.push(`${file.name}: kon niet worden gelezen`)
+      } catch (error) {
+        skipped.push(`${file.name}: ${error instanceof Error ? error.message : 'kon niet worden gelezen'}`)
       }
     }
 
@@ -530,20 +533,53 @@ export default function WorkspacePage() {
     void analyzeAndGenerate(targetStage)
   }
 
-  const applyAiRewrite = () => {
+  const applyAiRewrite = async () => {
     const openComments = comments.filter((comment) => !comment.resolved)
-    const additions = openComments
-      .map((comment) => `<p><strong>Review verwerkt:</strong> ${summarize(comment.note, 220)}</p>`)
-      .join('')
-    const reviewBlock = additions
-      ? `<section><h2>AI-verwerking review</h2>${additions}</section>`
-      : '<section><h2>AI-verwerking review</h2><p>Geen open opmerkingen. De tekst is aangescherpt op actieve zinnen, bewijsvoering en criteriumtaal.</p></section>'
-    setDraft((current) => {
-      const next = current.replace('</article>', `${reviewBlock}</article>`)
-      setFindings(reviewDraft(next, effectiveDocuments, analysis))
-      return next
-    })
-    setComments((current) => current.map((comment) => ({ ...comment, resolved: true })))
+    if (!openComments.length) {
+      setSyncStatus('Geen open opmerkingen om te verwerken.')
+      return
+    }
+
+    setGenerating(true)
+    setSyncStatus('Schrijfagent verwerkt opmerkingen…')
+    const result = analysis ?? runAnalysis()
+
+    try {
+      const aiResult = await generateDraftViaApi(
+        {
+          stage: 'zilver',
+          project,
+          documents: effectiveDocuments,
+          comments,
+          analysis: result,
+          currentDraft: draft,
+        },
+        (accumulated) => {
+          updateEditorHtml(accumulated || draft)
+        },
+      )
+      updateEditorHtml(aiResult.html)
+      setComments((current) => current.map((comment) => ({ ...comment, resolved: true })))
+      setFindings(reviewDraft(aiResult.html, effectiveDocuments, result))
+      setSyncStatus(`Opmerkingen verwerkt met ${aiResult.provider} (${aiResult.model})`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Verwerken mislukt.'
+      if (isNoAiConfigError(message)) {
+        const additions = openComments
+          .map((comment) => `<p><strong>Review verwerkt:</strong> ${summarize(comment.note, 220)}</p>`)
+          .join('')
+        const reviewBlock = `<section><h2>AI-verwerking review</h2>${additions}</section>`
+        const next = draft.replace('</article>', `${reviewBlock}</article>`)
+        updateEditorHtml(next)
+        setComments((current) => current.map((comment) => ({ ...comment, resolved: true })))
+        setFindings(reviewDraft(next, effectiveDocuments, result))
+        setSyncStatus('Opmerkingen lokaal verwerkt (geen AI geconfigureerd)')
+        return
+      }
+      setSyncStatus(message)
+    } finally {
+      setGenerating(false)
+    }
   }
 
   const syncDraftFromEditor = () => {
@@ -686,11 +722,18 @@ export default function WorkspacePage() {
               </button>
             ))}
           </div>
-          <label className="upload">
-            {uploadingFiles ? <Loader2 size={17} className="spin" /> : <Upload size={17} />}
-            {uploadingFiles ? 'Bestanden laden…' : 'Upload tekst'}
-            <input type="file" multiple accept=".txt,.md,.csv,.json,.html,.htm" onChange={(event) => void handleFileUpload(event.target.files)} />
-          </label>
+          <FileUploadZone
+            accept={acceptedStyleExtensions}
+            loading={uploadingFiles}
+            title="Sleep bestanden hierheen of klik om te uploaden"
+            hint={`Wordt toegevoegd als ${sourceLabels[activeType].toLowerCase()}-bron`}
+            formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 12 MB per bestand"
+            onFiles={handleFileUpload}
+          />
+          <p className="source-upload-help">
+            Of plak tekst handmatig hieronder. Voor vaste schrijfregels gebruik je ook de pagina{' '}
+            <Link to="/schrijfregels">schrijfregelspagina</Link>.
+          </p>
           {uploadNotice ? (
             <p className={`source-upload-notice source-upload-notice-${uploadNotice.tone}`}>{uploadNotice.message}</p>
           ) : null}
@@ -838,7 +881,10 @@ export default function WorkspacePage() {
               {generating ? <Loader2 size={17} className="spin" /> : <Bot size={17} />}
               {generating ? 'Concept wordt opgebouwd…' : stagePrompts[stage]}
             </div>
-            <button className="secondary" onClick={applyAiRewrite} disabled={generating}><RefreshCw size={16} /> Verwerk opmerkingen</button>
+            <button className="secondary" onClick={() => void applyAiRewrite()} disabled={generating}>
+              {generating ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+              {generating ? 'Verwerken…' : 'Verwerk opmerkingen'}
+            </button>
           </div>
           <div
             ref={editorRef}

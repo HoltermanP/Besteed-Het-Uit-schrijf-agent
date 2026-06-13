@@ -1,6 +1,6 @@
 import esbuild from 'esbuild'
 
-const handlers = ['company-enrich', 'write-draft', 'style-documents', 'writer-status']
+const handlers = ['company-enrich', 'write-draft', 'style-documents', 'writer-status', 'extract-text']
 
 await Promise.all(
   handlers.map((name) =>

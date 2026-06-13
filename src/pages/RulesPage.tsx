@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -19,6 +19,7 @@ import {
   updateStyleDocument,
   uploadStyleDocument,
 } from '../lib/styleDocumentsApi'
+import FileUploadZone from '../components/FileUploadZone'
 import {
   acceptedStyleExtensions,
   rulesCategories,
@@ -48,7 +49,6 @@ export default function RulesPage() {
   const [uploadCategory, setUploadCategory] = useState<RulesCategory>('richtlijnen')
   const [draft, setDraft] = useState(emptyDraft)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadDocuments = async () => {
     setLoading(true)
@@ -96,7 +96,6 @@ export default function RulesPage() {
       setDocuments((current) => [...uploaded, ...current])
       setUploadName('')
       setStatus(`${uploaded.length} regeldocument(en) opgeslagen.`)
-      if (fileInputRef.current) fileInputRef.current.value = ''
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Upload mislukt.')
     } finally {
@@ -279,23 +278,14 @@ export default function RulesPage() {
             </label>
           </div>
 
-          <label className="config-upload">
-            {uploading ? <Loader2 size={17} className="spin" /> : <Upload size={17} />}
-            {uploading ? 'Verwerken…' : 'Bestanden kiezen'}
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept={acceptedStyleExtensions.join(',')}
-              disabled={uploading}
-              onChange={(event) => void handleUpload(event.target.files)}
-            />
-          </label>
-
-          <p className="status">
-            Ondersteund: PDF, Word, PowerPoint, Excel en platte tekst (.txt, .md, .csv). Max. 12 MB per
-            bestand. Opslag in database (PostgreSQL/Neon) of lokaal dev-bestand.
-          </p>
+          <FileUploadZone
+            accept={acceptedStyleExtensions}
+            loading={uploading}
+            title="Sleep regeldocumenten hierheen of klik om te uploaden"
+            hint="Schrijfwijzers, kwaliteitsstandaarden en checklists"
+            formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 12 MB per bestand"
+            onFiles={handleUpload}
+          />
         </section>
 
         <section className="admin-card config-card-wide">

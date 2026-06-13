@@ -3,6 +3,7 @@ import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { handleCompanyEnrichRequest } from './api-src/_lib/companyEnrich'
 import { applyDevApiEnv } from './api-src/_lib/devApiEnv'
+import { handleExtractTextRequest } from './api-src/_lib/extractText'
 import { handleStyleDocumentsRequest } from './api-src/_lib/styleDocuments'
 import { handleWriteDraftRequest } from './api-src/_lib/writeDraft'
 import { getWriterStatusPayload } from './api-src/_lib/writerStatus'
@@ -69,9 +70,10 @@ function serverDevApi(env: Record<string, string>): Plugin {
 
         const isJsonRoute = req.method === 'POST' && jsonApiRoutes[req.url]
         const isStyleRoute = req.url.startsWith('/api/style-documents')
+        const isExtractRoute = req.url === '/api/extract-text' && req.method === 'POST'
         const isWriterStatusRoute = req.url === '/api/writer-status' && req.method === 'GET'
 
-        if (!isJsonRoute && !isStyleRoute && !isWriterStatusRoute) {
+        if (!isJsonRoute && !isStyleRoute && !isExtractRoute && !isWriterStatusRoute) {
           next()
           return
         }
@@ -87,6 +89,12 @@ function serverDevApi(env: Record<string, string>): Plugin {
 
           if (isStyleRoute) {
             const response = await handleStyleDocumentsRequest(await toWebRequest(req, req.url))
+            await sendWebResponse(res, response)
+            return
+          }
+
+          if (isExtractRoute) {
+            const response = await handleExtractTextRequest(await toWebRequest(req, req.url))
             await sendWebResponse(res, response)
             return
           }

@@ -1,14 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft,
   BookOpen,
   FileText,
-  Loader2,
   PenLine,
   Trash2,
-  Upload,
 } from 'lucide-react'
+import FileUploadZone from '../components/FileUploadZone'
 import {
   deleteStyleDocument,
   fetchStyleDocuments,
@@ -32,7 +31,6 @@ export default function StyleGuidePage() {
   const [status, setStatus] = useState('')
   const [category, setCategory] = useState<StyleDocumentCategory>('schrijfstijl')
   const [displayName, setDisplayName] = useState('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadDocuments = async () => {
     setLoading(true)
@@ -71,7 +69,6 @@ export default function StyleGuidePage() {
       setDocuments((current) => [...uploaded, ...current])
       setDisplayName('')
       setStatus(`${uploaded.length} document(en) opgeslagen en beschikbaar voor de schrijfagent.`)
-      if (fileInputRef.current) fileInputRef.current.value = ''
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Upload mislukt.')
     } finally {
@@ -141,23 +138,14 @@ export default function StyleGuidePage() {
             </label>
           </div>
 
-          <label className="config-upload">
-            {uploading ? <Loader2 size={17} className="spin" /> : <Upload size={17} />}
-            {uploading ? 'Verwerken…' : 'Bestanden kiezen'}
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept={acceptedStyleExtensions.join(',')}
-              disabled={uploading}
-              onChange={(event) => void handleUpload(event.target.files)}
-            />
-          </label>
-
-          <p className="status">
-            Ondersteund: PDF, Word, PowerPoint, Excel en platte tekst (.txt, .md, .csv). Max. 12 MB per
-            bestand. Opslag in database (PostgreSQL/Neon) of lokaal dev-bestand zonder DATABASE_URL.
-          </p>
+          <FileUploadZone
+            accept={acceptedStyleExtensions}
+            loading={uploading}
+            title="Sleep stijldocumenten hierheen of klik om te uploaden"
+            hint="Voorbeeldteksten en schrijfstijlrichtlijnen voor toon en opmaak"
+            formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 12 MB per bestand"
+            onFiles={handleUpload}
+          />
           {status ? <p className="status style-guide-status">{status}</p> : null}
         </section>
 
