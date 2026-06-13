@@ -33,6 +33,23 @@ async function toWebRequest(req: IncomingMessage, url: string): Promise<Request>
 }
 
 async function sendWebResponse(res: ServerResponse, response: Response) {
+  const contentType = response.headers.get('content-type') ?? ''
+  if (contentType.includes('text/event-stream') && response.body) {
+    res.statusCode = response.status
+    response.headers.forEach((value, key) => {
+      if (key.toLowerCase() === 'content-encoding') return
+      res.setHeader(key, value)
+    })
+    const reader = response.body.getReader()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      res.write(Buffer.from(value))
+    }
+    res.end()
+    return
+  }
+
   const payload = await response.text()
   res.statusCode = response.status
   res.setHeader('Content-Type', 'application/json')

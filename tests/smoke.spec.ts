@@ -13,12 +13,13 @@ test('laadt de werkplek met concept en bronnen', async ({ page }) => {
   await expect(page.locator('.topbar h1')).toHaveText('Winnende inschrijving dienstverlening')
   await expect(page.locator('.proposal-doc .kicker')).toContainText('Brons versie')
   await expect(page.getByText('Inschrijving voor Publieke opdrachtgever')).toBeVisible()
-  await expect(page.getByText('Programma van Eisen')).toBeVisible()
+  await expect(page.locator('.source-library').getByText('Programma van Eisen')).toBeVisible()
 })
 
 test('genereert concept en voert AI-review uit', async ({ page }) => {
   await page.getByRole('button', { name: 'Genereer' }).click()
-  await expect(page.getByText('Concept lokaal opgeslagen')).toBeVisible()
+  await expect(page.locator('.workspace-status')).toContainText(/concept lokaal opgeslagen|Analyse en concept/i, { timeout: 15000 })
+  await expect(page.locator('.proposal-doc .kicker')).toContainText('Brons versie', { timeout: 15000 })
   await page.getByRole('button', { name: 'Review uitvoeren' }).click()
   await expect(page.locator('.finding').first()).toBeVisible()
 })
@@ -26,7 +27,7 @@ test('genereert concept en voert AI-review uit', async ({ page }) => {
 test('importeert TenderNed dossier', async ({ page }) => {
   await page.getByRole('button', { name: 'Importeer TenderNed dossier' }).click()
   await expect(page.locator('.workspace-status')).toContainText('TenderNed dossier')
-  await expect(page.getByText(/TenderNed import TN-2026-00421/)).toBeVisible()
+  await expect(page.locator('.source-library').getByText(/TenderNed import TN-2026-00421/)).toBeVisible()
 })
 
 test('verwerkt menselijke opmerkingen via AI', async ({ page }) => {

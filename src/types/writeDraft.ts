@@ -35,6 +35,7 @@ export type WriteDraftRequest = {
   analysis: TenderAnalysis | null
   currentDraft?: string
   ai?: WriteDraftAiConfig
+  stream?: boolean
 }
 
 export type WriteDraftResponse = {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  AlertTriangle,
   Award,
   BadgeCheck,
   BookOpen,
@@ -8,9 +9,11 @@ import {
   Brain,
   Building2,
   Check,
+  CheckCircle2,
   ClipboardCheck,
   Crown,
   Download,
+  Eye,
   FileDown,
   FileText,
   Flag,
@@ -25,10 +28,14 @@ import {
   ScanSearch,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Upload,
+  XCircle,
 } from 'lucide-react'
 import { buildHtmlDraft } from '../lib/buildDraft'
+import { revealDraftProgressively } from '../lib/draftProgress'
 import { analyzeTenderDocuments, countCharacters, countWords, reviewAgainstAnalysis } from '../lib/tenderAnalysis'
+import { assessSourceContent } from '../lib/sourceQuality'
 import type { TenderAnalysis } from '../types/tenderAnalysis'
 import { exportPdfFromHtml, exportWordDocument } from '../lib/documentExport'
 import { isNeonConfigured, isWriterConfigured, migrateLegacyNeonUrl } from '../lib/apiConfig'
@@ -255,6 +262,10 @@ export default function WorkspacePage() {
   const savedTenders = getSavedTenders()
   const [syncStatus, setSyncStatus] = useState('Lokaal opgeslagen')
   const [generating, setGenerating] = useState(false)
+  const [uploadNotice, setUploadNotice] = useState<{ tone: 'ok' | 'warning' | 'error'; message: string } | null>(null)
+  const [showAllSources, setShowAllSources] = useState(false)
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
+  const [uploadingFiles, setUploadingFiles] = useState(false)
   const [styleDocuments, setStyleDocuments] = useState<StyleDocument[]>([])
   const effectiveDocuments = useMemo(
     () => mergeDocumentsWithStyleDocuments(mergeDocumentsWithCompanyConfig(documents), styleDocuments),
@@ -299,11 +310,27 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     const editor = editorRef.current
-    if (!editor || document.activeElement === editor) return
+    if (!editor || generating || document.activeElement === editor) return
     if (editor.innerHTML !== draft) {
       editor.innerHTML = draft
     }
-  }, [draft])
+  }, [draft, generating])
+
+  const updateEditorHtml = (html: string) => {
+    setDraft(html)
+    const editor = editorRef.current
+    if (editor) editor.innerHTML = html
+  }
+
+  const visibleSources = useMemo(() => {
+    const list = showAllSources ? documents : documents.filter((doc) => doc.type === activeType)
+    return list
+  }, [activeType, documents, showAllSources])
+
+  const selectedSource = useMemo(
+    () => documents.find((doc) => doc.id === selectedSourceId) ?? null,
+    [documents, selectedSourceId],
+  )
 
   const stats = useMemo(() => {
     const words = countWords(draft)
@@ -329,69 +356,127 @@ export default function WorkspacePage() {
   }
 
   const analyzeAndGenerate = async (targetStage = stage) => {
+    setGenerating(true)
+    setSyncStatus('Leidraad analyseren…')
     const result = runAnalysis()
     setStage(targetStage)
+    updateEditorHtml('<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
 
-    if (isWriterConfigured()) {
-      setGenerating(true)
-      setSyncStatus('Schrijfagent genereert concept…')
-      try {
-        const aiResult = await generateDraftViaApi({
-          stage: targetStage,
-          project,
-          documents: effectiveDocuments,
-          comments,
-          analysis: result,
-          currentDraft: targetStage === 'brons' ? undefined : draft,
-        })
-        setDraft(aiResult.html)
+    try {
+      if (isWriterConfigured()) {
+        setSyncStatus('Schrijfagent schrijft concept…')
+        const aiResult = await generateDraftViaApi(
+          {
+            stage: targetStage,
+            project,
+            documents: effectiveDocuments,
+            comments,
+            analysis: result,
+            currentDraft: targetStage === 'brons' ? undefined : draft,
+          },
+          (accumulated) => {
+            updateEditorHtml(accumulated || '<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
+          },
+        )
+        updateEditorHtml(aiResult.html)
         setFindings(reviewDraft(aiResult.html, effectiveDocuments, result))
         setSyncStatus(
           isNeonConfigured()
             ? `Concept gegenereerd met ${aiResult.provider} (${aiResult.model})`
             : `Concept gegenereerd met ${aiResult.provider} (${aiResult.model}), lokaal opgeslagen`,
         )
-      } catch (error) {
-        setSyncStatus(error instanceof Error ? error.message : 'Genereren mislukt.')
-      } finally {
-        setGenerating(false)
+        return
       }
-      return
-    }
 
-    const nextDraft = buildHtmlDraft(targetStage, project, effectiveDocuments, comments, result)
-    setDraft(nextDraft)
-    setFindings(reviewDraft(nextDraft, effectiveDocuments, result))
-    setSyncStatus(isNeonConfigured() ? 'Analyse, concept en Neon-sync gereed' : 'Analyse en concept lokaal opgeslagen')
+      setSyncStatus('Concept wordt opgebouwd…')
+      const nextDraft = buildHtmlDraft(targetStage, project, effectiveDocuments, comments, result)
+      await revealDraftProgressively(nextDraft, updateEditorHtml)
+      setFindings(reviewDraft(nextDraft, effectiveDocuments, result))
+      setSyncStatus(isNeonConfigured() ? 'Analyse, concept en Neon-sync gereed' : 'Analyse en concept lokaal opgeslagen')
+    } catch (error) {
+      setSyncStatus(error instanceof Error ? error.message : 'Genereren mislukt.')
+    } finally {
+      setGenerating(false)
+    }
   }
 
-  const addDocument = (doc: Omit<SourceDocument, 'id' | 'importedAt'>) => {
-    setDocuments((current) => [
-      {
-        ...doc,
-        id: makeId(),
-        importedAt: new Date().toLocaleString('nl-NL', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-      },
-      ...current,
-    ])
+  const addDocument = (doc: Omit<SourceDocument, 'id' | 'importedAt'>): SourceDocument => {
+    const created: SourceDocument = {
+      ...doc,
+      id: makeId(),
+      importedAt: new Date().toLocaleString('nl-NL', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    }
+    setDocuments((current) => [created, ...current])
+    setSelectedSourceId(created.id)
+    return created
+  }
+
+  const removeDocument = (id: string) => {
+    setDocuments((current) => current.filter((doc) => doc.id !== id))
+    setSelectedSourceId((current) => (current === id ? null : current))
   }
 
   const handleFileUpload = async (files: FileList | null) => {
     if (!files?.length) return
-    const loaded = await Promise.all(
-      Array.from(files).map(async (file) => ({
-        name: file.name,
-        type: activeType,
-        content: await file.text(),
-      })),
-    )
-    loaded.forEach(addDocument)
+    setUploadingFiles(true)
+    setUploadNotice(null)
+
+    const added: SourceDocument[] = []
+    const skipped: string[] = []
+
+    for (const file of Array.from(files)) {
+      try {
+        const content = await file.text()
+        const quality = assessSourceContent(content)
+        if (quality.quality === 'error') {
+          skipped.push(`${file.name}: geen leesbare tekst`)
+          continue
+        }
+        added.push({
+          id: makeId(),
+          name: file.name,
+          type: activeType,
+          content,
+          importedAt: new Date().toLocaleString('nl-NL', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+        })
+      } catch {
+        skipped.push(`${file.name}: kon niet worden gelezen`)
+      }
+    }
+
+    if (added.length) {
+      setDocuments((current) => [...added, ...current])
+      setSelectedSourceId(added[0].id)
+      const warnings = added.filter((doc) => assessSourceContent(doc.content).quality === 'warning').length
+      setUploadNotice({
+        tone: warnings ? 'warning' : 'ok',
+        message:
+          warnings > 0
+            ? `${added.length} bron(nen) toegevoegd; ${warnings} met weinig tekst — controleer de inhoud.`
+            : `${added.length} bron(nen) succesvol toegevoegd.`,
+      })
+    }
+
+    if (skipped.length) {
+      setUploadNotice({
+        tone: added.length ? 'warning' : 'error',
+        message: skipped.join(' · '),
+      })
+    }
+
+    setUploadingFiles(false)
   }
 
   const importTenderned = () => {
@@ -579,7 +664,7 @@ export default function WorkspacePage() {
         <section className="panel source-panel">
           <div className="panel-heading">
             <Upload size={17} />
-            <h2>Bronnen</h2>
+            <h2>Bronnen ({documents.length})</h2>
           </div>
           <div className="segmented">
             {(Object.keys(sourceLabels) as SourceType[]).map((type) => (
@@ -589,22 +674,92 @@ export default function WorkspacePage() {
             ))}
           </div>
           <label className="upload">
-            <Upload size={17} /> Upload tekst
-            <input type="file" multiple onChange={(event) => handleFileUpload(event.target.files)} />
+            {uploadingFiles ? <Loader2 size={17} className="spin" /> : <Upload size={17} />}
+            {uploadingFiles ? 'Bestanden laden…' : 'Upload tekst'}
+            <input type="file" multiple accept=".txt,.md,.csv,.json,.html,.htm" onChange={(event) => void handleFileUpload(event.target.files)} />
           </label>
+          {uploadNotice ? (
+            <p className={`source-upload-notice source-upload-notice-${uploadNotice.tone}`}>{uploadNotice.message}</p>
+          ) : null}
           <input placeholder="Naam bron" value={manualName} onChange={(event) => setManualName(event.target.value)} />
           <textarea placeholder="Plak broninformatie, rules of training..." value={manualText} onChange={(event) => setManualText(event.target.value)} />
           <button
             className="secondary"
             onClick={() => {
               if (!manualText.trim()) return
-              addDocument({ name: manualName || `${sourceLabels[activeType]} handmatig`, type: activeType, content: manualText })
+              const created = addDocument({
+                name: manualName || `${sourceLabels[activeType]} handmatig`,
+                type: activeType,
+                content: manualText,
+              })
+              const quality = assessSourceContent(created.content)
+              setUploadNotice({
+                tone: quality.quality === 'ok' ? 'ok' : quality.quality === 'warning' ? 'warning' : 'error',
+                message: `"${created.name}" toegevoegd — ${quality.label.toLowerCase()} (${quality.words} woorden).`,
+              })
               setManualText('')
               setManualName('')
             }}
           >
             <ClipboardCheck size={16} /> Toevoegen
           </button>
+
+          <div className="source-panel-toolbar">
+            <button className="secondary source-filter-btn" onClick={() => setShowAllSources((current) => !current)}>
+              {showAllSources ? 'Filter op tab' : 'Toon alle bronnen'}
+            </button>
+          </div>
+
+          <div className="source-library">
+            {visibleSources.length ? (
+              visibleSources.map((doc) => {
+                const quality = assessSourceContent(doc.content)
+                const StatusIcon =
+                  quality.quality === 'ok' ? CheckCircle2 : quality.quality === 'warning' ? AlertTriangle : XCircle
+                return (
+                  <article
+                    key={doc.id}
+                    className={`source-card source-card-${quality.quality}${selectedSourceId === doc.id ? ' selected' : ''}`}
+                  >
+                    <div className="source-card-head">
+                      <span className="source-type-badge">{sourceLabels[doc.type]}</span>
+                      <span className={`source-status source-status-${quality.quality}`}>
+                        <StatusIcon size={14} /> {quality.label}
+                      </span>
+                    </div>
+                    <strong>{doc.name}</strong>
+                    <p className="source-card-meta">
+                      {quality.words.toLocaleString('nl-NL')} woorden · {quality.chars.toLocaleString('nl-NL')} tekens · {doc.importedAt}
+                    </p>
+                    <p>{summarize(doc.content, 140)}</p>
+                    <div className="source-card-actions">
+                      <button className="secondary" onClick={() => setSelectedSourceId(doc.id)}>
+                        <Eye size={14} /> Bekijken
+                      </button>
+                      <button className="secondary source-delete-btn" onClick={() => removeDocument(doc.id)}>
+                        <Trash2 size={14} /> Verwijder
+                      </button>
+                    </div>
+                  </article>
+                )
+              })
+            ) : (
+              <p className="status">Nog geen bronnen in deze categorie. Upload of plak tekst hierboven.</p>
+            )}
+          </div>
+
+          {selectedSource ? (
+            <div className="source-preview">
+              <div className="source-preview-head">
+                <h3>{selectedSource.name}</h3>
+                <button className="secondary" onClick={() => setSelectedSourceId(null)}>Sluiten</button>
+              </div>
+              <p className="source-card-meta">
+                {sourceLabels[selectedSource.type]} · {assessSourceContent(selectedSource.content).words.toLocaleString('nl-NL')} woorden
+              </p>
+              <pre className="source-preview-body">{selectedSource.content}</pre>
+            </div>
+          ) : null}
         </section>
       </aside>
 
@@ -666,13 +821,16 @@ export default function WorkspacePage() {
 
         <div className="editor-shell">
           <div className="editor-toolbar">
-            <div><Bot size={17} /> {stagePrompts[stage]}</div>
-            <button className="secondary" onClick={applyAiRewrite}><RefreshCw size={16} /> Verwerk opmerkingen</button>
+            <div>
+              {generating ? <Loader2 size={17} className="spin" /> : <Bot size={17} />}
+              {generating ? 'Concept wordt opgebouwd…' : stagePrompts[stage]}
+            </div>
+            <button className="secondary" onClick={applyAiRewrite} disabled={generating}><RefreshCw size={16} /> Verwerk opmerkingen</button>
           </div>
           <div
             ref={editorRef}
-            className="document-editor"
-            contentEditable
+            className={`document-editor${generating ? ' is-generating' : ''}`}
+            contentEditable={!generating}
             suppressContentEditableWarning
             onMouseUp={captureSelection}
             onKeyUp={captureSelection}
@@ -795,13 +953,20 @@ export default function WorkspacePage() {
             <h2>Bronmatrix</h2>
           </div>
           <div className="source-list">
-            {documents.map((doc) => (
-              <article key={doc.id}>
-                <span>{sourceLabels[doc.type]}</span>
-                <strong>{doc.name}</strong>
-                <p>{summarize(doc.content, 120)}</p>
-              </article>
-            ))}
+            {effectiveDocuments.map((doc, index) => {
+              const quality = assessSourceContent(doc.content)
+              const isAuto = !documents.some((item) => item.name === doc.name && item.type === doc.type)
+              return (
+                <article key={`${doc.type}-${doc.name}-${index}`}>
+                  <span>{sourceLabels[doc.type]}{isAuto ? ' · auto' : ''}</span>
+                  <strong>{doc.name}</strong>
+                  <p className={`source-status-inline source-status-${quality.quality}`}>
+                    {quality.label} · {quality.words} woorden
+                  </p>
+                  <p>{summarize(doc.content, 120)}</p>
+                </article>
+              )
+            })}
           </div>
         </section>
       </aside>

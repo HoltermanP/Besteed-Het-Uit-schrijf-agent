@@ -72,6 +72,111 @@ async function completeAnthropic(ai, messages, options) {
   if (!text) throw new Error("Anthropic gaf geen tekst terug.");
   return text;
 }
+async function* streamAnthropic(ai, messages, options) {
+  const { system, chatMessages } = splitMessages(messages);
+  const body = {
+    model: ai.model,
+    max_tokens: options.maxTokens ?? 16e3,
+    messages: chatMessages,
+    stream: true
+  };
+  if (system) body.system = system;
+  if (usesAdaptiveThinking(ai.model)) {
+    body.thinking = { type: "adaptive" };
+    body.output_config = { effort: options.effort ?? "high" };
+  }
+  const baseUrl = normalizeAnthropicBaseUrl(ai.baseUrl || "https://api.anthropic.com");
+  const response = await fetch(`${baseUrl}/v1/messages`, {
+    method: "POST",
+    headers: {
+      "x-api-key": ai.apiKey,
+      "anthropic-version": ANTHROPIC_VERSION,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(options.timeoutMs ?? 18e4)
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Anthropic API mislukt (${response.status}): ${detail.slice(0, 280)}`);
+  }
+  if (!response.body) throw new Error("Anthropic streaming mislukt: geen response body.");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const payload = line.slice(6).trim();
+      if (!payload || payload === "[DONE]") continue;
+      try {
+        const event = JSON.parse(payload);
+        if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+          const text = event.delta.text;
+          if (text) yield text;
+        }
+      } catch {
+      }
+    }
+  }
+}
+async function* streamOpenAiCompatible(ai, messages, options) {
+  const baseUrl = (ai.baseUrl.trim() || "https://api.openai.com/v1").replace(/\/$/, "");
+  const body = {
+    model: ai.model,
+    temperature: 0.2,
+    messages,
+    max_tokens: options.maxTokens ?? 16e3,
+    stream: true
+  };
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ai.apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(options.timeoutMs ?? 18e4)
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`AI API mislukt (${response.status}): ${detail.slice(0, 280)}`);
+  }
+  if (!response.body) throw new Error("AI streaming mislukt: geen response body.");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const payload = line.slice(6).trim();
+      if (!payload || payload === "[DONE]") continue;
+      try {
+        const event = JSON.parse(payload);
+        const text = event.choices?.[0]?.delta?.content;
+        if (text) yield text;
+      } catch {
+      }
+    }
+  }
+}
+async function* streamChat(ai, messages, options = {}) {
+  if (ai.provider === "anthropic") {
+    yield* streamAnthropic(ai, messages, options);
+    return;
+  }
+  yield* streamOpenAiCompatible(ai, messages, options);
+}
 async function completeOpenAiCompatible(ai, messages, options) {
   const baseUrl = (ai.baseUrl.trim() || "https://api.openai.com/v1").replace(/\/$/, "");
   const body = {
@@ -386,19 +491,64 @@ function extractHtml(content) {
   if (trimmed.startsWith("<article")) return trimmed;
   throw new Error("Schrijfagent gaf geen geldige HTML terug.");
 }
+function buildChatMessages(request) {
+  return [
+    { role: "system", content: SYSTEM_PROMPT },
+    { role: "user", content: buildUserPrompt(request) }
+  ];
+}
+function chatOptions(request) {
+  return {
+    maxTokens: 16e3,
+    timeoutMs: 18e4,
+    effort: request.stage === "goud" ? "xhigh" : "high"
+  };
+}
+async function handleWriteDraftStreamRequest(request) {
+  const ai = resolveAiFromRequest(request.ai, "WRITER_MODEL");
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      const send = (payload) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}
+
+`));
+      };
+      try {
+        let accumulated = "";
+        for await (const chunk of streamChat(ai, buildChatMessages(request), chatOptions(request))) {
+          accumulated += chunk;
+          send({ type: "delta", text: chunk, accumulated });
+        }
+        const html = extractHtml(accumulated);
+        send({
+          type: "done",
+          html,
+          model: ai.model,
+          provider: ai.provider
+        });
+        controller.close();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Onbekende fout bij genereren.";
+        send({ type: "error", error: message });
+        controller.close();
+      }
+    }
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive"
+    }
+  });
+}
 async function generateDraftWithAi(request) {
   const ai = resolveAiFromRequest(request.ai, "WRITER_MODEL");
   const content = await completeChat(
     ai,
-    [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: buildUserPrompt(request) }
-    ],
-    {
-      maxTokens: 16e3,
-      timeoutMs: 18e4,
-      effort: request.stage === "goud" ? "xhigh" : "high"
-    }
+    buildChatMessages(request),
+    chatOptions(request)
   );
   return {
     html: extractHtml(content),
@@ -414,6 +564,9 @@ async function handleWriteDraftRequest(body) {
     }
     if (!["brons", "zilver", "goud"].includes(request.stage)) {
       throw new Error("Ongeldige fase.");
+    }
+    if (request.stream) {
+      return handleWriteDraftStreamRequest(request);
     }
     const result = await generateDraftWithAi(request);
     return Response.json(result);
@@ -447,12 +600,35 @@ async function sendWebResponse(res, response) {
 var config = {
   maxDuration: 60
 };
+async function pipeWebStream(res, response) {
+  res.status(response.status);
+  response.headers.forEach((value, key) => {
+    if (key.toLowerCase() === "content-encoding") return;
+    res.setHeader(key, value);
+  });
+  if (!response.body) {
+    res.end();
+    return;
+  }
+  const reader = response.body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    res.write(Buffer.from(value));
+  }
+  res.end();
+}
 async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
   try {
-    const response = await handleWriteDraftRequest(parseJsonBody(req.body));
+    const body = parseJsonBody(req.body);
+    const response = await handleWriteDraftRequest(body);
+    if (body.stream) {
+      await pipeWebStream(res, response);
+      return;
+    }
     await sendWebResponse(res, response);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Interne serverfout bij genereren.";

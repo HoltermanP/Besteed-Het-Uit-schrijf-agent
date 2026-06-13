@@ -91,6 +91,148 @@ async function completeAnthropic(
   return text
 }
 
+async function* streamAnthropic(
+  ai: AiRuntimeConfig,
+  messages: AiMessage[],
+  options: AiCompletionOptions,
+): AsyncGenerator<string> {
+  const { system, chatMessages } = splitMessages(messages)
+  const body: Record<string, unknown> = {
+    model: ai.model,
+    max_tokens: options.maxTokens ?? 16_000,
+    messages: chatMessages,
+    stream: true,
+  }
+
+  if (system) body.system = system
+  if (usesAdaptiveThinking(ai.model)) {
+    body.thinking = { type: 'adaptive' }
+    body.output_config = { effort: options.effort ?? 'high' }
+  }
+
+  const baseUrl = normalizeAnthropicBaseUrl(ai.baseUrl || 'https://api.anthropic.com')
+  const response = await fetch(`${baseUrl}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'x-api-key': ai.apiKey,
+      'anthropic-version': ANTHROPIC_VERSION,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(options.timeoutMs ?? 180_000),
+  })
+
+  if (!response.ok) {
+    const detail = await response.text()
+    throw new Error(`Anthropic API mislukt (${response.status}): ${detail.slice(0, 280)}`)
+  }
+
+  if (!response.body) throw new Error('Anthropic streaming mislukt: geen response body.')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      const payload = line.slice(6).trim()
+      if (!payload || payload === '[DONE]') continue
+      try {
+        const event = JSON.parse(payload) as {
+          type?: string
+          delta?: { type?: string; text?: string }
+        }
+        if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+          const text = event.delta.text
+          if (text) yield text
+        }
+      } catch {
+        // onvolledige SSE-regel overslaan
+      }
+    }
+  }
+}
+
+async function* streamOpenAiCompatible(
+  ai: AiRuntimeConfig,
+  messages: AiMessage[],
+  options: AiCompletionOptions,
+): AsyncGenerator<string> {
+  const baseUrl = (ai.baseUrl.trim() || 'https://api.openai.com/v1').replace(/\/$/, '')
+  const body: Record<string, unknown> = {
+    model: ai.model,
+    temperature: 0.2,
+    messages,
+    max_tokens: options.maxTokens ?? 16_000,
+    stream: true,
+  }
+
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${ai.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(options.timeoutMs ?? 180_000),
+  })
+
+  if (!response.ok) {
+    const detail = await response.text()
+    throw new Error(`AI API mislukt (${response.status}): ${detail.slice(0, 280)}`)
+  }
+
+  if (!response.body) throw new Error('AI streaming mislukt: geen response body.')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      const payload = line.slice(6).trim()
+      if (!payload || payload === '[DONE]') continue
+      try {
+        const event = JSON.parse(payload) as {
+          choices?: Array<{ delta?: { content?: string } }>
+        }
+        const text = event.choices?.[0]?.delta?.content
+        if (text) yield text
+      } catch {
+        // onvolledige SSE-regel overslaan
+      }
+    }
+  }
+}
+
+export async function* streamChat(
+  ai: AiRuntimeConfig,
+  messages: AiMessage[],
+  options: AiCompletionOptions = {},
+): AsyncGenerator<string> {
+  if (ai.provider === 'anthropic') {
+    yield* streamAnthropic(ai, messages, options)
+    return
+  }
+  yield* streamOpenAiCompatible(ai, messages, options)
+}
+
 async function completeOpenAiCompatible(
   ai: AiRuntimeConfig,
   messages: AiMessage[],

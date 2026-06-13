@@ -1,4 +1,4 @@
-import { completeChat, resolveAiFromRequest, type AiRuntimeConfig } from './aiClient'
+import { completeChat, resolveAiFromRequest, streamChat, type AiRuntimeConfig } from './aiClient'
 import type { WriteDraftDocument, WriteDraftRequest, WriteDraftResponse } from '../../src/types/writeDraft'
 import type { TenderAnalysis } from '../../src/types/tenderAnalysis'
 
@@ -320,19 +320,68 @@ function extractHtml(content: string): string {
   throw new Error('Schrijfagent gaf geen geldige HTML terug.')
 }
 
+function buildChatMessages(request: WriteDraftRequest) {
+  return [
+    { role: 'system' as const, content: SYSTEM_PROMPT },
+    { role: 'user' as const, content: buildUserPrompt(request) },
+  ]
+}
+
+function chatOptions(request: WriteDraftRequest) {
+  return {
+    maxTokens: 16_000,
+    timeoutMs: 180_000,
+    effort: request.stage === 'goud' ? ('xhigh' as const) : ('high' as const),
+  }
+}
+
+export async function handleWriteDraftStreamRequest(request: WriteDraftRequest): Promise<Response> {
+  const ai = resolveAiFromRequest(request.ai as AiRuntimeConfig | undefined, 'WRITER_MODEL')
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const encoder = new TextEncoder()
+      const send = (payload: Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+      }
+
+      try {
+        let accumulated = ''
+        for await (const chunk of streamChat(ai, buildChatMessages(request), chatOptions(request))) {
+          accumulated += chunk
+          send({ type: 'delta', text: chunk, accumulated })
+        }
+
+        const html = extractHtml(accumulated)
+        send({
+          type: 'done',
+          html,
+          model: ai.model,
+          provider: ai.provider,
+        })
+        controller.close()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Onbekende fout bij genereren.'
+        send({ type: 'error', error: message })
+        controller.close()
+      }
+    },
+  })
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    },
+  })
+}
+
 export async function generateDraftWithAi(request: WriteDraftRequest): Promise<WriteDraftResponse> {
   const ai = resolveAiFromRequest(request.ai as AiRuntimeConfig | undefined, 'WRITER_MODEL')
   const content = await completeChat(
     ai,
-    [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: buildUserPrompt(request) },
-    ],
-    {
-      maxTokens: 16_000,
-      timeoutMs: 180_000,
-      effort: request.stage === 'goud' ? 'xhigh' : 'high',
-    },
+    buildChatMessages(request),
+    chatOptions(request),
   )
 
   return {
@@ -350,6 +399,10 @@ export async function handleWriteDraftRequest(body: unknown): Promise<Response> 
     }
     if (!['brons', 'zilver', 'goud'].includes(request.stage)) {
       throw new Error('Ongeldige fase.')
+    }
+
+    if (request.stream) {
+      return handleWriteDraftStreamRequest(request)
     }
 
     const result = await generateDraftWithAi(request)
