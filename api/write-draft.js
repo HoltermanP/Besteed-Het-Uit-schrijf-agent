@@ -26,8 +26,15 @@ module.exports = __toCommonJS(write_draft_exports);
 
 // api-src/_lib/aiClient.ts
 var ANTHROPIC_VERSION = "2023-06-01";
+var DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com";
+var DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
+function normalizeBaseUrl(value, fallback) {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === "undefined" || trimmed === "null") return fallback;
+  return trimmed;
+}
 function normalizeAnthropicBaseUrl(baseUrl) {
-  return baseUrl.trim().replace(/\/$/, "").replace(/\/v1$/, "");
+  return normalizeBaseUrl(baseUrl, DEFAULT_ANTHROPIC_BASE_URL).replace(/\/$/, "").replace(/\/v1$/, "");
 }
 function usesAdaptiveThinking(model) {
   return /claude-(opus-4-[678]|sonnet-4-6|fable-5|mythos-5)/i.test(model);
@@ -52,7 +59,7 @@ async function completeAnthropic(ai, messages, options) {
     body.thinking = { type: "adaptive" };
     body.output_config = { effort: options.effort ?? "high" };
   }
-  const baseUrl = normalizeAnthropicBaseUrl(ai.baseUrl || "https://api.anthropic.com");
+  const baseUrl = normalizeAnthropicBaseUrl(normalizeBaseUrl(ai.baseUrl, DEFAULT_ANTHROPIC_BASE_URL));
   const response = await fetch(`${baseUrl}/v1/messages`, {
     method: "POST",
     headers: {
@@ -85,7 +92,7 @@ async function* streamAnthropic(ai, messages, options) {
     body.thinking = { type: "adaptive" };
     body.output_config = { effort: options.effort ?? "high" };
   }
-  const baseUrl = normalizeAnthropicBaseUrl(ai.baseUrl || "https://api.anthropic.com");
+  const baseUrl = normalizeAnthropicBaseUrl(normalizeBaseUrl(ai.baseUrl, DEFAULT_ANTHROPIC_BASE_URL));
   const response = await fetch(`${baseUrl}/v1/messages`, {
     method: "POST",
     headers: {
@@ -126,7 +133,7 @@ async function* streamAnthropic(ai, messages, options) {
   }
 }
 async function* streamOpenAiCompatible(ai, messages, options) {
-  const baseUrl = (ai.baseUrl.trim() || "https://api.openai.com/v1").replace(/\/$/, "");
+  const baseUrl = normalizeBaseUrl(ai.baseUrl, DEFAULT_OPENAI_BASE_URL).replace(/\/$/, "");
   const body = {
     model: ai.model,
     temperature: 0.2,
@@ -178,7 +185,7 @@ async function* streamChat(ai, messages, options = {}) {
   yield* streamOpenAiCompatible(ai, messages, options);
 }
 async function completeOpenAiCompatible(ai, messages, options) {
-  const baseUrl = (ai.baseUrl.trim() || "https://api.openai.com/v1").replace(/\/$/, "");
+  const baseUrl = normalizeBaseUrl(ai.baseUrl, DEFAULT_OPENAI_BASE_URL).replace(/\/$/, "");
   const body = {
     model: ai.model,
     temperature: 0.2,
@@ -217,7 +224,7 @@ function resolveAnthropicFromEnv(modelEnv = "WRITER_MODEL") {
   if (!apiKey) return null;
   return {
     provider: "anthropic",
-    baseUrl: process.env.ANTHROPIC_BASE_URL?.trim() || "https://api.anthropic.com",
+    baseUrl: normalizeBaseUrl(process.env.ANTHROPIC_BASE_URL, DEFAULT_ANTHROPIC_BASE_URL),
     apiKey,
     model: process.env[modelEnv]?.trim() || "claude-opus-4-8"
   };
@@ -227,19 +234,19 @@ function resolveOpenAiFromEnv(modelEnv = "OPENAI_MODEL") {
   if (!apiKey) return null;
   return {
     provider: "openai",
-    baseUrl: process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1",
+    baseUrl: normalizeBaseUrl(process.env.OPENAI_BASE_URL, DEFAULT_OPENAI_BASE_URL),
     apiKey,
     model: process.env[modelEnv]?.trim() || "gpt-4.1-mini"
   };
 }
 function resolveAiFromRequest(requestAi, envModelKey = "WRITER_MODEL") {
   if (requestAi?.apiKey?.trim()) {
-    const defaults = requestAi.provider === "anthropic" ? { baseUrl: "https://api.anthropic.com", model: "claude-opus-4-8" } : { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini" };
+    const defaults = requestAi.provider === "anthropic" ? { baseUrl: DEFAULT_ANTHROPIC_BASE_URL, model: "claude-opus-4-8" } : { baseUrl: DEFAULT_OPENAI_BASE_URL, model: "gpt-4.1-mini" };
     return {
       provider: requestAi.provider,
-      baseUrl: requestAi.baseUrl.trim() || defaults.baseUrl,
+      baseUrl: normalizeBaseUrl(requestAi.baseUrl, defaults.baseUrl),
       apiKey: requestAi.apiKey.trim(),
-      model: requestAi.model.trim() || defaults.model
+      model: requestAi.model?.trim() || defaults.model
     };
   }
   const anthropic = resolveAnthropicFromEnv(envModelKey);
@@ -308,14 +315,15 @@ function summarizeDocument(content, max) {
 }
 function hasVolumeLimit(analysis) {
   return Boolean(
-    analysis.targetWordCount || analysis.targetCharCount || analysis.wordLimits.some((limit) => limit.unit === "paginas" && limit.max)
+    analysis.targetWordCount || analysis.targetCharCount || (analysis.wordLimits ?? []).some((limit) => limit.unit === "paginas" && limit.max)
   );
 }
 function formatVolumeLimits(analysis) {
-  if (!analysis.wordLimits.length) {
+  const wordLimits = analysis.wordLimits ?? [];
+  if (!wordLimits.length) {
     return "- Geen woord-, karakter- of paginalimiet gedetecteerd in de leidraad.";
   }
-  return analysis.wordLimits.map((limit) => {
+  return wordLimits.map((limit) => {
     const scope = limit.section ? ` (${limit.section})` : "";
     const value = limit.min && limit.max ? `${limit.min}\u2013${limit.max} ${limit.unit}` : limit.max ? `max. ${limit.max} ${limit.unit}` : limit.min ? `min. ${limit.min} ${limit.unit}` : limit.unit;
     return `- ${limit.label}${scope}: ${value} [${limit.source}]`;
@@ -345,7 +353,8 @@ function buildVolumeInstruction(analysis) {
       `- Maximum karakters: ${target.toLocaleString("nl-NL")} \u2014 streef naar ${Math.round(target * 0.9).toLocaleString("nl-NL")}\u2013${target.toLocaleString("nl-NL")} karakters`
     );
   }
-  analysis.wordLimits.filter((limit) => limit.unit === "paginas" && limit.max).forEach((limit) => {
+  ;
+  (analysis.wordLimits ?? []).filter((limit) => limit.unit === "paginas" && limit.max).forEach((limit) => {
     lines.push(
       `- Maximum pagina's: ${limit.max}${limit.section ? ` (${limit.section})` : ""} \u2014 houd de tekst compact genoeg`
     );
@@ -364,16 +373,17 @@ function formatVolumeSummary(analysis) {
   if (analysis.targetCharCount) {
     parts.push(`max. ${analysis.targetCharCount.toLocaleString("nl-NL")} karakters`);
   }
-  const pageMax = analysis.wordLimits.filter((limit) => limit.unit === "paginas" && limit.max).map((limit) => limit.max);
+  const pageMax = (analysis.wordLimits ?? []).filter((limit) => limit.unit === "paginas" && limit.max).map((limit) => limit.max);
   if (pageMax.length) parts.push(`max. ${pageMax.join("/")} pagina's`);
   return parts.join(", ");
 }
 function formatContentRequirements(analysis) {
-  if (!analysis.contentRequirements.length) {
+  const contentRequirements = analysis.contentRequirements ?? [];
+  if (!contentRequirements.length) {
     return "- Geen inhoudseisen gedetecteerd \u2014 leid structuur af uit aanbestedingsbronnen en beoordelingscriteria.";
   }
-  const mandatory = analysis.contentRequirements.filter((item) => item.mandatory);
-  const optional = analysis.contentRequirements.filter((item) => !item.mandatory);
+  const mandatory = contentRequirements.filter((item) => item.mandatory);
+  const optional = contentRequirements.filter((item) => !item.mandatory);
   const lines = [];
   if (mandatory.length) {
     lines.push("Verplichte onderwerpen (elk een aparte sectie):");
@@ -390,14 +400,16 @@ function formatContentRequirements(analysis) {
   return lines.join("\n");
 }
 function formatEvaluationCriteria(analysis) {
-  if (!analysis.evaluationCriteria.length) {
+  const evaluationCriteria = analysis.evaluationCriteria ?? [];
+  if (!evaluationCriteria.length) {
     return "- Geen criteria gedetecteerd \u2014 koppel secties aan expliciete eisen uit de leidraad.";
   }
-  return analysis.evaluationCriteria.map((criterion, index) => `${index + 1}. ${criterion}`).join("\n");
+  return evaluationCriteria.map((criterion, index) => `${index + 1}. ${criterion}`).join("\n");
 }
 function formatDocumentRequirements(analysis) {
-  if (!analysis.documentRequirements.length) return "- geen";
-  return analysis.documentRequirements.map(
+  const documentRequirements = analysis.documentRequirements ?? [];
+  if (!documentRequirements.length) return "- geen";
+  return documentRequirements.map(
     (doc) => `- ${doc.name} (${doc.mandatory ? "verplicht" : "optioneel"}) \u2014 ${doc.source}`
   ).join("\n");
 }
@@ -504,8 +516,7 @@ function chatOptions(request) {
     effort: request.stage === "goud" ? "xhigh" : "high"
   };
 }
-async function handleWriteDraftStreamRequest(request) {
-  const ai = resolveAiFromRequest(request.ai, "WRITER_MODEL");
+function handleWriteDraftStreamRequest(request, ai) {
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -543,8 +554,7 @@ async function handleWriteDraftStreamRequest(request) {
     }
   });
 }
-async function generateDraftWithAi(request) {
-  const ai = resolveAiFromRequest(request.ai, "WRITER_MODEL");
+async function generateDraftWithAi(request, ai) {
   const content = await completeChat(
     ai,
     buildChatMessages(request),
@@ -565,10 +575,11 @@ async function handleWriteDraftRequest(body) {
     if (!["brons", "zilver", "goud"].includes(request.stage)) {
       throw new Error("Ongeldige fase.");
     }
+    const ai = resolveAiFromRequest(request.ai, "WRITER_MODEL");
     if (request.stream) {
-      return handleWriteDraftStreamRequest(request);
+      return handleWriteDraftStreamRequest(request, ai);
     }
-    const result = await generateDraftWithAi(request);
+    const result = await generateDraftWithAi(request, ai);
     return Response.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Onbekende fout bij genereren.";

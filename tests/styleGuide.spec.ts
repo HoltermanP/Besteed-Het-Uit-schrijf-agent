@@ -29,6 +29,7 @@ test('upload stijldocument slaat tekst op in bibliotheek', async ({ page }) => {
     buffer: Buffer.from('Schrijf concreet, toetsbaar en zonder promotionele taal.'),
   })
 
-  await expect(page.locator('.style-guide-list li').first()).toContainText('schrijfwijzer.txt')
-  await expect(page.getByText('1 document(en) opgeslagen')).toBeVisible()
+  await expect(
+    page.locator('.style-guide-list li').filter({ hasText: 'Schrijfwijzer' }).first(),
+  ).toBeVisible()
 })

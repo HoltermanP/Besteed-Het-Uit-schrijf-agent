@@ -68,16 +68,17 @@ function hasVolumeLimit(analysis: TenderAnalysis): boolean {
   return Boolean(
     analysis.targetWordCount ||
       analysis.targetCharCount ||
-      analysis.wordLimits.some((limit) => limit.unit === 'paginas' && limit.max),
+      (analysis.wordLimits ?? []).some((limit) => limit.unit === 'paginas' && limit.max),
   )
 }
 
 function formatVolumeLimits(analysis: TenderAnalysis): string {
-  if (!analysis.wordLimits.length) {
+  const wordLimits = analysis.wordLimits ?? []
+  if (!wordLimits.length) {
     return '- Geen woord-, karakter- of paginalimiet gedetecteerd in de leidraad.'
   }
 
-  return analysis.wordLimits
+  return wordLimits
     .map((limit) => {
       const scope = limit.section ? ` (${limit.section})` : ''
       const value =
@@ -121,7 +122,7 @@ function buildVolumeInstruction(analysis: TenderAnalysis | null | undefined): st
     )
   }
 
-  analysis.wordLimits
+  ;(analysis.wordLimits ?? [])
     .filter((limit) => limit.unit === 'paginas' && limit.max)
     .forEach((limit) => {
       lines.push(
@@ -146,7 +147,7 @@ function formatVolumeSummary(analysis: TenderAnalysis): string {
   if (analysis.targetCharCount) {
     parts.push(`max. ${analysis.targetCharCount.toLocaleString('nl-NL')} karakters`)
   }
-  const pageMax = analysis.wordLimits
+  const pageMax = (analysis.wordLimits ?? [])
     .filter((limit) => limit.unit === 'paginas' && limit.max)
     .map((limit) => limit.max)
   if (pageMax.length) parts.push(`max. ${pageMax.join('/')} pagina's`)
@@ -155,12 +156,13 @@ function formatVolumeSummary(analysis: TenderAnalysis): string {
 }
 
 function formatContentRequirements(analysis: TenderAnalysis): string {
-  if (!analysis.contentRequirements.length) {
+  const contentRequirements = analysis.contentRequirements ?? []
+  if (!contentRequirements.length) {
     return '- Geen inhoudseisen gedetecteerd — leid structuur af uit aanbestedingsbronnen en beoordelingscriteria.'
   }
 
-  const mandatory = analysis.contentRequirements.filter((item) => item.mandatory)
-  const optional = analysis.contentRequirements.filter((item) => !item.mandatory)
+  const mandatory = contentRequirements.filter((item) => item.mandatory)
+  const optional = contentRequirements.filter((item) => !item.mandatory)
 
   const lines: string[] = []
   if (mandatory.length) {
@@ -179,19 +181,21 @@ function formatContentRequirements(analysis: TenderAnalysis): string {
 }
 
 function formatEvaluationCriteria(analysis: TenderAnalysis): string {
-  if (!analysis.evaluationCriteria.length) {
+  const evaluationCriteria = analysis.evaluationCriteria ?? []
+  if (!evaluationCriteria.length) {
     return '- Geen criteria gedetecteerd — koppel secties aan expliciete eisen uit de leidraad.'
   }
 
-  return analysis.evaluationCriteria
+  return evaluationCriteria
     .map((criterion, index) => `${index + 1}. ${criterion}`)
     .join('\n')
 }
 
 function formatDocumentRequirements(analysis: TenderAnalysis): string {
-  if (!analysis.documentRequirements.length) return '- geen'
+  const documentRequirements = analysis.documentRequirements ?? []
+  if (!documentRequirements.length) return '- geen'
 
-  return analysis.documentRequirements
+  return documentRequirements
     .map(
       (doc) =>
         `- ${doc.name} (${doc.mandatory ? 'verplicht' : 'optioneel'}) — ${doc.source}`,
@@ -335,8 +339,7 @@ function chatOptions(request: WriteDraftRequest) {
   }
 }
 
-export async function handleWriteDraftStreamRequest(request: WriteDraftRequest): Promise<Response> {
-  const ai = resolveAiFromRequest(request.ai as AiRuntimeConfig | undefined, 'WRITER_MODEL')
+export function handleWriteDraftStreamRequest(request: WriteDraftRequest, ai: AiRuntimeConfig): Response {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder()
@@ -376,8 +379,10 @@ export async function handleWriteDraftStreamRequest(request: WriteDraftRequest):
   })
 }
 
-export async function generateDraftWithAi(request: WriteDraftRequest): Promise<WriteDraftResponse> {
-  const ai = resolveAiFromRequest(request.ai as AiRuntimeConfig | undefined, 'WRITER_MODEL')
+export async function generateDraftWithAi(
+  request: WriteDraftRequest,
+  ai: AiRuntimeConfig,
+): Promise<WriteDraftResponse> {
   const content = await completeChat(
     ai,
     buildChatMessages(request),
@@ -401,11 +406,13 @@ export async function handleWriteDraftRequest(body: unknown): Promise<Response> 
       throw new Error('Ongeldige fase.')
     }
 
+    const ai = resolveAiFromRequest(request.ai as AiRuntimeConfig | undefined, 'WRITER_MODEL')
+
     if (request.stream) {
-      return handleWriteDraftStreamRequest(request)
+      return handleWriteDraftStreamRequest(request, ai)
     }
 
-    const result = await generateDraftWithAi(request)
+    const result = await generateDraftWithAi(request, ai)
     return Response.json(result satisfies WriteDraftResponse)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Onbekende fout bij genereren.'

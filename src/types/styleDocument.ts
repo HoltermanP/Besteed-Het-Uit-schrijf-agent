@@ -27,6 +27,13 @@ export const styleCategoryLabels: Record<StyleDocumentCategory, string> = {
   voorbeeld: 'Voorbeeldteksten',
 }
 
+export const rulesCategoryLabels: Record<'richtlijnen' | 'kwaliteit', string> = {
+  richtlijnen: 'Richtlijnen & regels',
+  kwaliteit: 'Kwaliteitsstandaarden',
+}
+
+export const rulesCategories = Object.keys(rulesCategoryLabels) as Array<keyof typeof rulesCategoryLabels>
+
 export const styleCategoryDefaultPromptType: Record<
   StyleDocumentCategory,
   StyleDocumentPromptType

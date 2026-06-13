@@ -12,6 +12,7 @@ import {
 import {
   deleteStyleDocument,
   fetchStyleDocuments,
+  isRulesDocument,
   uploadStyleDocument,
 } from '../lib/styleDocumentsApi'
 import {
@@ -29,7 +30,7 @@ export default function StyleGuidePage() {
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [status, setStatus] = useState('')
-  const [category, setCategory] = useState<StyleDocumentCategory>('richtlijnen')
+  const [category, setCategory] = useState<StyleDocumentCategory>('schrijfstijl')
   const [displayName, setDisplayName] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -37,8 +38,9 @@ export default function StyleGuidePage() {
     setLoading(true)
     try {
       const items = await fetchStyleDocuments()
-      setDocuments(items)
-      setStatus(items.length ? `${items.length} document(en) in bibliotheek.` : 'Nog geen documenten geüpload.')
+      const styleItems = items.filter((doc) => !isRulesDocument(doc))
+      setDocuments(styleItems)
+      setStatus(styleItems.length ? `${styleItems.length} document(en) in bibliotheek.` : 'Nog geen documenten geüpload.')
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Laden mislukt.')
     } finally {
@@ -98,6 +100,9 @@ export default function StyleGuidePage() {
           </div>
         </div>
         <div className="admin-topbar-actions">
+          <Link className="secondary admin-link" to="/schrijfregels">
+            Schrijfregels
+          </Link>
           <Link className="secondary admin-link" to="/">
             <ArrowLeft size={16} /> Terug naar werkplek
           </Link>
@@ -111,8 +116,8 @@ export default function StyleGuidePage() {
             <div>
               <h2>Stijlbibliotheek</h2>
               <p>
-                Upload richtlijnen, kwaliteitsstandaarden en voorbeeldteksten. De schrijfagent gebruikt
-                deze documenten bij elke inschrijving voor toon, structuur en kwaliteit.
+                Upload schrijfstijl en voorbeeldteksten voor toon en opmaak. Voor verplichte schrijfregels
+                en kwaliteitsstandaarden gebruik je de pagina Schrijfregels.
               </p>
             </div>
           </div>
@@ -121,7 +126,7 @@ export default function StyleGuidePage() {
             <label>
               Categorie
               <select value={category} onChange={(event) => setCategory(event.target.value as StyleDocumentCategory)}>
-                {(Object.keys(styleCategoryLabels) as StyleDocumentCategory[]).map((key) => (
+                {(['schrijfstijl', 'voorbeeld'] as StyleDocumentCategory[]).map((key) => (
                   <option key={key} value={key}>{styleCategoryLabels[key]}</option>
                 ))}
               </select>

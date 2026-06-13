@@ -55,3 +55,51 @@ export async function deleteStyleDocument(id: string): Promise<void> {
     throw new Error(data.error ?? 'Verwijderen mislukt.')
   }
 }
+
+export async function createRulesTextDocument(input: {
+  name: string
+  category: StyleDocumentCategory
+  content: string
+}): Promise<StyleDocument> {
+  const formData = new FormData()
+  formData.append('name', input.name.trim())
+  formData.append('category', input.category)
+  formData.append('promptType', 'rules')
+  formData.append('content', input.content)
+
+  const response = await fetch('/api/style-documents', {
+    method: 'POST',
+    body: formData,
+  })
+
+  const data = (await response.json()) as StyleDocumentUploadResponse | StyleDocumentError
+  if (!response.ok || 'error' in data) {
+    throw new Error('error' in data ? data.error : 'Opslaan mislukt.')
+  }
+
+  return data.document
+}
+
+export async function updateStyleDocument(input: {
+  id: string
+  name?: string
+  category?: StyleDocumentCategory
+  content?: string
+}): Promise<StyleDocument> {
+  const response = await fetch('/api/style-documents', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  const data = (await response.json()) as StyleDocumentUploadResponse | StyleDocumentError
+  if (!response.ok || 'error' in data) {
+    throw new Error('error' in data ? data.error : 'Bijwerken mislukt.')
+  }
+
+  return data.document
+}
+
+export function isRulesDocument(document: StyleDocument): boolean {
+  return document.promptType === 'rules'
+}

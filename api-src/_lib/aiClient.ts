@@ -21,8 +21,19 @@ export type AiCompletionOptions = {
 
 const ANTHROPIC_VERSION = '2023-06-01'
 
+const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com'
+const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1'
+
+function normalizeBaseUrl(value: string | undefined | null, fallback: string): string {
+  const trimmed = value?.trim()
+  if (!trimmed || trimmed === 'undefined' || trimmed === 'null') return fallback
+  return trimmed
+}
+
 function normalizeAnthropicBaseUrl(baseUrl: string): string {
-  return baseUrl.trim().replace(/\/$/, '').replace(/\/v1$/, '')
+  return normalizeBaseUrl(baseUrl, DEFAULT_ANTHROPIC_BASE_URL)
+    .replace(/\/$/, '')
+    .replace(/\/v1$/, '')
 }
 
 function usesAdaptiveThinking(model: string): boolean {
@@ -61,7 +72,7 @@ async function completeAnthropic(
     body.output_config = { effort: options.effort ?? 'high' }
   }
 
-  const baseUrl = normalizeAnthropicBaseUrl(ai.baseUrl || 'https://api.anthropic.com')
+  const baseUrl = normalizeAnthropicBaseUrl(normalizeBaseUrl(ai.baseUrl, DEFAULT_ANTHROPIC_BASE_URL))
   const response = await fetch(`${baseUrl}/v1/messages`, {
     method: 'POST',
     headers: {
@@ -110,7 +121,7 @@ async function* streamAnthropic(
     body.output_config = { effort: options.effort ?? 'high' }
   }
 
-  const baseUrl = normalizeAnthropicBaseUrl(ai.baseUrl || 'https://api.anthropic.com')
+  const baseUrl = normalizeAnthropicBaseUrl(normalizeBaseUrl(ai.baseUrl, DEFAULT_ANTHROPIC_BASE_URL))
   const response = await fetch(`${baseUrl}/v1/messages`, {
     method: 'POST',
     headers: {
@@ -166,7 +177,7 @@ async function* streamOpenAiCompatible(
   messages: AiMessage[],
   options: AiCompletionOptions,
 ): AsyncGenerator<string> {
-  const baseUrl = (ai.baseUrl.trim() || 'https://api.openai.com/v1').replace(/\/$/, '')
+  const baseUrl = normalizeBaseUrl(ai.baseUrl, DEFAULT_OPENAI_BASE_URL).replace(/\/$/, '')
   const body: Record<string, unknown> = {
     model: ai.model,
     temperature: 0.2,
@@ -238,7 +249,7 @@ async function completeOpenAiCompatible(
   messages: AiMessage[],
   options: AiCompletionOptions,
 ): Promise<string> {
-  const baseUrl = (ai.baseUrl.trim() || 'https://api.openai.com/v1').replace(/\/$/, '')
+  const baseUrl = normalizeBaseUrl(ai.baseUrl, DEFAULT_OPENAI_BASE_URL).replace(/\/$/, '')
   const body: Record<string, unknown> = {
     model: ai.model,
     temperature: 0.2,
@@ -288,7 +299,7 @@ export function resolveAnthropicFromEnv(modelEnv = 'WRITER_MODEL'): AiRuntimeCon
   if (!apiKey) return null
   return {
     provider: 'anthropic',
-    baseUrl: process.env.ANTHROPIC_BASE_URL?.trim() || 'https://api.anthropic.com',
+    baseUrl: normalizeBaseUrl(process.env.ANTHROPIC_BASE_URL, DEFAULT_ANTHROPIC_BASE_URL),
     apiKey,
     model: process.env[modelEnv]?.trim() || 'claude-opus-4-8',
   }
@@ -299,7 +310,7 @@ export function resolveOpenAiFromEnv(modelEnv = 'OPENAI_MODEL'): AiRuntimeConfig
   if (!apiKey) return null
   return {
     provider: 'openai',
-    baseUrl: process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1',
+    baseUrl: normalizeBaseUrl(process.env.OPENAI_BASE_URL, DEFAULT_OPENAI_BASE_URL),
     apiKey,
     model: process.env[modelEnv]?.trim() || 'gpt-4.1-mini',
   }
@@ -311,13 +322,13 @@ export function resolveAiFromRequest(
 ): AiRuntimeConfig {
   if (requestAi?.apiKey?.trim()) {
     const defaults = requestAi.provider === 'anthropic'
-      ? { baseUrl: 'https://api.anthropic.com', model: 'claude-opus-4-8' }
-      : { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini' }
+      ? { baseUrl: DEFAULT_ANTHROPIC_BASE_URL, model: 'claude-opus-4-8' }
+      : { baseUrl: DEFAULT_OPENAI_BASE_URL, model: 'gpt-4.1-mini' }
     return {
       provider: requestAi.provider,
-      baseUrl: requestAi.baseUrl.trim() || defaults.baseUrl,
+      baseUrl: normalizeBaseUrl(requestAi.baseUrl, defaults.baseUrl),
       apiKey: requestAi.apiKey.trim(),
-      model: requestAi.model.trim() || defaults.model,
+      model: requestAi.model?.trim() || defaults.model,
     }
   }
 

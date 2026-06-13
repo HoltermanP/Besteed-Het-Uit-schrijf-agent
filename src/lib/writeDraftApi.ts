@@ -10,6 +10,12 @@ type StreamEvent =
   | { type: 'done'; html: string; model: string; provider: WriteDraftResponse['provider'] }
   | { type: 'error'; error: string }
 
+export type WriterStatus = {
+  available: boolean
+  provider: WriteDraftResponse['provider'] | null
+  model: string | null
+}
+
 function buildPayload(request: Omit<WriteDraftRequest, 'ai' | 'stream'>): WriteDraftRequest {
   const payload: WriteDraftRequest = { ...request, stream: true }
   const apiConfig = getApiConfig()
@@ -25,13 +31,48 @@ function buildPayload(request: Omit<WriteDraftRequest, 'ai' | 'stream'>): WriteD
 }
 
 function parseStreamEvent(line: string): StreamEvent | null {
-  if (!line.startsWith('data: ')) return null
-  const raw = line.slice(6).trim()
+  const trimmed = line.trim()
+  if (!trimmed.startsWith('data:')) return null
+  const raw = trimmed.slice(5).trim()
   if (!raw) return null
   try {
     return JSON.parse(raw) as StreamEvent
   } catch {
     return null
+  }
+}
+
+function processStreamLines(lines: string[], handlers: {
+  onDelta?: (accumulated: string) => void
+  onDone?: (result: WriteDraftResponse) => void
+  onError?: (message: string) => void
+}) {
+  for (const line of lines) {
+    const event = parseStreamEvent(line)
+    if (!event) continue
+    if (event.type === 'delta') handlers.onDelta?.(event.accumulated)
+    if (event.type === 'done') {
+      handlers.onDone?.({
+        html: event.html,
+        model: event.model,
+        provider: event.provider,
+      })
+    }
+    if (event.type === 'error') handlers.onError?.(event.error)
+  }
+}
+
+export function isNoAiConfigError(message: string): boolean {
+  return message.toLowerCase().includes('geen ai-configuratie')
+}
+
+export async function fetchWriterStatus(): Promise<WriterStatus> {
+  try {
+    const response = await fetch('/api/writer-status')
+    if (!response.ok) return { available: false, provider: null, model: null }
+    return (await response.json()) as WriterStatus
+  } catch {
+    return { available: false, provider: null, model: null }
   }
 }
 
@@ -51,11 +92,19 @@ export async function generateDraftViaApi(
   })
 
   const contentType = response.headers.get('content-type') ?? ''
+
+  if (!response.ok) {
+    if (contentType.includes('application/json')) {
+      const data = (await response.json()) as WriteDraftError
+      throw new Error(data.error || 'Genereren van concept mislukt.')
+    }
+    const detail = (await response.text()).trim()
+    throw new Error(detail || 'Genereren van concept mislukt.')
+  }
+
   if (!contentType.includes('text/event-stream') || !response.body) {
     const data = (await response.json()) as WriteDraftResponse | WriteDraftError
-    if (!response.ok || 'error' in data) {
-      throw new Error('error' in data ? data.error : 'Genereren van concept mislukt.')
-    }
+    if ('error' in data) throw new Error(data.error)
     onProgress?.(data.html)
     return data
   }
@@ -64,6 +113,19 @@ export async function generateDraftViaApi(
   const decoder = new TextDecoder()
   let buffer = ''
   let result: WriteDraftResponse | null = null
+  let streamError: string | null = null
+
+  const handleLines = (lines: string[]) => {
+    processStreamLines(lines, {
+      onDelta: onProgress,
+      onDone: (value) => {
+        result = value
+      },
+      onError: (message) => {
+        streamError = message
+      },
+    })
+  }
 
   while (true) {
     const { done, value } = await reader.read()
@@ -72,24 +134,16 @@ export async function generateDraftViaApi(
 
     const lines = buffer.split('\n')
     buffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      const event = parseStreamEvent(line)
-      if (!event) continue
-      if (event.type === 'delta') onProgress?.(event.accumulated)
-      if (event.type === 'done') {
-        result = {
-          html: event.html,
-          model: event.model,
-          provider: event.provider,
-        }
-      }
-      if (event.type === 'error') throw new Error(event.error)
-    }
+    handleLines(lines)
   }
 
+  if (buffer.trim()) {
+    handleLines(buffer.split('\n'))
+  }
+
+  if (streamError) throw new Error(streamError)
   if (!result) {
-    throw new Error('Genereren stopte zonder resultaat.')
+    throw new Error('Genereren stopte voortijdig. Probeer opnieuw of controleer de AI-configuratie.')
   }
 
   return result

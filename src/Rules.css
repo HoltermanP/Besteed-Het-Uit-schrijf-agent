@@ -1,0 +1,50 @@
+.rules-shell .rules-grid {
+  grid-template-columns: 1fr;
+  max-width: 920px;
+}
+
+.rules-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+  margin-bottom: 12px;
+}
+
+.rules-editor {
+  min-height: 220px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.rules-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.rules-list li {
+  align-items: flex-start;
+}
+
+.rules-list-active {
+  border-color: #164f4a;
+  background: #f3faf9;
+}
+
+.rules-list-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rules-status {
+  margin-top: 10px;
+}
+
+@media (max-width: 700px) {
+  .rules-fields {
+    grid-template-columns: 1fr;
+  }
+}

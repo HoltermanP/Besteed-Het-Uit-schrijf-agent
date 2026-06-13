@@ -11,6 +11,7 @@ import {
   Check,
   CheckCircle2,
   ClipboardCheck,
+  ClipboardList,
   Crown,
   Download,
   Eye,
@@ -39,7 +40,7 @@ import { assessSourceContent } from '../lib/sourceQuality'
 import type { TenderAnalysis } from '../types/tenderAnalysis'
 import { exportPdfFromHtml, exportWordDocument } from '../lib/documentExport'
 import { isNeonConfigured, isWriterConfigured, migrateLegacyNeonUrl } from '../lib/apiConfig'
-import { generateDraftViaApi } from '../lib/writeDraftApi'
+import { generateDraftViaApi, fetchWriterStatus, isNoAiConfigError, type WriterStatus } from '../lib/writeDraftApi'
 import { isCompanyConfigured, mergeDocumentsWithCompanyConfig } from '../lib/companyConfig'
 import { fetchStyleDocuments } from '../lib/styleDocumentsApi'
 import { mergeDocumentsWithStyleDocuments } from '../lib/styleDocumentMerge'
@@ -266,6 +267,8 @@ export default function WorkspacePage() {
   const [showAllSources, setShowAllSources] = useState(false)
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
   const [uploadingFiles, setUploadingFiles] = useState(false)
+  const [serverWriter, setServerWriter] = useState<WriterStatus>({ available: false, provider: null, model: null })
+  const writerActive = isWriterConfigured() || serverWriter.available
   const [styleDocuments, setStyleDocuments] = useState<StyleDocument[]>([])
   const effectiveDocuments = useMemo(
     () => mergeDocumentsWithStyleDocuments(mergeDocumentsWithCompanyConfig(documents), styleDocuments),
@@ -275,6 +278,10 @@ export default function WorkspacePage() {
   const styleLibraryActive = styleDocuments.length > 0
   const [exportingPdf, setExportingPdf] = useState(false)
   const editorRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    void fetchWriterStatus().then(setServerWriter)
+  }, [])
 
   useEffect(() => {
     void fetchStyleDocuments()
@@ -363,38 +370,38 @@ export default function WorkspacePage() {
     updateEditorHtml('<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
 
     try {
-      if (isWriterConfigured()) {
-        setSyncStatus('Schrijfagent schrijft concept…')
-        const aiResult = await generateDraftViaApi(
-          {
-            stage: targetStage,
-            project,
-            documents: effectiveDocuments,
-            comments,
-            analysis: result,
-            currentDraft: targetStage === 'brons' ? undefined : draft,
-          },
-          (accumulated) => {
-            updateEditorHtml(accumulated || '<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
-          },
-        )
-        updateEditorHtml(aiResult.html)
-        setFindings(reviewDraft(aiResult.html, effectiveDocuments, result))
-        setSyncStatus(
-          isNeonConfigured()
-            ? `Concept gegenereerd met ${aiResult.provider} (${aiResult.model})`
-            : `Concept gegenereerd met ${aiResult.provider} (${aiResult.model}), lokaal opgeslagen`,
-        )
+      setSyncStatus('Schrijfagent schrijft concept…')
+      const aiResult = await generateDraftViaApi(
+        {
+          stage: targetStage,
+          project,
+          documents: effectiveDocuments,
+          comments,
+          analysis: result,
+          currentDraft: targetStage === 'brons' ? undefined : draft,
+        },
+        (accumulated) => {
+          updateEditorHtml(accumulated || '<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
+        },
+      )
+      updateEditorHtml(aiResult.html)
+      setFindings(reviewDraft(aiResult.html, effectiveDocuments, result))
+      setSyncStatus(
+        isNeonConfigured()
+          ? `Concept gegenereerd met ${aiResult.provider} (${aiResult.model})`
+          : `Concept gegenereerd met ${aiResult.provider} (${aiResult.model}), lokaal opgeslagen`,
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Genereren mislukt.'
+      if (isNoAiConfigError(message)) {
+        setSyncStatus('Geen AI geconfigureerd — lokaal concept wordt gebouwd…')
+        const nextDraft = buildHtmlDraft(targetStage, project, effectiveDocuments, comments, result)
+        await revealDraftProgressively(nextDraft, updateEditorHtml)
+        setFindings(reviewDraft(nextDraft, effectiveDocuments, result))
+        setSyncStatus(isNeonConfigured() ? 'Analyse, concept en Neon-sync gereed' : 'Analyse en concept lokaal opgeslagen')
         return
       }
-
-      setSyncStatus('Concept wordt opgebouwd…')
-      const nextDraft = buildHtmlDraft(targetStage, project, effectiveDocuments, comments, result)
-      await revealDraftProgressively(nextDraft, updateEditorHtml)
-      setFindings(reviewDraft(nextDraft, effectiveDocuments, result))
-      setSyncStatus(isNeonConfigured() ? 'Analyse, concept en Neon-sync gereed' : 'Analyse en concept lokaal opgeslagen')
-    } catch (error) {
-      setSyncStatus(error instanceof Error ? error.message : 'Genereren mislukt.')
+      setSyncStatus(message)
     } finally {
       setGenerating(false)
     }
@@ -598,6 +605,9 @@ export default function WorkspacePage() {
         <Link className="secondary config-nav-link" to="/configuratie">
           <Building2 size={16} /> Bedrijfsconfiguratie
         </Link>
+        <Link className="secondary config-nav-link" to="/schrijfregels">
+          <ClipboardList size={16} /> Schrijfregels
+        </Link>
         <Link className="secondary config-nav-link" to="/schrijfstijl">
           <BookOpen size={16} /> Schrijfstijl &amp; kwaliteit
         </Link>
@@ -657,6 +667,9 @@ export default function WorkspacePage() {
 
         <p className="status workspace-status">
           {syncStatus}
+          {writerActive
+            ? ` · Schrijfagent actief${serverWriter.available && !isWriterConfigured() ? ' (server)' : ''}`
+            : ' · Schrijfagent niet actief'}
           {companyConfigActive ? ' · Bedrijfsconfig actief' : ''}
           {styleLibraryActive ? ' · Stijlbibliotheek actief' : ''}
         </p>

@@ -100,17 +100,59 @@ export async function createStyleDocument(input: {
   }
 
   const extracted = trimContent(await extractDocumentText(input.fileName, input.buffer))
+  return persistStyleDocument({
+    name: input.name.trim() || input.fileName,
+    fileName: input.fileName,
+    mimeType: input.mimeType || 'application/octet-stream',
+    category: input.category,
+    promptType: input.promptType,
+    content: extracted,
+  })
+}
+
+export async function createStyleDocumentFromText(input: {
+  name: string
+  category: StyleDocumentCategory
+  promptType: StyleDocumentPromptType
+  content: string
+}): Promise<StyleDocument> {
+  const name = input.name.trim()
+  const content = input.content.trim()
+  if (!name) throw new Error('Naam is verplicht.')
+  if (!content) throw new Error('Inhoud is verplicht.')
+
+  const fileName = `${name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'regel'}.txt`
+  validateStyleFileName(fileName)
+
+  return persistStyleDocument({
+    name,
+    fileName,
+    mimeType: 'text/plain',
+    category: input.category,
+    promptType: input.promptType,
+    content: trimContent(content),
+  })
+}
+
+async function persistStyleDocument(input: {
+  name: string
+  fileName: string
+  mimeType: string
+  category: StyleDocumentCategory
+  promptType: StyleDocumentPromptType
+  content: string
+}): Promise<StyleDocument> {
   const now = new Date()
 
   if (isDatabaseConfigured()) {
     const record = await prisma.styleDocument.create({
       data: {
-        name: input.name.trim() || input.fileName,
+        name: input.name,
         fileName: input.fileName,
-        mimeType: input.mimeType || 'application/octet-stream',
+        mimeType: input.mimeType,
         category: input.category,
         promptType: input.promptType,
-        content: extracted,
+        content: input.content,
       },
     })
     return mapRecord(record)
@@ -118,12 +160,12 @@ export async function createStyleDocument(input: {
 
   const document: StyleDocument = {
     id: crypto.randomUUID(),
-    name: input.name.trim() || input.fileName,
+    name: input.name,
     fileName: input.fileName,
-    mimeType: input.mimeType || 'application/octet-stream',
+    mimeType: input.mimeType,
     category: input.category,
     promptType: input.promptType,
-    content: extracted,
+    content: input.content,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
   }
@@ -132,6 +174,46 @@ export async function createStyleDocument(input: {
   store.documents.unshift(document)
   await writeDevStore(store)
   return document
+}
+
+export async function updateStyleDocument(input: {
+  id: string
+  name?: string
+  category?: StyleDocumentCategory
+  content?: string
+}): Promise<StyleDocument> {
+  if (!input.id.trim()) throw new Error('Document-id ontbreekt.')
+
+  if (isDatabaseConfigured()) {
+    const existing = await prisma.styleDocument.findUnique({ where: { id: input.id } })
+    if (!existing) throw new Error('Document niet gevonden.')
+
+    const record = await prisma.styleDocument.update({
+      where: { id: input.id },
+      data: {
+        ...(input.name?.trim() ? { name: input.name.trim() } : {}),
+        ...(input.category ? { category: input.category } : {}),
+        ...(input.content !== undefined ? { content: trimContent(input.content) } : {}),
+      },
+    })
+    return mapRecord(record)
+  }
+
+  const store = await readDevStore()
+  const index = store.documents.findIndex((doc) => doc.id === input.id)
+  if (index < 0) throw new Error('Document niet gevonden.')
+
+  const current = store.documents[index]
+  const updated: StyleDocument = {
+    ...current,
+    ...(input.name?.trim() ? { name: input.name.trim() } : {}),
+    ...(input.category ? { category: input.category } : {}),
+    ...(input.content !== undefined ? { content: trimContent(input.content) } : {}),
+    updatedAt: new Date().toISOString(),
+  }
+  store.documents[index] = updated
+  await writeDevStore(store)
+  return updated
 }
 
 export async function deleteStyleDocument(id: string): Promise<void> {
@@ -161,25 +243,52 @@ export async function handleStyleDocumentsRequest(request: Request): Promise<Res
     if (request.method === 'POST') {
       const formData = await request.formData()
       const file = formData.get('file')
-      if (!(file instanceof File)) {
-        throw new Error('Geen bestand ontvangen.')
-      }
-
       const category = String(formData.get('category') ?? 'richtlijnen') as StyleDocumentCategory
       const promptType = String(formData.get('promptType') ?? 'rules') as StyleDocumentPromptType
-      const name = String(formData.get('name') ?? file.name)
-      const buffer = Buffer.from(await file.arrayBuffer())
+      const name = String(formData.get('name') ?? '')
+      const content = String(formData.get('content') ?? '')
 
-      const document = await createStyleDocument({
-        name,
-        category,
-        promptType,
-        fileName: file.name,
-        mimeType: file.type,
-        buffer,
+      if (file instanceof File) {
+        const buffer = Buffer.from(await file.arrayBuffer())
+        const document = await createStyleDocument({
+          name: name || file.name,
+          category,
+          promptType,
+          fileName: file.name,
+          mimeType: file.type,
+          buffer,
+        })
+        return Response.json({ document }, { status: 201 })
+      }
+
+      if (content.trim()) {
+        const document = await createStyleDocumentFromText({
+          name: name || 'Schrijfregel',
+          category,
+          promptType,
+          content,
+        })
+        return Response.json({ document }, { status: 201 })
+      }
+
+      throw new Error('Geen bestand of tekst ontvangen.')
+    }
+
+    if (request.method === 'PUT') {
+      const body = (await request.json()) as {
+        id?: string
+        name?: string
+        category?: StyleDocumentCategory
+        content?: string
+      }
+      if (!body.id?.trim()) throw new Error('Document-id ontbreekt.')
+      const document = await updateStyleDocument({
+        id: body.id,
+        name: body.name,
+        category: body.category,
+        content: body.content,
       })
-
-      return Response.json({ document }, { status: 201 })
+      return Response.json({ document })
     }
 
     if (request.method === 'DELETE') {

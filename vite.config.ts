@@ -5,6 +5,7 @@ import { handleCompanyEnrichRequest } from './api-src/_lib/companyEnrich'
 import { applyDevApiEnv } from './api-src/_lib/devApiEnv'
 import { handleStyleDocumentsRequest } from './api-src/_lib/styleDocuments'
 import { handleWriteDraftRequest } from './api-src/_lib/writeDraft'
+import { getWriterStatusPayload } from './api-src/_lib/writerStatus'
 
 const jsonApiRoutes: Record<string, (body: unknown) => Promise<Response>> = {
   '/api/company-enrich': handleCompanyEnrichRequest,
@@ -68,14 +69,22 @@ function serverDevApi(env: Record<string, string>): Plugin {
 
         const isJsonRoute = req.method === 'POST' && jsonApiRoutes[req.url]
         const isStyleRoute = req.url.startsWith('/api/style-documents')
+        const isWriterStatusRoute = req.url === '/api/writer-status' && req.method === 'GET'
 
-        if (!isJsonRoute && !isStyleRoute) {
+        if (!isJsonRoute && !isStyleRoute && !isWriterStatusRoute) {
           next()
           return
         }
 
         const restoreEnv = applyDevApiEnv(env)
         try {
+          if (isWriterStatusRoute) {
+            res.statusCode = 200
+            res.setHeader('Content-Type', 'application/json')
+            res.end(JSON.stringify(getWriterStatusPayload()))
+            return
+          }
+
           if (isStyleRoute) {
             const response = await handleStyleDocumentsRequest(await toWebRequest(req, req.url))
             await sendWebResponse(res, response)
@@ -87,10 +96,11 @@ function serverDevApi(env: Record<string, string>): Plugin {
           const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}
           const response = await jsonApiRoutes[req.url!](body)
           await sendWebResponse(res, response)
-        } catch {
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Interne serverfout.'
           res.statusCode = 500
           res.setHeader('Content-Type', 'application/json')
-          res.end(JSON.stringify({ error: 'Interne serverfout.' }))
+          res.end(JSON.stringify({ error: message }))
         } finally {
           restoreEnv()
         }

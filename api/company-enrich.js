@@ -26,8 +26,15 @@ module.exports = __toCommonJS(company_enrich_exports);
 
 // api-src/_lib/aiClient.ts
 var ANTHROPIC_VERSION = "2023-06-01";
+var DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com";
+var DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
+function normalizeBaseUrl(value, fallback) {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === "undefined" || trimmed === "null") return fallback;
+  return trimmed;
+}
 function normalizeAnthropicBaseUrl(baseUrl) {
-  return baseUrl.trim().replace(/\/$/, "").replace(/\/v1$/, "");
+  return normalizeBaseUrl(baseUrl, DEFAULT_ANTHROPIC_BASE_URL).replace(/\/$/, "").replace(/\/v1$/, "");
 }
 function usesAdaptiveThinking(model) {
   return /claude-(opus-4-[678]|sonnet-4-6|fable-5|mythos-5)/i.test(model);
@@ -52,7 +59,7 @@ async function completeAnthropic(ai, messages, options) {
     body.thinking = { type: "adaptive" };
     body.output_config = { effort: options.effort ?? "high" };
   }
-  const baseUrl = normalizeAnthropicBaseUrl(ai.baseUrl || "https://api.anthropic.com");
+  const baseUrl = normalizeAnthropicBaseUrl(normalizeBaseUrl(ai.baseUrl, DEFAULT_ANTHROPIC_BASE_URL));
   const response = await fetch(`${baseUrl}/v1/messages`, {
     method: "POST",
     headers: {
@@ -73,7 +80,7 @@ async function completeAnthropic(ai, messages, options) {
   return text;
 }
 async function completeOpenAiCompatible(ai, messages, options) {
-  const baseUrl = (ai.baseUrl.trim() || "https://api.openai.com/v1").replace(/\/$/, "");
+  const baseUrl = normalizeBaseUrl(ai.baseUrl, DEFAULT_OPENAI_BASE_URL).replace(/\/$/, "");
   const body = {
     model: ai.model,
     temperature: 0.2,
@@ -112,7 +119,7 @@ function resolveAnthropicFromEnv(modelEnv = "WRITER_MODEL") {
   if (!apiKey) return null;
   return {
     provider: "anthropic",
-    baseUrl: process.env.ANTHROPIC_BASE_URL?.trim() || "https://api.anthropic.com",
+    baseUrl: normalizeBaseUrl(process.env.ANTHROPIC_BASE_URL, DEFAULT_ANTHROPIC_BASE_URL),
     apiKey,
     model: process.env[modelEnv]?.trim() || "claude-opus-4-8"
   };
@@ -122,19 +129,19 @@ function resolveOpenAiFromEnv(modelEnv = "OPENAI_MODEL") {
   if (!apiKey) return null;
   return {
     provider: "openai",
-    baseUrl: process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1",
+    baseUrl: normalizeBaseUrl(process.env.OPENAI_BASE_URL, DEFAULT_OPENAI_BASE_URL),
     apiKey,
     model: process.env[modelEnv]?.trim() || "gpt-4.1-mini"
   };
 }
 function resolveAiFromRequest(requestAi, envModelKey = "WRITER_MODEL") {
   if (requestAi?.apiKey?.trim()) {
-    const defaults = requestAi.provider === "anthropic" ? { baseUrl: "https://api.anthropic.com", model: "claude-opus-4-8" } : { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini" };
+    const defaults = requestAi.provider === "anthropic" ? { baseUrl: DEFAULT_ANTHROPIC_BASE_URL, model: "claude-opus-4-8" } : { baseUrl: DEFAULT_OPENAI_BASE_URL, model: "gpt-4.1-mini" };
     return {
       provider: requestAi.provider,
-      baseUrl: requestAi.baseUrl.trim() || defaults.baseUrl,
+      baseUrl: normalizeBaseUrl(requestAi.baseUrl, defaults.baseUrl),
       apiKey: requestAi.apiKey.trim(),
-      model: requestAi.model.trim() || defaults.model
+      model: requestAi.model?.trim() || defaults.model
     };
   }
   const anthropic = resolveAnthropicFromEnv(envModelKey);
