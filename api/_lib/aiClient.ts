@@ -1,4 +1,4 @@
-import type { AiProvider } from '../src/types/apiConfig'
+import type { AiProvider } from '../../src/types/apiConfig'
 
 export type AiRuntimeConfig = {
   provider: AiProvider

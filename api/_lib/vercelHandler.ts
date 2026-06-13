@@ -1,6 +1,16 @@
 import { buffer } from 'node:stream/consumers'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
+export function parseJsonBody(body: unknown): unknown {
+  if (body === undefined || body === null) return {}
+  if (typeof body === 'string') {
+    const trimmed = body.trim()
+    if (!trimmed) return {}
+    return JSON.parse(trimmed)
+  }
+  return body
+}
+
 function headersFromReq(req: VercelRequest): Headers {
   const headers = new Headers()
   for (const [key, value] of Object.entries(req.headers)) {

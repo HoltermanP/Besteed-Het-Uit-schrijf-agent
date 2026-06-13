@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { StyleDocument, StyleDocumentCategory, StyleDocumentPromptType } from '../src/types/styleDocument'
+import type { StyleDocument, StyleDocumentCategory, StyleDocumentPromptType } from '../../src/types/styleDocument'
 import { extractDocumentText, validateStyleFileName } from './extractDocumentText'
 import { isDatabaseConfigured, prisma } from './prisma'
 

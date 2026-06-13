@@ -1,5 +1,5 @@
 import { completeChat, resolveAiFromRequest, type AiRuntimeConfig } from './aiClient'
-import type { WriteDraftDocument, WriteDraftRequest, WriteDraftResponse } from '../src/types/writeDraft'
+import type { WriteDraftDocument, WriteDraftRequest, WriteDraftResponse } from '../../src/types/writeDraft'
 
 const stageInstructions: Record<WriteDraftRequest['stage'], string> = {
   brons:

@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { handleWriteDraftRequest } from '../server/writeDraft'
-import { sendWebResponse } from '../server/vercelHandler'
+import { handleWriteDraftRequest } from './_lib/writeDraft'
+import { parseJsonBody, sendWebResponse } from './_lib/vercelHandler'
 
 export const config = {
   maxDuration: 60,
@@ -12,7 +12,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const response = await handleWriteDraftRequest(req.body ?? {})
+    const response = await handleWriteDraftRequest(parseJsonBody(req.body))
     await sendWebResponse(res, response)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Interne serverfout bij genereren.'

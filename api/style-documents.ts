@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { handleStyleDocumentsRequest } from '../server/styleDocuments'
-import { createRequestFromVercel, sendWebResponse } from '../server/vercelHandler'
+import { handleStyleDocumentsRequest } from './_lib/styleDocuments'
+import { createRequestFromVercel, sendWebResponse } from './_lib/vercelHandler'
 
 export const config = {
   maxDuration: 30,

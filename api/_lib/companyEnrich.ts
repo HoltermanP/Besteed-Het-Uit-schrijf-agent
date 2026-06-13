@@ -2,7 +2,7 @@ import type {
   CompanyEnrichFields,
   CompanyEnrichRequest,
   CompanyEnrichResponse,
-} from '../src/types/companyEnrich'
+} from '../../src/types/companyEnrich'
 import { completeChat, resolveAiFromRequest } from './aiClient'
 
 const USER_AGENT = 'BesteedHetUit-CompanyEnrich/1.0'
