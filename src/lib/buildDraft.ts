@@ -128,7 +128,7 @@ export function buildHtmlDraft(
     : 'direct na gunning'
 
   const wordHint = analysis?.targetWordCount
-    ? ` (doel circa ${analysis.targetWordCount} woorden volgens leidraad)`
+    ? ` (streef naar max. ${analysis.targetWordCount} woorden volgens leidraad)`
     : ''
 
   const styleLead = analysis

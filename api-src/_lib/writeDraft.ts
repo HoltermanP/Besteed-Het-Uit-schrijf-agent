@@ -4,11 +4,11 @@ import type { TenderAnalysis } from '../../src/types/tenderAnalysis'
 
 const stageInstructions: Record<WriteDraftRequest['stage'], string> = {
   brons:
-    'Schrijf een volledige, zeer uitgebreide eerste versie van het gevraagde inschrijfstuk. Werk elk verplicht onderwerp diepgaand uit met concrete voorbeelden, werkwijze, bewijs en toetsbaarheid. Houd je STRIKT aan de volumelimiet als die in de leidraad staat; anders schrijf uitvoerig — geen samenvatting.',
+    'Schrijf een volledige eerste versie van het gevraagde inschrijfstuk. Werk elk verplicht onderwerp diepgaand uit. Staat er een maximum in de leidraad: gebruik dat woord- of karakterbudget bijna volledig (richting het maximum, zonder overschrijding). Geen maximum: schrijf zeer uitgebreid.',
   zilver:
-    'Verbeter en breid het bestaande concept uit: verwerk reviewopmerkingen, versterk bewijsvoering per beoordelingscriterium en vul alle inhoudelijke gaten. Respecteer volumelimieten; inkort alleen als de tekst boven het maximum zit.',
+    'Verbeter en breid het bestaande concept uit: verwerk reviewopmerkingen, versterk bewijsvoering en vul gaten. Met leidraad-maximum: breid uit tot dicht bij het maximum; inkort alleen boven het maximum.',
   goud:
-    'Lever de definitieve versie: volledig, concreet en exportklaar. Binnen woord- en/of karakterlimiet als die gelden; anders zeer uitgebreid zonder inhoud weg te laten.',
+    'Lever de definitieve versie: volledig, concreet en exportklaar. Met leidraad-maximum: eindig op 97–100% van het maximum; zonder maximum zeer uitgebreid.',
 }
 
 const stageLabels: Record<WriteDraftRequest['stage'], string> = {
@@ -43,7 +43,7 @@ STIJL
 - Volg schrijfregels en de gecombineerde schrijfstijl uit de analyse
 
 VOLUME (cruciaal)
-- Als de leidraad een maximum aantal woorden, karakters of pagina's noemt: blijf daar STRIKT onder (tel alleen zichtbare tekst, geen HTML-tags)
+- Als de leidraad een maximum aantal woorden, karakters of pagina's noemt: blijf daar STRIKT onder, maar gebruik het budget bijna volledig — schrijf richting het maximum (97–100%), niet een korte samenvatting
 - Als er GEEN maximum is: schrijf ZEER uitgebreid — minimaal 2500 woorden totaal, tenzij de leidraad expliciet korter vraagt
 - Per verplicht onderwerp: minimaal 4–8 alinea's met concrete werkwijze, voorbeelden, KPI's, rollen, planning en bewijs
 - Dit is een volwaardig inschrijfstuk voor een aanbesteding, geen managementsamenvatting of bullet-only tekst
@@ -62,6 +62,10 @@ const DOC_CHAR_LIMITS: Record<WriteDraftDocument['type'], number> = {
   rules: 20_000,
   training: 20_000,
 }
+
+/** Streefdoel en ondergrens t.o.v. leidraad-maximum */
+const VOLUME_TARGET_RATIO = 0.97
+const VOLUME_FLOOR_RATIO = 0.92
 
 function summarizeDocument(content: string, max: number): string {
   const clean = content.replace(/\s+/g, ' ').trim()
@@ -111,21 +115,25 @@ function buildVolumeInstruction(analysis: TenderAnalysis | null | undefined): st
   }
 
   const lines = [
-    'VOLUME — HARDE LIMIET (niet overschrijden)',
+    'VOLUME — HARDE LIMIET + GEBRUIK HET BUDGET',
     'Tel alleen zichtbare tekst in het artikel (paragrafen, koppen, lijsten, tabelcellen). Geen HTML-tags, geen metadata.',
+    'Schrijf richting het maximum uit de leidraad — een te kort stuk laat punten liggen; een te lang stuk is diskwalificerend.',
   ]
 
   if (analysis.targetWordCount) {
     const target = analysis.targetWordCount
+    const aimLow = Math.round(target * VOLUME_TARGET_RATIO)
     lines.push(
-      `- Maximum woorden: ${target} — streef naar ${Math.round(target * 0.9)}–${target} woorden`,
+      `- Maximum woorden: ${target} — streef naar ${aimLow}–${target} woorden (97–100% van het maximum)`,
+      `- Te kort (< ${Math.round(target * VOLUME_FLOOR_RATIO)} woorden) is onvoldoende; te lang (> ${target}) is niet toegestaan`,
     )
   }
 
   if (analysis.targetCharCount) {
     const target = analysis.targetCharCount
+    const aimLow = Math.round(target * VOLUME_TARGET_RATIO)
     lines.push(
-      `- Maximum karakters: ${target.toLocaleString('nl-NL')} — streef naar ${Math.round(target * 0.9).toLocaleString('nl-NL')}–${target.toLocaleString('nl-NL')} karakters`,
+      `- Maximum karakters: ${target.toLocaleString('nl-NL')} — streef naar ${aimLow.toLocaleString('nl-NL')}–${target.toLocaleString('nl-NL')} karakters`,
     )
   }
 
@@ -133,14 +141,14 @@ function buildVolumeInstruction(analysis: TenderAnalysis | null | undefined): st
     .filter((limit) => limit.unit === 'paginas' && limit.max)
     .forEach((limit) => {
       lines.push(
-        `- Maximum pagina's: ${limit.max}${limit.section ? ` (${limit.section})` : ''} — houd de tekst compact genoeg`,
+        `- Maximum pagina's: ${limit.max}${limit.section ? ` (${limit.section})` : ''} — gebruik het paginabudget volledig binnen de limiet`,
       )
     })
 
   lines.push(
-    '- Bij zowel woorden als karakters: beide limieten gelden; kies de kortste variant die alle verplichte eisen dekt',
-    '- Prioriteit: eerst alle verplichte onderwerpen volledig, daarna detail — nooit boven het maximum',
-    '- Te lang? inkorten door herhaling en bijlagen te schrappen, niet door verplichte eisen weg te laten',
+    '- Bij zowel woorden als karakters: beide limieten gelden; benut het strakste maximum zo volledig mogelijk',
+    '- Prioriteit: eerst alle verplichte onderwerpen volledig, daarna detail tot dicht bij het maximum',
+    '- Te lang? inkorten door herhaling te schrappen, niet door verplichte eisen weg te laten',
   )
 
   return lines.join('\n')
@@ -154,7 +162,9 @@ function formatVolumeSummary(analysis: TenderAnalysis): string {
   }
 
   const parts: string[] = []
-  if (analysis.targetWordCount) parts.push(`max. ${analysis.targetWordCount} woorden`)
+  if (analysis.targetWordCount) {
+    parts.push(`max. ${analysis.targetWordCount} woorden (streef 97–100%)`)
+  }
   if (analysis.targetCharCount) {
     parts.push(`max. ${analysis.targetCharCount.toLocaleString('nl-NL')} karakters`)
   }
@@ -315,12 +325,14 @@ ${request.currentDraft.slice(0, 40_000)}`
   const stageTask =
     request.stage === 'brons'
       ? volumeLimited
-        ? 'Schrijf het volledige inschrijfstuk binnen de volumelimiet uit de leidraad.'
+        ? 'Schrijf het volledige inschrijfstuk en gebruik het volumemaximum uit de leidraad bijna volledig (97–100%, zonder overschrijding).'
         : 'Schrijf het volledige inschrijfstuk zeer uitgebreid — minimaal 2500 woorden, met alle verplichte onderwerpen diepgaand uitgewerkt.'
       : request.stage === 'zilver'
-        ? 'Verbeter het huidige concept; verwerk alle open reviewopmerkingen en respecteer volumelimieten.'
+        ? volumeLimited
+          ? 'Verbeter het huidige concept; verwerk alle open reviewopmerkingen en breid uit tot dicht bij het leidraad-maximum.'
+          : 'Verbeter het huidige concept; verwerk alle open reviewopmerkingen en breid uit waar nodig.'
         : volumeLimited
-          ? 'Finaliseer het concept: binnen woord- en/of karakterlimiet, exportklaar.'
+          ? 'Finaliseer het concept op 97–100% van het leidraad-maximum, exportklaar.'
           : 'Finaliseer het concept: volledig en uitgebreid, zonder inhoud weg te laten.'
 
   return `Fase: ${stageLabels[request.stage]} — ${stageInstructions[request.stage]}
@@ -380,20 +392,56 @@ function countVisibleWords(html: string): number {
   return plain ? plain.split(' ').length : 0
 }
 
+function countVisibleCharacters(html: string): number {
+  return html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().length
+}
+
 function minimumWordTarget(request: WriteDraftRequest): number {
   const analysis = request.analysis
-  if (analysis?.targetWordCount) return Math.round(analysis.targetWordCount * 0.85)
+  if (analysis?.targetWordCount) {
+    return Math.round(analysis.targetWordCount * VOLUME_TARGET_RATIO)
+  }
   const mandatory = analysis?.contentRequirements?.filter((item) => item.mandatory).length ?? 0
   return Math.max(2500, mandatory * 350)
 }
 
 function needsContinuation(accumulated: string, request: WriteDraftRequest): boolean {
   if (!isArticleComplete(accumulated)) return true
-  if (hasVolumeLimit(request.analysis ?? ({} as TenderAnalysis))) return false
-  return countVisibleWords(accumulated) < minimumWordTarget(request)
+
+  const analysis = request.analysis
+  const words = countVisibleWords(accumulated)
+
+  if (analysis?.targetWordCount) {
+    return words < Math.round(analysis.targetWordCount * VOLUME_FLOOR_RATIO)
+  }
+
+  if (analysis?.targetCharCount) {
+    return countVisibleCharacters(accumulated) < Math.round(analysis.targetCharCount * VOLUME_FLOOR_RATIO)
+  }
+
+  return words < minimumWordTarget(request)
 }
 
-const CONTINUATION_USER_PROMPT = `Het vorige antwoord stopte voortijdig. Ga EXACT verder waar de tekst stopte — herhaal geen bestaande alinea's of secties. Sluit alle open HTML-tags af en eindig met </article>. Werk alle resterende verplichte onderwerpen volledig uit.`
+function buildContinuationPrompt(request: WriteDraftRequest, accumulated: string): string {
+  const analysis = request.analysis
+  const words = countVisibleWords(accumulated)
+  let volumeHint = ''
+
+  if (analysis?.targetWordCount) {
+    const target = analysis.targetWordCount
+    const aimLow = Math.round(target * VOLUME_TARGET_RATIO)
+    volumeHint = ` Het concept telt nu circa ${words} woorden. Breid uit richting het maximum van ${target} woorden (streef ${aimLow}–${target}) zonder het maximum te overschrijden.`
+  } else if (analysis?.targetCharCount) {
+    const target = analysis.targetCharCount
+    const chars = countVisibleCharacters(accumulated)
+    const aimLow = Math.round(target * VOLUME_TARGET_RATIO)
+    volumeHint = ` Het concept telt nu circa ${chars.toLocaleString('nl-NL')} karakters. Breid uit richting het maximum van ${target.toLocaleString('nl-NL')} karakters (streef ${aimLow.toLocaleString('nl-NL')}–${target.toLocaleString('nl-NL')}).`
+  } else {
+    volumeHint = ` Het concept telt nu circa ${words} woorden. Werk alle resterende verplichte onderwerpen volledig uit tot minimaal ${minimumWordTarget(request)} woorden.`
+  }
+
+  return `Het vorige antwoord stopte voortijdig. Ga EXACT verder waar de tekst stopte — herhaal geen bestaande alinea's of secties. Sluit alle open HTML-tags af en eindig met </article>.${volumeHint}`
+}
 
 async function streamDraftToCompletion(
   ai: AiRuntimeConfig,
@@ -423,7 +471,7 @@ async function streamDraftToCompletion(
     messages = [
       ...baseMessages,
       { role: 'assistant', content: accumulated },
-      { role: 'user', content: CONTINUATION_USER_PROMPT },
+      { role: 'user', content: buildContinuationPrompt(request, accumulated) },
     ]
   }
 
@@ -501,7 +549,7 @@ export async function generateDraftWithAi(
     messages = [
       ...baseMessages,
       { role: 'assistant', content: accumulated },
-      { role: 'user', content: CONTINUATION_USER_PROMPT },
+      { role: 'user', content: buildContinuationPrompt(request, accumulated) },
     ]
   }
 

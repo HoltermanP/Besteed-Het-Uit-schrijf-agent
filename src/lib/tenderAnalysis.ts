@@ -717,11 +717,11 @@ export function reviewAgainstAnalysis(
     })
   }
 
-  if (analysis.targetWordCount && words < analysis.targetWordCount * 0.6) {
+  if (analysis.targetWordCount && words < analysis.targetWordCount * 0.9) {
     findings.push({
-      priority: 'normaal',
+      priority: 'hoog',
       title: 'Concept onder woorddoel',
-      detail: `Concept telt ${words} woorden; leidraad suggereert circa ${analysis.targetWordCount} woorden.`,
+      detail: `Concept telt ${words} woorden; leidraad maximaal ${analysis.targetWordCount} — streef naar ${Math.round(analysis.targetWordCount * 0.97)}–${analysis.targetWordCount} woorden.`,
     })
   }
 
