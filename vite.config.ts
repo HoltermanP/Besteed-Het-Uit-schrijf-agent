@@ -1,10 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
-import { handleCompanyEnrichRequest } from './api/_lib/companyEnrich'
-import { applyDevApiEnv } from './api/_lib/devApiEnv'
-import { handleStyleDocumentsRequest } from './api/_lib/styleDocuments'
-import { handleWriteDraftRequest } from './api/_lib/writeDraft'
+import { handleCompanyEnrichRequest } from './api-src/_lib/companyEnrich'
+import { applyDevApiEnv } from './api-src/_lib/devApiEnv'
+import { handleStyleDocumentsRequest } from './api-src/_lib/styleDocuments'
+import { handleWriteDraftRequest } from './api-src/_lib/writeDraft'
 
 const jsonApiRoutes: Record<string, (body: unknown) => Promise<Response>> = {
   '/api/company-enrich': handleCompanyEnrichRequest,

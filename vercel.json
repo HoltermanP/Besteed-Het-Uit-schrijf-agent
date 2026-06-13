@@ -6,14 +6,15 @@
     }
   ],
   "functions": {
-    "api/company-enrich.ts": {
+    "api/company-enrich.js": {
       "maxDuration": 60
     },
-    "api/write-draft.ts": {
+    "api/write-draft.js": {
       "maxDuration": 60
     },
-    "api/style-documents.ts": {
-      "maxDuration": 30
+    "api/style-documents.js": {
+      "maxDuration": 30,
+      "includeFiles": "node_modules/.prisma/client/**"
     }
   }
 }
