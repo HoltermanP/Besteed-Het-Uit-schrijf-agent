@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "prisma migrate deploy && prisma generate && tsc -b && vite build",
+    "build": "prisma generate && tsc -b && vite build",
     "postinstall": "prisma generate",
+    "migrate:deploy": "prisma migrate deploy",
     "db:push": "prisma db push",
     "lint": "eslint .",
     "preview": "vite preview",
