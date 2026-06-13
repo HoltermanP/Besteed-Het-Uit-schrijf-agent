@@ -5,6 +5,24 @@ import type {
   CompanyEnrichResponse,
 } from '../types/companyEnrich'
 
+async function readApiJson<T>(response: Response): Promise<T | CompanyEnrichError> {
+  const raw = await response.text()
+  if (!raw.trim()) {
+    return { error: 'Lege serverrespons ontvangen.' }
+  }
+
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    const preview = raw.replace(/\s+/g, ' ').trim().slice(0, 180)
+    return {
+      error: preview.startsWith('{')
+        ? 'Ongeldige serverrespons ontvangen.'
+        : preview || 'Ophalen van bedrijfsgegevens mislukt.',
+    }
+  }
+}
+
 export async function enrichCompanyFromWebsite(website: string): Promise<CompanyEnrichResponse> {
   const trimmed = website.trim()
   if (!trimmed) {
@@ -28,7 +46,7 @@ export async function enrichCompanyFromWebsite(website: string): Promise<Company
     body: JSON.stringify(payload),
   })
 
-  const data = (await response.json()) as CompanyEnrichResponse | CompanyEnrichError
+  const data = await readApiJson<CompanyEnrichResponse>(response)
   if (!response.ok || 'error' in data) {
     throw new Error('error' in data ? data.error : 'Ophalen van bedrijfsgegevens mislukt.')
   }

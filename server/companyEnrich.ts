@@ -54,7 +54,7 @@ async function fetchText(url: string, init?: RequestInit): Promise<string> {
       Accept: 'text/plain, text/html, application/xhtml+xml',
       ...(init?.headers ?? {}),
     },
-    signal: init?.signal ?? AbortSignal.timeout(20_000),
+    signal: init?.signal ?? AbortSignal.timeout(12_000),
   })
   if (!response.ok) {
     throw new Error(`Bron niet bereikbaar (${response.status}): ${url}`)
@@ -140,7 +140,12 @@ async function extractFactsWithAi(
   )
 
   const jsonText = content.match(/```json?\s*([\s\S]*?)```/i)?.[1]?.trim() ?? content.trim()
-  const parsed = JSON.parse(jsonText) as CompanyEnrichFields & { notes?: string }
+  let parsed: CompanyEnrichFields & { notes?: string }
+  try {
+    parsed = JSON.parse(jsonText) as CompanyEnrichFields & { notes?: string }
+  } catch {
+    throw new Error('AI gaf geen geldig JSON-resultaat terug. Probeer opnieuw.')
+  }
   return {
     fields: {
       name: parsed.name?.trim() ?? '',
@@ -165,17 +170,24 @@ export async function enrichCompanyFromWebsite(
   const hostname = new URL(website).hostname.replace(/^www\./, '')
 
   const sourceBlocks: Array<{ source: string; text: string }> = []
-  sourceBlocks.push(await readWebsiteContent(website))
 
   const searchQueries = [
     `${hostname} kvk bedrijfsgegevens`,
-    `${hostname} referenties opdrachtgevers`,
-    `"${hostname}" Nederland`,
+    `${hostname} bedrijf Nederland`,
   ]
 
-  for (const query of searchQueries) {
-    const result = await searchWeb(query)
-    if (result) sourceBlocks.push(result)
+  const results = await Promise.allSettled([
+    readWebsiteContent(website),
+    ...searchQueries.map((query) => searchWeb(query)),
+  ])
+
+  for (const result of results) {
+    if (result.status !== 'fulfilled' || !result.value) continue
+    sourceBlocks.push(result.value)
+  }
+
+  if (!sourceBlocks.some((block) => block.source === website)) {
+    throw new Error(`Kon de website ${website} niet bereiken. Controleer het adres.`)
   }
 
   const sources = sourceBlocks.map((block) => block.source)

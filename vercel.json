@@ -4,5 +4,16 @@
       "source": "/api/tenderned/:path*",
       "destination": "https://www.tenderned.nl/papi/tenderned-rs-tns/:path*"
     }
-  ]
+  ],
+  "functions": {
+    "api/company-enrich.ts": {
+      "maxDuration": 60
+    },
+    "api/write-draft.ts": {
+      "maxDuration": 60
+    },
+    "api/style-documents.ts": {
+      "maxDuration": 30
+    }
+  }
 }
