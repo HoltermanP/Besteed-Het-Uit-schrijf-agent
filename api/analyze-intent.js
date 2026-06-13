@@ -16,13 +16,13 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// api-src/company-enrich.ts
-var company_enrich_exports = {};
-__export(company_enrich_exports, {
+// api-src/analyze-intent.ts
+var analyze_intent_exports = {};
+__export(analyze_intent_exports, {
   config: () => config,
   default: () => handler
 });
-module.exports = __toCommonJS(company_enrich_exports);
+module.exports = __toCommonJS(analyze_intent_exports);
 
 // api-src/_lib/aiClient.ts
 var ANTHROPIC_VERSION = "2023-06-01";
@@ -153,194 +153,102 @@ function resolveAiFromRequest(requestAi, envModelKey = "WRITER_MODEL") {
   );
 }
 
-// api-src/_lib/companyEnrich.ts
-var USER_AGENT = "BesteedHetUit-CompanyEnrich/1.0";
-var MAX_SOURCE_CHARS = 24e3;
-var EMPTY_FIELDS = {
-  name: "",
-  tagline: "",
-  kvk: "",
-  website: "",
-  contactEmail: "",
-  profile: "",
-  competencies: "",
-  usps: "",
-  references: ""
-};
-function normalizeWebsite(input) {
-  const trimmed = input.trim();
-  if (!trimmed) throw new Error("Vul eerst een website in.");
-  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-  const url = new URL(withProtocol);
-  if (!["http:", "https:"].includes(url.protocol)) {
-    throw new Error("Alleen http- en https-adressen zijn toegestaan.");
-  }
-  return url.toString();
-}
-function trimSource(text, max = MAX_SOURCE_CHARS) {
-  const cleaned = text.replace(/\u0000/g, "").trim();
+// api-src/_lib/analyzeIntent.ts
+var DOC_CHAR_LIMIT = 18e3;
+function trimSource(text, max = DOC_CHAR_LIMIT) {
+  const cleaned = text.replace(/\u0000/g, "").replace(/\s+/g, " ").trim();
   if (cleaned.length <= max) return cleaned;
-  return `${cleaned.slice(0, max)}
+  return `${cleaned.slice(0, max)}\u2026`;
+}
+function formatDocuments(request) {
+  return request.documents.map((doc) => `- [${doc.type}] ${doc.name}:
+${trimSource(doc.content)}`).join("\n\n");
+}
+var SYSTEM_PROMPT = `Je bent een senior bid-analist voor Nederlandse aanbestedingen.
+Doel: achterhalen wat de opdrachtgever ECHT wil \u2014 de "vraag achter de vraag" \u2014 naast de expliciete leidraadeisen.
 
-[tekst ingekort]`;
-}
-function htmlToText(html) {
-  return html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-}
-async function fetchText(url, init) {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      "User-Agent": USER_AGENT,
-      Accept: "text/plain, text/html, application/xhtml+xml",
-      ...init?.headers ?? {}
-    },
-    signal: init?.signal ?? AbortSignal.timeout(12e3)
-  });
-  if (!response.ok) {
-    throw new Error(`Bron niet bereikbaar (${response.status}): ${url}`);
-  }
-  return response.text();
-}
-async function readWebsiteContent(website) {
-  try {
-    const jinaUrl = `https://r.jina.ai/${website}`;
-    const text2 = trimSource(await fetchText(jinaUrl));
-    if (text2.length > 120) {
-      return { source: website, text: `Website (${website}):
-${text2}` };
-    }
-  } catch {
-  }
-  const html = await fetchText(website, { headers: { Accept: "text/html" } });
-  const text = trimSource(htmlToText(html));
-  return { source: website, text: `Website (${website}):
-${text}` };
-}
-async function searchWeb(query) {
-  try {
-    const searchUrl = `https://s.jina.ai/${encodeURIComponent(query)}`;
-    const text = trimSource(await fetchText(searchUrl), 8e3);
-    if (!text.trim()) return null;
-    return {
-      source: `websearch:${query}`,
-      text: `Websearch (${query}):
-${text}`
-    };
-  } catch {
-    return null;
-  }
-}
-function resolveAiConfig(request) {
-  return resolveAiFromRequest(request.ai, "COMPANY_ENRICH_MODEL");
-}
-var SYSTEM_PROMPT = `Je extraheert bedrijfsgegevens voor een Nederlandse inschrijving.
 Regels:
-- Gebruik uitsluitend feiten die expliciet in de bronnen staan.
-- Verz\xEDn niets, extrapoleer niet en voeg geen marketingtaal toe.
-- Laat velden leeg ("") als de informatie niet hard te herleiden is.
-- KVK alleen invullen als een 8-cijferig nummer expliciet genoemd wordt.
-- E-mail alleen invullen als die letterlijk in de bron staat.
-- Tagline = korte positionering indien expliciet vermeld, anders leeg.
-- Profiel = feitelijke beschrijving van activiteiten/organisatie.
-- Kerncompetenties = feitelijke diensten/specialismen, komma-gescheiden.
-- USP's = alleen als expliciet genoemde onderscheidende punten; geen aannames.
-- Referenties = alleen genoemde klanten/projecten/cases met concrete feiten.
-Antwoord uitsluitend met geldig JSON in dit schema:
-{
-  "name": "",
-  "tagline": "",
-  "kvk": "",
-  "website": "",
-  "contactEmail": "",
-  "profile": "",
-  "competencies": "",
-  "usps": "",
-  "references": "",
-  "notes": ""
-}`;
-async function extractFactsWithAi(ai, website, sourcesText) {
-  const content = await completeChat(
-    ai,
-    [
-      { role: "system", content: SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: `Website URL: ${website}
+- Baseer je op de bronnen; verzin geen feiten over de opdrachtgever of opdracht.
+- Onderscheid expliciete vraag (formulieren, onderwerpen, bijlagen) vs onderliggende behoefte (zekerheid, grip, risico, EMVI-prioriteit).
+- Schrijf in het Nederlands, concreet en bruikbaar voor een bidwriter.
+- teamBrief is een intern reflectiestuk voor het inschrijver-team (niet voor indiening bij de opdrachtgever).
+- buyerPriorities: max 5 items, geordend op belang.
+- implicitSuccessFactors: max 5 items, wat impliciet succesvol maakt.
 
-Bronnen:
-${sourcesText}`
-      }
-    ],
-    { jsonMode: ai.provider !== "anthropic", maxTokens: 4e3, timeoutMs: 6e4 }
-  );
+Antwoord uitsluitend met geldig JSON:
+{
+  "explicitQuestion": "",
+  "underlyingNeed": "",
+  "questionBehindQuestion": "",
+  "buyerPriorities": [],
+  "implicitSuccessFactors": [],
+  "writingGuidance": "",
+  "teamBrief": ""
+}`;
+function parseIntentJson(content, baseline) {
   const jsonText = content.match(/```json?\s*([\s\S]*?)```/i)?.[1]?.trim() ?? content.trim();
   let parsed;
   try {
     parsed = JSON.parse(jsonText);
   } catch {
-    throw new Error("AI gaf geen geldig JSON-resultaat terug. Probeer opnieuw.");
+    return baseline;
   }
+  const teamBrief = parsed.teamBrief?.trim() || baseline.teamBrief;
   return {
-    fields: {
-      name: parsed.name?.trim() ?? "",
-      tagline: parsed.tagline?.trim() ?? "",
-      kvk: parsed.kvk?.trim() ?? "",
-      website: parsed.website?.trim() || website,
-      contactEmail: parsed.contactEmail?.trim() ?? "",
-      profile: parsed.profile?.trim() ?? "",
-      competencies: parsed.competencies?.trim() ?? "",
-      usps: parsed.usps?.trim() ?? "",
-      references: parsed.references?.trim() ?? ""
-    },
-    notes: parsed.notes?.trim() ?? ""
+    explicitQuestion: parsed.explicitQuestion?.trim() || baseline.explicitQuestion,
+    underlyingNeed: parsed.underlyingNeed?.trim() || baseline.underlyingNeed,
+    questionBehindQuestion: parsed.questionBehindQuestion?.trim() || baseline.questionBehindQuestion,
+    buyerPriorities: parsed.buyerPriorities?.filter(Boolean).slice(0, 5) ?? baseline.buyerPriorities,
+    implicitSuccessFactors: parsed.implicitSuccessFactors?.filter(Boolean).slice(0, 5) ?? baseline.implicitSuccessFactors,
+    writingGuidance: parsed.writingGuidance?.trim() || baseline.writingGuidance,
+    teamBrief
   };
 }
-async function enrichCompanyFromWebsite(request) {
-  const website = normalizeWebsite(request.website);
-  const ai = resolveAiConfig(request);
-  const hostname = new URL(website).hostname.replace(/^www\./, "");
-  const sourceBlocks = [];
-  const searchQueries = [
-    `${hostname} kvk bedrijfsgegevens`,
-    `${hostname} bedrijf Nederland`
-  ];
-  const results = await Promise.allSettled([
-    readWebsiteContent(website),
-    ...searchQueries.map((query) => searchWeb(query))
-  ]);
-  for (const result of results) {
-    if (result.status !== "fulfilled" || !result.value) continue;
-    sourceBlocks.push(result.value);
+async function handleAnalyzeIntentRequest(request) {
+  if (!request.buyerName?.trim()) {
+    return Response.json({ error: "Opdrachtgever ontbreekt." }, { status: 400 });
   }
-  if (!sourceBlocks.some((block) => block.source === website)) {
-    throw new Error(`Kon de website ${website} niet bereiken. Controleer het adres.`);
+  if (!request.documents?.length) {
+    return Response.json({ error: "Geen bronnen om te analyseren." }, { status: 400 });
   }
-  const sources = sourceBlocks.map((block) => block.source);
-  const sourcesText = sourceBlocks.map((block) => block.text).join("\n\n---\n\n");
-  if (!sourcesText.trim()) {
-    return {
-      fields: { ...EMPTY_FIELDS, website },
-      sources,
-      notes: "Geen bruikbare bronnen gevonden."
-    };
+  if (!request.baseline) {
+    return Response.json({ error: "Baseline-analyse ontbreekt." }, { status: 400 });
   }
-  const { fields, notes } = await extractFactsWithAi(ai, website, sourcesText);
-  return {
-    fields: { ...EMPTY_FIELDS, ...fields, website: fields.website || website },
-    sources,
-    notes
-  };
-}
-async function handleCompanyEnrichRequest(body) {
+  let ai;
   try {
-    const request = body ?? {};
-    const result = await enrichCompanyFromWebsite(request);
-    return Response.json(result);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Onbekende fout bij ophalen van bedrijfsgegevens.";
-    return Response.json({ error: message }, { status: 400 });
+    ai = resolveAiFromRequest(request.ai, "INTENT_MODEL");
+  } catch {
+    return Response.json({
+      underlyingIntent: request.baseline,
+      provider: "heuristiek",
+      model: "lokaal",
+      enriched: false
+    });
   }
+  const userContent = `Opdrachtgever: ${request.buyerName}
+
+Heuristische baseline (verbeter/verfijn waar de bronnen dat rechtvaardigen):
+${JSON.stringify(request.baseline, null, 2)}
+
+Bronnen:
+${formatDocuments(request)}
+
+Lever een scherpere vraag-achter-de-vraag analyse. teamBrief moet beginnen met "Intern \u2014 niet opnemen in het inschrijfdocument".`;
+  const content = await completeChat(
+    ai,
+    [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userContent }
+    ],
+    { jsonMode: ai.provider !== "anthropic", maxTokens: 4e3, timeoutMs: 9e4, useThinking: false }
+  );
+  const underlyingIntent = parseIntentJson(content, request.baseline);
+  return Response.json({
+    underlyingIntent,
+    provider: ai.provider,
+    model: ai.model,
+    enriched: true
+  });
 }
 
 // api-src/_lib/vercelHandler.ts
@@ -363,19 +271,19 @@ async function sendWebResponse(res, response) {
   res.send(body);
 }
 
-// api-src/company-enrich.ts
+// api-src/analyze-intent.ts
 var config = {
-  maxDuration: 60
+  maxDuration: 120
 };
 async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
   try {
-    const response = await handleCompanyEnrichRequest(parseJsonBody(req.body));
+    const response = await handleAnalyzeIntentRequest(parseJsonBody(req.body));
     await sendWebResponse(res, response);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Interne serverfout bij ophalen van bedrijfsgegevens.";
+    const message = error instanceof Error ? error.message : "Interne serverfout bij intent-analyse.";
     res.status(500).json({ error: message });
   }
 }

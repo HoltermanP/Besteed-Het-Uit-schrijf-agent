@@ -4,7 +4,7 @@ import { parseJsonBody, sendWebResponse } from './_lib/vercelHandler'
 import type { WriteDraftRequest } from '../src/types/writeDraft'
 
 export const config = {
-  maxDuration: 60,
+  maxDuration: 300,
 }
 
 async function pipeWebStream(res: VercelResponse, response: Response) {

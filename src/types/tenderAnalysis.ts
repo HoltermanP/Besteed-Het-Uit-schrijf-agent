@@ -38,6 +38,18 @@ export type StyleProfile = {
   blendedGuidance: string
 }
 
+/** Onderliggende opdrachtintentie — de "vraag achter de vraag" */
+export type UnderlyingIntent = {
+  explicitQuestion: string
+  underlyingNeed: string
+  questionBehindQuestion: string
+  buyerPriorities: string[]
+  implicitSuccessFactors: string[]
+  writingGuidance: string
+  /** Intern reflectiestuk voor het inschrijver-team; niet bedoeld voor indiening */
+  teamBrief: string
+}
+
 export type TenderAnalysis = {
   analyzedAt: string
   leidraadFound: boolean
@@ -48,6 +60,7 @@ export type TenderAnalysis = {
   documentRequirements: DocumentRequirement[]
   evaluationCriteria: string[]
   styleProfile: StyleProfile
+  underlyingIntent?: UnderlyingIntent
   gaps: string[]
   targetWordCount?: number
   targetCharCount?: number

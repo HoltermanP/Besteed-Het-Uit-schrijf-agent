@@ -17,6 +17,8 @@ export type AiCompletionOptions = {
   maxTokens?: number
   timeoutMs?: number
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  /** Adaptive thinking verbruikt output-budget; standaard uit voor lange teksten. */
+  useThinking?: boolean
 }
 
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -67,7 +69,7 @@ async function completeAnthropic(
   }
 
   if (system) body.system = system
-  if (usesAdaptiveThinking(ai.model)) {
+  if (options.useThinking && usesAdaptiveThinking(ai.model)) {
     body.thinking = { type: 'adaptive' }
     body.output_config = { effort: options.effort ?? 'high' }
   }
@@ -116,7 +118,7 @@ async function* streamAnthropic(
   }
 
   if (system) body.system = system
-  if (usesAdaptiveThinking(ai.model)) {
+  if (options.useThinking && usesAdaptiveThinking(ai.model)) {
     body.thinking = { type: 'adaptive' }
     body.output_config = { effort: options.effort ?? 'high' }
   }
@@ -153,6 +155,26 @@ async function* streamAnthropic(
     buffer = lines.pop() ?? ''
 
     for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      const payload = line.slice(6).trim()
+      if (!payload || payload === '[DONE]') continue
+      try {
+        const event = JSON.parse(payload) as {
+          type?: string
+          delta?: { type?: string; text?: string }
+        }
+        if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+          const text = event.delta.text
+          if (text) yield text
+        }
+      } catch {
+        // onvolledige SSE-regel overslaan
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    for (const line of buffer.split('\n')) {
       if (!line.startsWith('data: ')) continue
       const payload = line.slice(6).trim()
       if (!payload || payload === '[DONE]') continue

@@ -36,6 +36,7 @@ import {
 import { buildHtmlDraft } from '../lib/buildDraft'
 import { revealDraftProgressively } from '../lib/draftProgress'
 import { analyzeTenderDocuments, countCharacters, countWords, reviewAgainstAnalysis } from '../lib/tenderAnalysis'
+import { enrichIntentViaApi } from '../lib/analyzeIntentApi'
 import { assessSourceContent } from '../lib/sourceQuality'
 import { readFileContent } from '../lib/extractTextApi'
 import FileUploadZone from '../components/FileUploadZone'
@@ -358,17 +359,28 @@ export default function WorkspacePage() {
     }
   }, [analysis, comments, draft, effectiveDocuments.length])
 
-  const runAnalysis = () => {
+  const runAnalysis = async () => {
     const result = analyzeTenderDocuments(effectiveDocuments, project.buyer)
     setAnalysis(result)
     setSyncStatus(`Leidraadanalyse: ${result.contentRequirements.length} eisen, ${result.documentRequirements.length} documenten`)
+
+    const enriched = await enrichIntentViaApi(project.buyer, effectiveDocuments, result.underlyingIntent!)
+    if (enriched?.enriched) {
+      const merged = { ...result, underlyingIntent: enriched.underlyingIntent }
+      setAnalysis(merged)
+      setSyncStatus(
+        `Vraag achter de vraag verrijkt met ${enriched.provider} (${enriched.model})`,
+      )
+      return merged
+    }
+
     return result
   }
 
   const analyzeAndGenerate = async (targetStage = stage) => {
     setGenerating(true)
     setSyncStatus('Leidraad analyseren…')
-    const result = runAnalysis()
+    const result = await runAnalysis()
     setStage(targetStage)
     updateEditorHtml('<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
 
@@ -386,6 +398,7 @@ export default function WorkspacePage() {
         (accumulated) => {
           updateEditorHtml(accumulated || '<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
         },
+        (message) => setSyncStatus(message),
       )
       updateEditorHtml(aiResult.html)
       setFindings(reviewDraft(aiResult.html, effectiveDocuments, result))
@@ -542,7 +555,7 @@ export default function WorkspacePage() {
 
     setGenerating(true)
     setSyncStatus('Schrijfagent verwerkt opmerkingen…')
-    const result = analysis ?? runAnalysis()
+    const result = analysis ?? (await runAnalysis())
 
     try {
       const aiResult = await generateDraftViaApi(
@@ -905,7 +918,7 @@ export default function WorkspacePage() {
             <ScanSearch size={17} />
             <h2>Leidraadanalyse</h2>
           </div>
-          <button className="secondary" onClick={runAnalysis}><Search size={16} /> Analyseer dossier</button>
+          <button className="secondary" onClick={() => void runAnalysis()}><Search size={16} /> Analyseer dossier</button>
           {analysis ? (
             <div className="analysis-results">
               <p className="analysis-summary">{analysis.summary}</p>
@@ -914,6 +927,32 @@ export default function WorkspacePage() {
                 <span>{analysis.documentRequirements.length} documenten</span>
                 <span>{analysis.wordLimits.length} limieten</span>
               </div>
+              {analysis.underlyingIntent ? (
+                <div className="intent-panel">
+                  <h3>Vraag achter de vraag</h3>
+                  <p className="intent-explicit">
+                    <strong>Expliciet gevraagd:</strong> {analysis.underlyingIntent.explicitQuestion}
+                  </p>
+                  <p className="intent-core">{analysis.underlyingIntent.questionBehindQuestion}</p>
+                  <p className="intent-underlying">
+                    <strong>Onderliggende behoefte:</strong> {analysis.underlyingIntent.underlyingNeed}
+                  </p>
+                  {analysis.underlyingIntent.buyerPriorities.length > 0 ? (
+                    <>
+                      <h4>Prioriteiten opdrachtgever</h4>
+                      <ul className="analysis-list">
+                        {analysis.underlyingIntent.buyerPriorities.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : null}
+                  <details className="intent-brief-details">
+                    <summary>Intern teambrief (niet indienen)</summary>
+                    <pre className="intent-team-brief">{analysis.underlyingIntent.teamBrief}</pre>
+                  </details>
+                </div>
+              ) : null}
               {analysis.leidraadSource ? (
                 <p className="analysis-meta"><strong>Leidraad:</strong> {analysis.leidraadSource}</p>
               ) : null}

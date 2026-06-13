@@ -68,6 +68,16 @@ function renderAnalysisSection(analysis: TenderAnalysis) {
     ...analysis.styleProfile.buyerSignals.map((s) => `<li><strong>Opdrachtgever:</strong> ${escapeHtml(s)}</li>`),
   ].join('')
 
+  const intentBlock = analysis.underlyingIntent
+    ? `<div class="intent-brief internal-only">
+    <h3>Vraag achter de vraag (intern — niet indienen)</h3>
+    <p><strong>Expliciet gevraagd:</strong> ${escapeHtml(analysis.underlyingIntent.explicitQuestion)}</p>
+    <p>${escapeHtml(analysis.underlyingIntent.questionBehindQuestion)}</p>
+    <p><strong>Onderliggende behoefte:</strong> ${escapeHtml(analysis.underlyingIntent.underlyingNeed)}</p>
+    <pre class="intent-team-brief">${escapeHtml(analysis.underlyingIntent.teamBrief)}</pre>
+  </div>`
+    : ''
+
   return `<section class="doc-section analysis-section">
     <h2>0. Leidraadanalyse en schrijfstijl</h2>
     <p class="section-subtitle">${escapeHtml(analysis.summary)}</p>
@@ -93,6 +103,7 @@ function renderAnalysisSection(analysis: TenderAnalysis) {
 
     ${criteriaList ? `<h3>Beoordelingscriteria</h3><ul>${criteriaList}</ul>` : ''}
     ${styleList ? `<h3>Gecombineerde schrijfstijl</h3><ul>${styleList}</ul>` : ''}
+    ${intentBlock}
   </section>`
 }
 
@@ -151,7 +162,15 @@ export function buildHtmlDraft(
   <section class="doc-section">
     <h2>${sectionOffset + 1}. Begrip van de opdracht</h2>
     <p class="section-subtitle">Aansluiting op leidraad, beoordelingscriteria en opdrachtcontext${wordHint}</p>
-    <p>De aanbesteding vraagt om een partner die niet alleen voldoet aan de eisen uit de leidraad, maar zichtbaar stuurt op kwaliteit, continuiteit, duurzaamheid en implementatierisico’s. Onze aanpak vertaalt deze beoordelingscriteria naar concrete werkafspraken, meetpunten en beslismomenten.</p>
+    <p>${
+      analysis?.underlyingIntent
+        ? escapeHtml(
+            `${analysis.underlyingIntent.questionBehindQuestion} Onze aanpak vertaalt de expliciete eisen (${analysis.underlyingIntent.explicitQuestion}) naar concrete werkafspraken, meetpunten en beslismomenten die aansluiten op wat ${project.buyer} werkelijk zoekt: ${summarize(analysis.underlyingIntent.underlyingNeed, 180)}.`,
+          )
+        : escapeHtml(
+            'De aanbesteding vraagt om een partner die niet alleen voldoet aan de eisen uit de leidraad, maar zichtbaar stuurt op kwaliteit, continuiteit, duurzaamheid en implementatierisico’s. Onze aanpak vertaalt deze beoordelingscriteria naar concrete werkafspraken, meetpunten en beslismomenten.',
+          )
+    }</p>
     <blockquote>${escapeHtml(summarize(tenderText || 'Nog geen aanbestedingsstukken toegevoegd.'))}</blockquote>
   </section>
 

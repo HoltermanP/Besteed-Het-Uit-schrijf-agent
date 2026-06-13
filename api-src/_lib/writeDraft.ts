@@ -1,4 +1,4 @@
-import { completeChat, resolveAiFromRequest, streamChat, type AiRuntimeConfig } from './aiClient'
+import { completeChat, resolveAiFromRequest, streamChat, type AiRuntimeConfig, type AiMessage } from './aiClient'
 import type { WriteDraftDocument, WriteDraftRequest, WriteDraftResponse } from '../../src/types/writeDraft'
 import type { TenderAnalysis } from '../../src/types/tenderAnalysis'
 
@@ -31,7 +31,9 @@ BRONHIËRARCHIE (streng, van hoog naar laag)
 INHOUDELIJKE REGELS
 - Maak per verplicht onderwerp uit de leidraadanalyse een eigen <section class="doc-section"> met genummerde <h2>
 - Koppel elke sectie in een <p class="section-subtitle"> aan het relevante beoordelingscriterium of subcriterium
-- Beantwoord wat de opdrachtgever expliciet vraagt; voeg geen standaardparagrafen toe over risico, duurzaamheid, implementatie of continuiteit tenzij de leidraad dat vereist
+- Beantwoord wat de opdrachtgever expliciet vraagt én adresseer de onderliggende behoefte uit de analyse "vraag achter de vraag"
+- Laat in elke sectie impliciet zien dat u het werkelijke doel van de opdrachtgever begrijpt (zekerheid, grip, beheersbaarheid, EMVI-prioriteiten)
+- Voeg geen standaardparagrafen toe over risico, duurzaamheid, implementatie of continuiteit tenzij de leidraad dat vereist
 - Onderbouw uitspraken met feiten uit bedrijfsbronnen; geen lege superlatieven
 - Ontbrekende feiten niet verzinnen — weglaten of voorzichtig formuleren
 - Verwijs niet naar het schrijfproces, AI, prompts of interne review
@@ -212,6 +214,38 @@ function formatDocumentRequirements(analysis: TenderAnalysis): string {
     .join('\n')
 }
 
+function formatUnderlyingIntent(analysis: TenderAnalysis): string {
+  const intent = analysis.underlyingIntent
+  if (!intent) {
+    return '- Geen vraag-achter-de-vraag analyse — leid onderliggende behoefte af uit leidraad en beoordelingscriteria.'
+  }
+
+  const lines = [
+    `Expliciete vraag: ${intent.explicitQuestion}`,
+    `Vraag achter de vraag: ${intent.questionBehindQuestion}`,
+    `Onderliggende behoefte: ${intent.underlyingNeed}`,
+  ]
+
+  if (intent.buyerPriorities.length) {
+    lines.push('', 'Prioriteiten opdrachtgever:')
+    intent.buyerPriorities.forEach((item, index) => {
+      lines.push(`${index + 1}. ${item}`)
+    })
+  }
+
+  if (intent.implicitSuccessFactors.length) {
+    lines.push('', 'Impliciete succescriteria:')
+    intent.implicitSuccessFactors.forEach((item, index) => {
+      lines.push(`${index + 1}. ${item}`)
+    })
+  }
+
+  lines.push('', `Schrijflens: ${intent.writingGuidance}`)
+  lines.push('', 'Let op: teamBrief uit de analyse is intern — niet opnemen in het inschrijfdocument.')
+
+  return lines.join('\n')
+}
+
 function buildStructureInstruction(analysis: TenderAnalysis | null | undefined): string {
   if (!analysis) {
     return `STRUCTUUR
@@ -233,6 +267,9 @@ ${formatContentRequirements(analysis)}
 Beoordelingscriteria (elke sectie moet minstens één criterium adresseren):
 ${formatEvaluationCriteria(analysis)}
 
+Vraag achter de vraag (schrijflens — verwerk in inhoud, niet als apart meta-stuk):
+${formatUnderlyingIntent(analysis)}
+
 Verwachte bijlagen (inhoudelijk verwerken waar het plan van aanpak dat vraagt; niet als losse lijst dumpen):
 ${formatDocumentRequirements(analysis)}`
 }
@@ -251,7 +288,8 @@ function buildAnalysisBlock(analysis: TenderAnalysis | null | undefined): string
 - Volume: ${formatVolumeSummary(analysis)}
 - Schrijfstijl: ${analysis.styleProfile.blendedGuidance}
 - Inschrijver (${analysis.styleProfile.companyName}): ${analysis.styleProfile.companySignals.join('; ') || 'geen signalen'}
-- Opdrachtgever (${analysis.styleProfile.buyerName}): ${analysis.styleProfile.buyerSignals.join('; ') || 'geen signalen'}${gaps}`
+- Opdrachtgever (${analysis.styleProfile.buyerName}): ${analysis.styleProfile.buyerSignals.join('; ') || 'geen signalen'}
+${analysis.underlyingIntent ? `- Vraag achter de vraag: ${analysis.underlyingIntent.questionBehindQuestion}` : ''}${gaps}`
 }
 
 function docsByType(request: WriteDraftRequest, type: WriteDraftDocument['type']): string {
@@ -322,15 +360,79 @@ Lever uitsluitend het HTML-artikel.`
 
 function extractHtml(content: string): string {
   const fenced = content.match(/```html?\s*([\s\S]*?)```/i)
-  if (fenced?.[1]?.trim()) return fenced[1].trim()
+  if (fenced?.[1]?.trim() && isArticleComplete(fenced[1])) return fenced[1].trim()
 
   const article = content.match(/<article[\s\S]*<\/article>/i)
   if (article?.[0]) return article[0]
 
   const trimmed = content.trim()
-  if (trimmed.startsWith('<article')) return trimmed
+  if (trimmed.startsWith('<article') && isArticleComplete(trimmed)) return trimmed
 
-  throw new Error('Schrijfagent gaf geen geldige HTML terug.')
+  throw new Error('Concept is onvolledig — het HTML-artikel is niet afgesloten.')
+}
+
+function isArticleComplete(content: string): boolean {
+  return /<\/article>\s*$/i.test(content.trim())
+}
+
+function countVisibleWords(html: string): number {
+  const plain = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  return plain ? plain.split(' ').length : 0
+}
+
+function minimumWordTarget(request: WriteDraftRequest): number {
+  const analysis = request.analysis
+  if (analysis?.targetWordCount) return Math.round(analysis.targetWordCount * 0.85)
+  const mandatory = analysis?.contentRequirements?.filter((item) => item.mandatory).length ?? 0
+  return Math.max(2500, mandatory * 350)
+}
+
+function needsContinuation(accumulated: string, request: WriteDraftRequest): boolean {
+  if (!isArticleComplete(accumulated)) return true
+  if (hasVolumeLimit(request.analysis ?? ({} as TenderAnalysis))) return false
+  return countVisibleWords(accumulated) < minimumWordTarget(request)
+}
+
+const CONTINUATION_USER_PROMPT = `Het vorige antwoord stopte voortijdig. Ga EXACT verder waar de tekst stopte — herhaal geen bestaande alinea's of secties. Sluit alle open HTML-tags af en eindig met </article>. Werk alle resterende verplichte onderwerpen volledig uit.`
+
+async function streamDraftToCompletion(
+  ai: AiRuntimeConfig,
+  request: WriteDraftRequest,
+  send: (payload: Record<string, unknown>) => void,
+): Promise<string> {
+  const options = chatOptions(request)
+  const baseMessages = buildChatMessages(request)
+  let accumulated = ''
+  let messages: AiMessage[] = baseMessages
+  const maxPasses = 5
+
+  for (let pass = 0; pass < maxPasses; pass++) {
+    if (pass > 0) {
+      send({ type: 'status', message: `Concept voortzetten (deel ${pass + 1})…` })
+    }
+
+    for await (const chunk of streamChat(ai, messages, options)) {
+      accumulated += chunk
+      send({ type: 'delta', text: chunk, accumulated })
+    }
+
+    if (!needsContinuation(accumulated, request)) {
+      return extractHtml(accumulated)
+    }
+
+    messages = [
+      ...baseMessages,
+      { role: 'assistant', content: accumulated },
+      { role: 'user', content: CONTINUATION_USER_PROMPT },
+    ]
+  }
+
+  if (accumulated.trim().startsWith('<article')) {
+    const closed = `${accumulated.trim()}\n</article>`
+    if (isArticleComplete(closed)) return closed
+  }
+
+  throw new Error('Concept kon niet volledig worden afgerond. Probeer opnieuw te genereren.')
 }
 
 function buildChatMessages(request: WriteDraftRequest) {
@@ -344,6 +446,7 @@ function chatOptions(request: WriteDraftRequest) {
   return {
     maxTokens: 64_000,
     timeoutMs: 300_000,
+    useThinking: false,
     effort: request.stage === 'goud' ? ('xhigh' as const) : ('high' as const),
   }
 }
@@ -357,13 +460,7 @@ export function handleWriteDraftStreamRequest(request: WriteDraftRequest, ai: Ai
       }
 
       try {
-        let accumulated = ''
-        for await (const chunk of streamChat(ai, buildChatMessages(request), chatOptions(request))) {
-          accumulated += chunk
-          send({ type: 'delta', text: chunk, accumulated })
-        }
-
-        const html = extractHtml(accumulated)
+        const html = await streamDraftToCompletion(ai, request, send)
         send({
           type: 'done',
           html,
@@ -392,14 +489,24 @@ export async function generateDraftWithAi(
   request: WriteDraftRequest,
   ai: AiRuntimeConfig,
 ): Promise<WriteDraftResponse> {
-  const content = await completeChat(
-    ai,
-    buildChatMessages(request),
-    chatOptions(request),
-  )
+  let accumulated = ''
+  const options = chatOptions(request)
+  const baseMessages = buildChatMessages(request)
+  let messages: AiMessage[] = baseMessages
+
+  for (let pass = 0; pass < 5; pass++) {
+    const chunk = await completeChat(ai, messages, options)
+    accumulated += chunk
+    if (!needsContinuation(accumulated, request)) break
+    messages = [
+      ...baseMessages,
+      { role: 'assistant', content: accumulated },
+      { role: 'user', content: CONTINUATION_USER_PROMPT },
+    ]
+  }
 
   return {
-    html: extractHtml(content),
+    html: extractHtml(accumulated),
     model: ai.model,
     provider: ai.provider,
   }

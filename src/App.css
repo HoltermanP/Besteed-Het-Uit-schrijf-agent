@@ -665,6 +665,75 @@ button:hover {
   margin-top: 10px;
 }
 
+.intent-panel {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #c5ddd9;
+  background: linear-gradient(180deg, #f4faf9 0%, #eef6f4 100%);
+}
+
+.intent-panel h3 {
+  margin: 0 0 8px;
+}
+
+.intent-panel h4 {
+  margin: 10px 0 4px;
+  color: #164f4a;
+  font-size: 12px;
+}
+
+.intent-explicit,
+.intent-core,
+.intent-underlying {
+  margin: 6px 0 0;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.intent-core {
+  font-weight: 650;
+  color: #0f3d38;
+}
+
+.intent-brief-details {
+  margin-top: 10px;
+}
+
+.intent-brief-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  color: #164f4a;
+}
+
+.intent-team-brief {
+  margin: 8px 0 0;
+  padding: 10px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px dashed #94b8b2;
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  font-family: inherit;
+}
+
+.intent-brief.internal-only {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px dashed #94b8b2;
+  background: #f8fbfa;
+}
+
+.intent-brief.internal-only h3 {
+  margin-top: 0;
+  color: #0f766e;
+}
+
 .selection {
   min-height: 36px;
   display: flex;

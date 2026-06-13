@@ -7,6 +7,7 @@ import type {
 
 type StreamEvent =
   | { type: 'delta'; text: string; accumulated: string }
+  | { type: 'status'; message: string }
   | { type: 'done'; html: string; model: string; provider: WriteDraftResponse['provider'] }
   | { type: 'error'; error: string }
 
@@ -44,6 +45,7 @@ function parseStreamEvent(line: string): StreamEvent | null {
 
 function processStreamLines(lines: string[], handlers: {
   onDelta?: (accumulated: string) => void
+  onStatus?: (message: string) => void
   onDone?: (result: WriteDraftResponse) => void
   onError?: (message: string) => void
 }) {
@@ -51,6 +53,7 @@ function processStreamLines(lines: string[], handlers: {
     const event = parseStreamEvent(line)
     if (!event) continue
     if (event.type === 'delta') handlers.onDelta?.(event.accumulated)
+    if (event.type === 'status') handlers.onStatus?.(event.message)
     if (event.type === 'done') {
       handlers.onDone?.({
         html: event.html,
@@ -79,6 +82,7 @@ export async function fetchWriterStatus(): Promise<WriterStatus> {
 export async function generateDraftViaApi(
   request: Omit<WriteDraftRequest, 'ai' | 'stream'>,
   onProgress?: (accumulated: string) => void,
+  onStatus?: (message: string) => void,
 ): Promise<WriteDraftResponse> {
   const payload = buildPayload(request)
 
@@ -118,6 +122,7 @@ export async function generateDraftViaApi(
   const handleLines = (lines: string[]) => {
     processStreamLines(lines, {
       onDelta: onProgress,
+      onStatus,
       onDone: (value) => {
         result = value
       },

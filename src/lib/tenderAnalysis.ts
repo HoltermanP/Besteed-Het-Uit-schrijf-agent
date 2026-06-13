@@ -4,6 +4,7 @@ import type {
   DocumentRequirement,
   StyleProfile,
   TenderAnalysis,
+  UnderlyingIntent,
   WordLimit,
 } from '../types/tenderAnalysis'
 
@@ -362,6 +363,225 @@ function detectGaps(
   return gaps
 }
 
+type IntentTheme = {
+  patterns: RegExp[]
+  label: string
+  underlying: string
+  success: string
+}
+
+const INTENT_THEMES: IntentTheme[] = [
+  {
+    patterns: [/continuiteit/i, /ononderbroken/i, /doorlooptijd/i],
+    label: 'Continuïteit',
+    underlying: 'Geen verstoring van dienstverlening, processen of kennis bij overgang',
+    success: 'Aantoonbare overdraagbaarheid, vaste teams en back-up zonder overname-risico',
+  },
+  {
+    patterns: [/implementatie|inwerking|ingang|startfase/i],
+    label: 'Implementatie',
+    underlying: 'Snelle, beheersbare start zonder verrassingen in planning of scope',
+    success: 'Concrete planning, heldere fasering en meetbare mijlpalen vanaf dag één',
+  },
+  {
+    patterns: [/risico|beheers/i],
+    label: 'Risicobeheersing',
+    underlying: 'Voorspelbare uitvoering met zicht op keuzes en escalaties',
+    success: 'Risico-eigenaren, preventieve maatregelen en herstelroutes per scenario',
+  },
+  {
+    patterns: [/kwaliteit|borging|review|toetsbaar/i],
+    label: 'Kwaliteit',
+    underlying: 'Objectief bewijs dat beloften worden waargemaakt, niet alleen beloofd',
+    success: 'Toetsbare werkwijze, KPI\'s en kwaliteitscontroles die de beoordelaar kan volgen',
+  },
+  {
+    patterns: [/team|competent|capaciteit|cv/i],
+    label: 'Team en competenties',
+    underlying: 'Zekerheid dat de juiste mensen beschikbaar blijven gedurende de looptijd',
+    success: 'Named resources, relevante ervaring en vervangbaarheid per rol',
+  },
+  {
+    patterns: [/duurzaam|mvo|co2|circulair/i],
+    label: 'Duurzaamheid',
+    underlying: 'Maatschappelijke en organisatorische verantwoordelijkheid zonder greenwashing',
+    success: 'Concrete, meetbare duurzaamheidsmaatregelen gekoppeld aan de opdracht',
+  },
+  {
+    patterns: [/prijs|kosten|effici[eë]nt|tarief/i],
+    label: 'Prijs en efficiency',
+    underlying: 'Waarde voor geld zonder kwaliteits- of scope-inlevering achteraf',
+    success: 'Transparante prijsopbouw en aantoonbare efficiency zonder verborgen risico\'s',
+  },
+  {
+    patterns: [/innovati|verbeter|digital/i],
+    label: 'Innovatie',
+    underlying: 'Vooruitgang zonder experimentele risico\'s voor de opdrachtgever',
+    success: 'Bewezen verbeteringen met pilot- of referentiebewijs',
+  },
+  {
+    patterns: [/privacy|avg|beveilig|security|iso\s*27001/i],
+    label: 'Privacy en veiligheid',
+    underlying: 'Betrouwbare omgang met gevoelige data en compliance-eisen',
+    success: 'Concrete beheersmaatregelen, rollen en audittrail',
+  },
+  {
+    patterns: [/social return|srk|participatie/i],
+    label: 'Social return',
+    underlying: 'Maatschappelijke impact die aansluit bij beleid van de opdrachtgever',
+    success: 'Meetbare participatie-afspraken en rapportage',
+  },
+]
+
+function parseCriterionWeight(criterion: string): number {
+  const match = criterion.match(/(\d{1,3})\s*%/)
+  return match ? Number.parseInt(match[1], 10) : 0
+}
+
+function buildExplicitQuestion(
+  contentRequirements: ContentRequirement[],
+  documentRequirements: DocumentRequirement[],
+): string {
+  const mandatoryTopics = contentRequirements
+    .filter((req) => req.mandatory)
+    .slice(0, 4)
+    .map((req) => req.topic)
+  const mandatoryDocs = documentRequirements
+    .filter((req) => req.mandatory)
+    .slice(0, 4)
+    .map((req) => req.name)
+
+  const parts: string[] = []
+  if (mandatoryDocs.length) {
+    parts.push(`het indienen van ${mandatoryDocs.join(', ')}`)
+  }
+  if (mandatoryTopics.length) {
+    parts.push(`een uitwerking van ${mandatoryTopics.join(', ')}`)
+  }
+
+  if (!parts.length) {
+    return 'een volledig, beoordelingsgericht inschrijfstuk dat aansluit op de aanbestedingsstukken'
+  }
+
+  return parts.join(' en ')
+}
+
+function detectIntentThemes(text: string): IntentTheme[] {
+  return INTENT_THEMES.filter((theme) => theme.patterns.some((pattern) => pattern.test(text)))
+}
+
+function buildTeamBrief(
+  buyerName: string,
+  intent: Omit<UnderlyingIntent, 'teamBrief'>,
+): string {
+  const priorityBlock =
+    intent.buyerPriorities.length > 0
+      ? `\n\nPrioriteiten volgens beoordeling: ${intent.buyerPriorities.join('; ')}.`
+      : ''
+  const successBlock =
+    intent.implicitSuccessFactors.length > 0
+      ? `\n\nWat de opdrachtgever impliciet succesvol vindt:\n${intent.implicitSuccessFactors.map((item) => `• ${item}`).join('\n')}`
+      : ''
+
+  return `Intern — niet opnemen in het inschrijfdocument
+
+De opdrachtgever (${buyerName}) vraagt expliciet om ${intent.explicitQuestion}.
+
+De vraag achter de vraag: ${intent.questionBehindQuestion}
+
+Onderliggende behoefte: ${intent.underlyingNeed}${priorityBlock}${successBlock}
+
+Schrijflens voor het team: ${intent.writingGuidance}`
+}
+
+export function extractUnderlyingIntent(
+  text: string,
+  buyerName: string,
+  contentRequirements: ContentRequirement[],
+  documentRequirements: DocumentRequirement[],
+  evaluationCriteria: string[],
+  styleProfile: StyleProfile,
+): UnderlyingIntent {
+  const themes = detectIntentThemes(text)
+  const explicitQuestion = buildExplicitQuestion(contentRequirements, documentRequirements)
+
+  const sortedCriteria = [...evaluationCriteria].sort(
+    (a, b) => parseCriterionWeight(b) - parseCriterionWeight(a),
+  )
+  const buyerPriorities =
+    sortedCriteria.length > 0
+      ? sortedCriteria.slice(0, 5)
+      : themes.slice(0, 3).map((theme) => theme.label)
+
+  const topCriterion = sortedCriteria[0]
+  const topTheme = themes[0]
+
+  let underlyingNeed = topTheme?.underlying ?? 'Zekerheid over uitvoering, grip op risico\'s en aantoonbare kwaliteit'
+  if (/kwaliteit\s+\d/i.test(text) && /prijs\s+\d/i.test(text)) {
+    const qualityMatch = text.match(/kwaliteit\s+(\d{1,3})\s*%/i)
+    const priceMatch = text.match(/prijs\s+(\d{1,3})\s*%/i)
+    if (qualityMatch && priceMatch) {
+      const q = Number.parseInt(qualityMatch[1], 10)
+      const p = Number.parseInt(priceMatch[1], 10)
+      if (q > p) {
+        underlyingNeed = `${underlyingNeed}. Kwaliteit weegt zwaarder (${q}% vs ${p}% prijs) — bewijs en uitvoerbaarheid zijn belangrijker dan de laagste prijs`
+      }
+    }
+  }
+
+  if (/formeel|toetsbaar|objectief/i.test(text)) {
+    underlyingNeed = `${underlyingNeed}. Formele, toetsbare onderbouwing zonder promotionele taal`
+  }
+  if (/grip|beheers|controle/i.test(text)) {
+    underlyingNeed = `${underlyingNeed}. De opdrachtgever wil grip houden op voortgang en keuzes`
+  }
+
+  const themeLabels = themes.map((theme) => theme.label.toLowerCase())
+  const questionBehindQuestion = topCriterion
+    ? `${buyerName} wil vooral zekerheid dat inschrijvers scoren op "${topCriterion.replace(/\s*\(\d+%\)/, '')}" — niet alleen het formulier invullen, maar aantonen dat de aanpak het werkelijke doel van de opdracht dient${themeLabels.length ? ` (${themeLabels.slice(0, 3).join(', ')})` : ''}.`
+    : topTheme
+      ? `${buyerName} zoekt een partner die ${topTheme.label.toLowerCase()} concreet waarborgt — de leidraad is het bewijs, niet het doel op zich.`
+      : `${buyerName} zoekt een partner die de opdracht beheersbaar maakt: voorspelbare kwaliteit, heldere verantwoordelijkheden en onderbouwbare keuzes.`
+
+  const implicitSuccessFactors = [
+    ...themes.slice(0, 4).map((theme) => theme.success),
+    ...styleProfile.buyerSignals
+      .filter((signal) => /concreet|onderbouwd|toetsbaar|beoordel/i.test(signal))
+      .slice(0, 2),
+  ].slice(0, 5)
+
+  if (implicitSuccessFactors.length === 0) {
+    implicitSuccessFactors.push(
+      'Elke claim is gekoppeld aan bewijs uit referenties, team of werkwijze',
+      'De tekst is direct toetsbaar aan beoordelingscriteria uit de leidraad',
+    )
+  }
+
+  const priorityHint = buyerPriorities[0]
+    ? ` Begin elke sectie met wat ${buyerName} op "${buyerPriorities[0].replace(/\s*\(\d+%\)/, '')}" wil zien.`
+    : ''
+
+  const writingGuidance = [
+    `Schrijf op de onderliggende behoefte (${underlyingNeed.slice(0, 120)}${underlyingNeed.length > 120 ? '…' : ''}), niet alleen op de checklist.`,
+    `Koppel elke paragraaf aan minstens één beoordelingscriterium en maak claims toetsbaar.`,
+    `Blend de stem van ${styleProfile.companyName} met de formele verwachtingen van ${buyerName}.${priorityHint}`,
+  ].join(' ')
+
+  const partial = {
+    explicitQuestion,
+    underlyingNeed,
+    questionBehindQuestion,
+    buyerPriorities,
+    implicitSuccessFactors: [...new Set(implicitSuccessFactors)],
+    writingGuidance,
+  }
+
+  return {
+    ...partial,
+    teamBrief: buildTeamBrief(buyerName, partial),
+  }
+}
+
 export function analyzeTenderDocuments(
   documents: SourceDocument[],
   buyerName: string,
@@ -422,12 +642,23 @@ export function analyzeTenderDocuments(
 
   const gaps = detectGaps(partial, documents)
 
+  const intentText = [combinedText, allTenderText].filter(Boolean).join('\n')
+  const underlyingIntent = extractUnderlyingIntent(
+    intentText,
+    buyerName,
+    contentRequirements,
+    documentRequirements,
+    evaluationCriteria,
+    styleProfile,
+  )
+
   const summary = leidraad
-    ? `Leidraad "${leidraad.name}" geanalyseerd: ${contentRequirements.length} inhoudseisen, ${documentRequirements.length} documenten, ${wordLimits.length} limieten en gecombineerde schrijfstijl (${styleProfile.companyName} × ${buyerName}).`
-    : `Analyse op basis van ${tenderDocs.length} aanbestedingsbron(nen): voeg een leidraad toe voor volledige eisen en limieten.`
+    ? `Leidraad "${leidraad.name}" geanalyseerd: ${contentRequirements.length} inhoudseisen, ${documentRequirements.length} documenten, ${wordLimits.length} limieten, vraag-achter-de-vraag inzicht en gecombineerde schrijfstijl (${styleProfile.companyName} × ${buyerName}).`
+    : `Analyse op basis van ${tenderDocs.length} aanbestedingsbron(nen): voeg een leidraad toe voor volledige eisen, limieten en opdrachtintentie.`
 
   return {
     ...partial,
+    underlyingIntent,
     analyzedAt: new Date().toLocaleString('nl-NL'),
     summary,
     gaps,

@@ -10,7 +10,7 @@
       "maxDuration": 60
     },
     "api/write-draft.js": {
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "api/style-documents.js": {
       "maxDuration": 30,
