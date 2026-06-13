@@ -13,7 +13,7 @@ export type WordLimit = {
   section?: string
   min?: number
   max?: number
-  unit: 'woorden' | 'paginas'
+  unit: 'woorden' | 'paginas' | 'karakters'
   source: string
 }
 
@@ -50,4 +50,5 @@ export type TenderAnalysis = {
   styleProfile: StyleProfile
   gaps: string[]
   targetWordCount?: number
+  targetCharCount?: number
 }

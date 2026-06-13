@@ -124,6 +124,65 @@ function extractWordLimits(text: string, source: string): WordLimit[] {
     })
   }
 
+  const maxCharsRegex =
+    /maximaal\s+(\d[\d.]*)\s+(?:karakters?|tekens?)(?:\s+voor\s+(?:het\s+|de\s+)?([^.;,\n]+))?/gi
+  for (const match of text.matchAll(maxCharsRegex)) {
+    add({
+      label: 'Maximum karakters',
+      section: match[2]?.trim(),
+      max: parseNumber(match[1]),
+      unit: 'karakters',
+      source,
+    })
+  }
+
+  const maxCharsShortRegex =
+    /max\.?\s+(\d[\d.]*)\s+(?:karakters?|tekens?)(?:\s+voor\s+(?:het\s+|de\s+)?([^.;,\n]+))?/gi
+  for (const match of text.matchAll(maxCharsShortRegex)) {
+    add({
+      label: 'Maximum karakters',
+      section: match[2]?.trim(),
+      max: parseNumber(match[1]),
+      unit: 'karakters',
+      source,
+    })
+  }
+
+  const totCharsRegex = /tot\s+(\d[\d.]*)\s+(?:karakters?|tekens?)(?:\s+voor\s+(?:het\s+|de\s+)?([^.;,\n]+))?/gi
+  for (const match of text.matchAll(totCharsRegex)) {
+    add({
+      label: 'Tot maximaal karakters',
+      section: match[2]?.trim(),
+      max: parseNumber(match[1]),
+      unit: 'karakters',
+      source,
+    })
+  }
+
+  const charsMaxRegex =
+    /(\d[\d.]*)\s+(?:karakters?|tekens?)\s+maximaal(?:\s+voor\s+(?:het\s+|de\s+)?([^.;,\n]+))?/gi
+  for (const match of text.matchAll(charsMaxRegex)) {
+    add({
+      label: 'Maximum karakters',
+      section: match[2]?.trim(),
+      max: parseNumber(match[1]),
+      unit: 'karakters',
+      source,
+    })
+  }
+
+  const nietMeerWoordenRegex =
+    /niet meer dan\s+(\d[\d.]*)\s+woorden(?:\s+voor\s+(?:het\s+|de\s+)?([^.;,\n]+))?/gi
+  for (const match of text.matchAll(nietMeerWoordenRegex)) {
+    add({
+      label: 'Maximum woorden',
+      section: match[2]?.trim(),
+      max: parseNumber(match[1]),
+      unit: 'woorden',
+      source,
+    })
+  }
+
   return limits
 }
 
@@ -337,7 +396,19 @@ export function analyzeTenderDocuments(
   })
   styleProfile.companySignals = [...new Set(styleProfile.companySignals)].slice(0, 5)
 
-  const wordTarget = wordLimits.find((limit) => limit.unit === 'woorden' && limit.max)?.max
+  const wordTarget = wordLimits
+    .filter((limit) => limit.unit === 'woorden' && limit.max)
+    .reduce<number | undefined>((min, limit) => {
+      const value = limit.max!
+      return min === undefined ? value : Math.min(min, value)
+    }, undefined)
+
+  const charTarget = wordLimits
+    .filter((limit) => limit.unit === 'karakters' && limit.max)
+    .reduce<number | undefined>((min, limit) => {
+      const value = limit.max!
+      return min === undefined ? value : Math.min(min, value)
+    }, undefined)
 
   const partial = {
     leidraadFound: Boolean(leidraad),
@@ -361,12 +432,25 @@ export function analyzeTenderDocuments(
     summary,
     gaps,
     targetWordCount: wordTarget,
+    targetCharCount: charTarget,
   }
 }
 
 export function countWords(html: string) {
   const plain = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
   return plain ? plain.split(' ').length : 0
+}
+
+export function countCharacters(html: string) {
+  return html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().length
+}
+
+export function hasVolumeLimit(analysis: TenderAnalysis): boolean {
+  return Boolean(
+    analysis.targetWordCount ||
+      analysis.targetCharCount ||
+      analysis.wordLimits.some((limit) => limit.unit === 'paginas' && limit.max),
+  )
 }
 
 export function reviewAgainstAnalysis(
@@ -376,6 +460,7 @@ export function reviewAgainstAnalysis(
   const findings: Array<{ priority: 'kritiek' | 'hoog' | 'normaal'; title: string; detail: string }> = []
   const plain = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').toLowerCase()
   const words = countWords(html)
+  const chars = countCharacters(html)
 
   if (!analysis.leidraadFound) {
     findings.push({
@@ -385,11 +470,19 @@ export function reviewAgainstAnalysis(
     })
   }
 
-  if (analysis.targetWordCount && words > analysis.targetWordCount * 1.1) {
+  if (analysis.targetWordCount && words > analysis.targetWordCount) {
     findings.push({
       priority: 'hoog',
       title: 'Woordlimiet overschreden',
       detail: `Concept telt ${words} woorden; leidraad maximaal ${analysis.targetWordCount} woorden.`,
+    })
+  }
+
+  if (analysis.targetCharCount && chars > analysis.targetCharCount) {
+    findings.push({
+      priority: 'hoog',
+      title: 'Karakterlimiet overschreden',
+      detail: `Concept telt ${chars.toLocaleString('nl-NL')} karakters; leidraad maximaal ${analysis.targetCharCount.toLocaleString('nl-NL')} karakters.`,
     })
   }
 

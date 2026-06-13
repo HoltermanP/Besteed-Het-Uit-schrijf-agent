@@ -28,7 +28,7 @@ import {
   Upload,
 } from 'lucide-react'
 import { buildHtmlDraft } from '../lib/buildDraft'
-import { analyzeTenderDocuments, countWords, reviewAgainstAnalysis } from '../lib/tenderAnalysis'
+import { analyzeTenderDocuments, countCharacters, countWords, reviewAgainstAnalysis } from '../lib/tenderAnalysis'
 import type { TenderAnalysis } from '../types/tenderAnalysis'
 import { exportPdfFromHtml, exportWordDocument } from '../lib/documentExport'
 import { isNeonConfigured, isWriterConfigured, migrateLegacyNeonUrl } from '../lib/apiConfig'
@@ -308,12 +308,15 @@ export default function WorkspacePage() {
   const stats = useMemo(() => {
     const words = countWords(draft)
     const wordTarget = analysis?.targetWordCount
+    const charTarget = analysis?.targetCharCount
     return {
       words,
+      chars: countCharacters(draft),
       sources: effectiveDocuments.length,
       unresolved: comments.filter((comment) => !comment.resolved).length,
       score: Math.min(100, 45 + keywordScore(draft, ['kwaliteit', 'risico', 'bewijs', 'duurzaamheid', 'implementatie']) * 9),
       wordTarget,
+      charTarget,
       leidraad: analysis?.leidraadFound ?? false,
     }
   }, [analysis, comments, draft, effectiveDocuments.length])
@@ -653,7 +656,10 @@ export default function WorkspacePage() {
 
         <section className="metrics">
           <div><span>{stats.score}%</span><p>Kansscore</p></div>
-          <div><span>{stats.words}{stats.wordTarget ? `/${stats.wordTarget}` : ''}</span><p>Woorden{stats.wordTarget ? ' (doel)' : ''}</p></div>
+          <div><span>{stats.words}{stats.wordTarget ? `/${stats.wordTarget}` : ''}</span><p>Woorden{stats.wordTarget ? ' (max)' : ''}</p></div>
+          {stats.charTarget ? (
+            <div><span>{stats.chars.toLocaleString('nl-NL')}/{stats.charTarget.toLocaleString('nl-NL')}</span><p>Karakters (max)</p></div>
+          ) : null}
           <div><span>{stats.leidraad ? 'Ja' : 'Nee'}</span><p>Leidraad</p></div>
           <div><span>{stats.sources}</span><p>Bronnen</p></div>
         </section>

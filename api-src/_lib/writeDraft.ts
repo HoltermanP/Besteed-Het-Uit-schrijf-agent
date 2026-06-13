@@ -1,13 +1,14 @@
 import { completeChat, resolveAiFromRequest, type AiRuntimeConfig } from './aiClient'
 import type { WriteDraftDocument, WriteDraftRequest, WriteDraftResponse } from '../../src/types/writeDraft'
+import type { TenderAnalysis } from '../../src/types/tenderAnalysis'
 
 const stageInstructions: Record<WriteDraftRequest['stage'], string> = {
   brons:
-    'Maak een scherpe eerste versie. Focus op compliance, structuur, beoordelingscriteria en het benutten van alle bronnen.',
+    'Schrijf een volledige eerste versie van het gevraagde inschrijfstuk. Dek alle verplichte onderwerpen af. Houd je aan de volumelimiet als die in de leidraad staat; anders schrijf uitgebreid en volledig.',
   zilver:
-    'Verwerk menselijke opmerkingen en verbeter bewijsvoering, specificiteit, toon, consistentie en win-thema’s.',
+    'Verbeter het bestaande concept: verwerk reviewopmerkingen, versterk bewijsvoering per beoordelingscriterium en vul inhoudelijke gaten. Respecteer volumelimieten; inkort alleen als de tekst te lang is.',
   goud:
-    'Maak de eindversie overtuigend, compact, controleerbaar en exportklaar met duidelijke koppen en sterke HTML-opmaak.',
+    'Lever de definitieve versie: binnen woord- en/of karakterlimiet, geen herhaling, elke sectie toetsbaar aan beoordelingscriteria, exportklaar HTML.',
 }
 
 const stageLabels: Record<WriteDraftRequest['stage'], string> = {
@@ -16,49 +17,260 @@ const stageLabels: Record<WriteDraftRequest['stage'], string> = {
   goud: 'Goud',
 }
 
-const SYSTEM_PROMPT = `Je bent een senior bidwriter voor Nederlandse aanbestedingen.
-Schrijf in het Nederlands, formeel en toetsbaar. Vermijd promotionele taal.
-Gebruik uitsluitend feiten en claims die onderbouwd zijn vanuit de aangeleverde bronnen.
-Volg de schrijfregels, kwaliteitsstandaarden en voorbeeldteksten uit de stijlbibliotheek strikt.
-Laat stijl, toon, structuur en kwaliteitsniveau aansluiten op de trainings- en richtlijndocumenten.
-Antwoord uitsluitend met geldige HTML: één <article class="proposal-doc">…</article>.
-Gebruik semantische secties (<header>, <section class="doc-section">, <h1>, <h2>, <p>, <ul>, <table> waar passend).
-Voeg een kicker toe met de fase (Brons/Zilver/Goud versie), metadata (opdrachtgever, deadline, TenderNed) en een lead-paragraaf.
-Verwerk expliciet de beoordelingscriteria, risico’s, duurzaamheid, implementatie en continuiteit als de bronnen dat vragen.
-Geen markdown, geen uitleg buiten de HTML.`
+const SYSTEM_PROMPT = `Je bent een senior bidwriter voor Nederlandse aanbestedingen (Aanbestedingswet, EMVI, BPKV).
 
-function summarizeDocument(content: string, max = 6_000): string {
+DOEL
+Schrijf het concrete inschrijfstuk dat de opdrachtgever vraagt — geen generiek salesdocument. Structuur, koppen en volgorde volgen de leidraad en beoordelingscriteria, niet een vaste template.
+
+BRONHIËRARCHIE (streng, van hoog naar laag)
+1. Leidraad / aanbestedingsstukken — gevraagde stukken, onderwerpen, woord- en paginalimieten, beoordelingscriteria
+2. Schrijfregels & kwaliteitsstandaarden — verplichte formulering, kwaliteitsnormen, verboden formuleringen
+3. Bedrijfsinformatie — alleen feitelijke claims over het inschrijvende bedrijf
+4. Schrijfstijl & voorbeeldteksten — toon, zinsbouw, opmaak; geen nieuwe inhoud verzinnen
+
+INHOUDELIJKE REGELS
+- Maak per verplicht onderwerp uit de leidraadanalyse een eigen <section class="doc-section"> met genummerde <h2>
+- Koppel elke sectie in een <p class="section-subtitle"> aan het relevante beoordelingscriterium of subcriterium
+- Beantwoord wat de opdrachtgever expliciet vraagt; voeg geen standaardparagrafen toe over risico, duurzaamheid, implementatie of continuiteit tenzij de leidraad dat vereist
+- Onderbouw uitspraken met feiten uit bedrijfsbronnen; geen lege superlatieven
+- Ontbrekende feiten niet verzinnen — weglaten of voorzichtig formuleren
+- Verwijs niet naar het schrijfproces, AI, prompts of interne review
+
+STIJL
+- Nederlands, formeel, toetsbaar, actief waar passend
+- Volg schrijfregels en de gecombineerde schrijfstijl uit de analyse
+
+VOLUME (cruciaal)
+- Als de leidraad een maximum aantal woorden, karakters of pagina's noemt: blijf daar STRIKT onder (tel alleen zichtbare tekst, geen HTML-tags)
+- Als er geen maximum is: schrijf alles wat nodig is om alle verplichte onderwerpen volledig te beantwoorden — uitgebreid en concreet mag
+- Geen opvulling of herhaling; elke alinea moet inhoud toevoegen
+
+OUTPUT (alleen HTML, geen markdown)
+- Eén <article class="proposal-doc">…</article>
+- <header class="doc-header"> met kicker (Brons/Zilver/Goud versie), <h1>, metadata (<dl class="doc-meta">), <p class="lead">
+- Per gevraagd stuk/onderwerp: <section class="doc-section"> met <h2>, <p class="section-subtitle">, inhoud (<p>, <ul>, <table> alleen waar passend)
+- Geen meta-sectie over schrijfkwaliteit, stijlbibliotheek of werkwijze van het schrijven
+- Geen tekst buiten het HTML-artikel`
+
+const DOC_CHAR_LIMITS: Record<WriteDraftDocument['type'], number> = {
+  tender: 14_000,
+  company: 8_000,
+  rules: 8_000,
+  training: 8_000,
+}
+
+function summarizeDocument(content: string, max: number): string {
   const clean = content.replace(/\s+/g, ' ').trim()
   return clean.length > max ? `${clean.slice(0, max).trim()}…` : clean
 }
 
-function buildUserPrompt(request: WriteDraftRequest): string {
-  const docsByType = (type: WriteDraftDocument['type']) =>
-    request.documents
-      .filter((doc) => doc.type === type)
-      .map((doc) => `- ${doc.name}: ${summarizeDocument(doc.content)}`)
-      .join('\n')
+function hasVolumeLimit(analysis: TenderAnalysis): boolean {
+  return Boolean(
+    analysis.targetWordCount ||
+      analysis.targetCharCount ||
+      analysis.wordLimits.some((limit) => limit.unit === 'paginas' && limit.max),
+  )
+}
 
+function formatVolumeLimits(analysis: TenderAnalysis): string {
+  if (!analysis.wordLimits.length) {
+    return '- Geen woord-, karakter- of paginalimiet gedetecteerd in de leidraad.'
+  }
+
+  return analysis.wordLimits
+    .map((limit) => {
+      const scope = limit.section ? ` (${limit.section})` : ''
+      const value =
+        limit.min && limit.max
+          ? `${limit.min}–${limit.max} ${limit.unit}`
+          : limit.max
+            ? `max. ${limit.max} ${limit.unit}`
+            : limit.min
+              ? `min. ${limit.min} ${limit.unit}`
+              : limit.unit
+      return `- ${limit.label}${scope}: ${value} [${limit.source}]`
+    })
+    .join('\n')
+}
+
+function buildVolumeInstruction(analysis: TenderAnalysis | null | undefined): string {
+  if (!analysis || !hasVolumeLimit(analysis)) {
+    return `VOLUME — GEEN LIMIET IN LEIDRAAD
+- Er is geen maximum aantal woorden of karakters gevonden
+- Schrijf alles wat nodig is: alle verplichte onderwerpen en beoordelingscriteria volledig uitwerken
+- Wees uitgebreid, concreet en onderbouwd — kort niet af om lengte te sparen
+- Geen herhaling of opvulling; wel volledigheid`
+  }
+
+  const lines = [
+    'VOLUME — HARDE LIMIET (niet overschrijden)',
+    'Tel alleen zichtbare tekst in het artikel (paragrafen, koppen, lijsten, tabelcellen). Geen HTML-tags, geen metadata.',
+  ]
+
+  if (analysis.targetWordCount) {
+    const target = analysis.targetWordCount
+    lines.push(
+      `- Maximum woorden: ${target} — streef naar ${Math.round(target * 0.9)}–${target} woorden`,
+    )
+  }
+
+  if (analysis.targetCharCount) {
+    const target = analysis.targetCharCount
+    lines.push(
+      `- Maximum karakters: ${target.toLocaleString('nl-NL')} — streef naar ${Math.round(target * 0.9).toLocaleString('nl-NL')}–${target.toLocaleString('nl-NL')} karakters`,
+    )
+  }
+
+  analysis.wordLimits
+    .filter((limit) => limit.unit === 'paginas' && limit.max)
+    .forEach((limit) => {
+      lines.push(
+        `- Maximum pagina's: ${limit.max}${limit.section ? ` (${limit.section})` : ''} — houd de tekst compact genoeg`,
+      )
+    })
+
+  lines.push(
+    '- Bij zowel woorden als karakters: beide limieten gelden; kies de kortste variant die alle verplichte eisen dekt',
+    '- Prioriteit: eerst alle verplichte onderwerpen volledig, daarna detail — nooit boven het maximum',
+    '- Te lang? inkorten door herhaling en bijlagen te schrappen, niet door verplichte eisen weg te laten',
+  )
+
+  return lines.join('\n')
+}
+
+function formatVolumeSummary(analysis: TenderAnalysis): string {
+  if (!hasVolumeLimit(analysis)) return 'geen limiet — schrijf volledig en uitgebreid'
+
+  const parts: string[] = []
+  if (analysis.targetWordCount) parts.push(`max. ${analysis.targetWordCount} woorden`)
+  if (analysis.targetCharCount) {
+    parts.push(`max. ${analysis.targetCharCount.toLocaleString('nl-NL')} karakters`)
+  }
+  const pageMax = analysis.wordLimits
+    .filter((limit) => limit.unit === 'paginas' && limit.max)
+    .map((limit) => limit.max)
+  if (pageMax.length) parts.push(`max. ${pageMax.join('/')} pagina's`)
+
+  return parts.join(', ')
+}
+
+function formatContentRequirements(analysis: TenderAnalysis): string {
+  if (!analysis.contentRequirements.length) {
+    return '- Geen inhoudseisen gedetecteerd — leid structuur af uit aanbestedingsbronnen en beoordelingscriteria.'
+  }
+
+  const mandatory = analysis.contentRequirements.filter((item) => item.mandatory)
+  const optional = analysis.contentRequirements.filter((item) => !item.mandatory)
+
+  const lines: string[] = []
+  if (mandatory.length) {
+    lines.push('Verplichte onderwerpen (elk een aparte sectie):')
+    mandatory.forEach((item, index) => {
+      lines.push(`${index + 1}. ${item.topic} — ${item.detail} [${item.source}]`)
+    })
+  }
+  if (optional.length) {
+    lines.push('', 'Optioneel (alleen opnemen als limiet en relevantie het toelaten):')
+    optional.slice(0, 12).forEach((item, index) => {
+      lines.push(`${index + 1}. ${item.topic} — ${item.detail}`)
+    })
+  }
+  return lines.join('\n')
+}
+
+function formatEvaluationCriteria(analysis: TenderAnalysis): string {
+  if (!analysis.evaluationCriteria.length) {
+    return '- Geen criteria gedetecteerd — koppel secties aan expliciete eisen uit de leidraad.'
+  }
+
+  return analysis.evaluationCriteria
+    .map((criterion, index) => `${index + 1}. ${criterion}`)
+    .join('\n')
+}
+
+function formatDocumentRequirements(analysis: TenderAnalysis): string {
+  if (!analysis.documentRequirements.length) return '- geen'
+
+  return analysis.documentRequirements
+    .map(
+      (doc) =>
+        `- ${doc.name} (${doc.mandatory ? 'verplicht' : 'optioneel'}) — ${doc.source}`,
+    )
+    .join('\n')
+}
+
+function buildStructureInstruction(analysis: TenderAnalysis | null | undefined): string {
+  if (!analysis) {
+    return `STRUCTUUR
+- Leid koppen en secties af uit de aanbestedingsbronnen
+- Geen vaste EMVI-template; alleen wat de opdrachtgever vraagt
+
+${buildVolumeInstruction(analysis)}`
+  }
+
+  return `STRUCTUUR (verplicht volgen)
+
+${buildVolumeInstruction(analysis)}
+
+Gedetecteerde limieten uit leidraad:
+${formatVolumeLimits(analysis)}
+
+${formatContentRequirements(analysis)}
+
+Beoordelingscriteria (elke sectie moet minstens één criterium adresseren):
+${formatEvaluationCriteria(analysis)}
+
+Verwachte bijlagen (inhoudelijk verwerken waar het plan van aanpak dat vraagt; niet als losse lijst dumpen):
+${formatDocumentRequirements(analysis)}`
+}
+
+function buildAnalysisBlock(analysis: TenderAnalysis | null | undefined): string {
+  if (!analysis) return 'Geen leidraadanalyse beschikbaar — leid structuur af uit aanbestedingsbronnen.'
+
+  const gaps =
+    analysis.gaps.length > 0
+      ? `\nAandachtspunten / gaten:\n${analysis.gaps.map((gap) => `- ${gap}`).join('\n')}`
+      : ''
+
+  return `Leidraadanalyse:
+- Samenvatting: ${analysis.summary}
+- Leidraad gevonden: ${analysis.leidraadFound ? `ja (${analysis.leidraadSource ?? 'bron'})` : 'nee'}
+- Volume: ${formatVolumeSummary(analysis)}
+- Schrijfstijl: ${analysis.styleProfile.blendedGuidance}
+- Inschrijver (${analysis.styleProfile.companyName}): ${analysis.styleProfile.companySignals.join('; ') || 'geen signalen'}
+- Opdrachtgever (${analysis.styleProfile.buyerName}): ${analysis.styleProfile.buyerSignals.join('; ') || 'geen signalen'}${gaps}`
+}
+
+function docsByType(request: WriteDraftRequest, type: WriteDraftDocument['type']): string {
+  return request.documents
+    .filter((doc) => doc.type === type)
+    .map((doc) => `- ${doc.name}:\n${summarizeDocument(doc.content, DOC_CHAR_LIMITS[type])}`)
+    .join('\n\n')
+}
+
+function buildUserPrompt(request: WriteDraftRequest): string {
   const openComments = request.comments
     .filter((comment) => !comment.resolved)
     .map((comment) => `- Fragment: ${comment.fragment}\n  Opmerking: ${comment.note}`)
     .join('\n')
 
-  const analysisBlock = request.analysis
-    ? `Leidraadanalyse:
-- Samenvatting: ${request.analysis.summary}
-- Doel woorden: ${request.analysis.targetWordCount ?? 'onbekend'}
-- Beoordelingscriteria: ${request.analysis.evaluationCriteria.join('; ') || 'niet gevonden'}
-- Stijl: ${request.analysis.styleProfile.blendedGuidance}
-- Inhoudseisen: ${request.analysis.contentRequirements
-        .slice(0, 10)
-        .map((item) => `${item.topic} (${item.mandatory ? 'verplicht' : 'gewenst'})`)
-        .join('; ')}`
-    : 'Geen leidraadanalyse beschikbaar.'
-
   const currentDraftBlock = request.currentDraft?.trim()
-    ? `Huidig concept (verbeteren, niet opnieuw beginnen tenzij nodig):\n${request.currentDraft.slice(0, 12_000)}`
+    ? `HUIDIG CONCEPT (uitgangspunt — structuur behouden tenzij leidraad anders vereist):
+${request.currentDraft.slice(0, 14_000)}`
     : ''
+
+  const volumeLimited = request.analysis ? hasVolumeLimit(request.analysis) : false
+
+  const stageTask =
+    request.stage === 'brons'
+      ? volumeLimited
+        ? 'Schrijf het volledige inschrijfstuk binnen de volumelimiet uit de leidraad.'
+        : 'Schrijf het volledige inschrijfstuk — uitgebreid, met alle verplichte onderwerpen volledig uitgewerkt.'
+      : request.stage === 'zilver'
+        ? 'Verbeter het huidige concept; verwerk alle open reviewopmerkingen en respecteer volumelimieten.'
+        : volumeLimited
+          ? 'Finaliseer het concept: binnen woord- en/of karakterlimiet, exportklaar.'
+          : 'Finaliseer het concept: volledig en uitgebreid, zonder inhoud weg te laten.'
 
   return `Fase: ${stageLabels[request.stage]} — ${stageInstructions[request.stage]}
 
@@ -68,26 +280,31 @@ Project:
 - Deadline: ${request.project.deadline}
 - TenderNed: ${request.project.tendernedId}
 
-${analysisBlock}
+${buildAnalysisBlock(request.analysis)}
 
-Aanbestedingsbronnen:
-${docsByType('tender') || '- geen'}
+${buildStructureInstruction(request.analysis)}
 
-Bedrijfsbronnen:
-${docsByType('company') || '- geen'}
+=== BRONNEN ===
 
-Schrijfregels en kwaliteitsrichtlijnen (verplicht volgen):
-${docsByType('rules') || '- geen'}
+Aanbestedingsstukken (leidraad — leidend voor structuur en eisen):
+${docsByType(request, 'tender') || '- geen'}
 
-Schrijfstijl, voorbeelden en trainingsmateriaal (toon/structuur/kwaliteit):
-${docsByType('training') || '- geen'}
+Bedrijfsinformatie (feiten voor onderbouwing):
+${docsByType(request, 'company') || '- geen'}
+
+Schrijfregels & kwaliteitsstandaarden (verplicht — formulering en kwaliteit):
+${docsByType(request, 'rules') || '- geen'}
+
+Schrijfstijl & voorbeeldteksten (toon/structuur — geen nieuwe inhoud):
+${docsByType(request, 'training') || '- geen'}
 
 Open reviewopmerkingen:
 ${openComments || '- geen'}
 
 ${currentDraftBlock}
 
-Genereer het volledige HTML-artikel.`
+${stageTask}
+Lever uitsluitend het HTML-artikel.`
 }
 
 function extractHtml(content: string): string {
