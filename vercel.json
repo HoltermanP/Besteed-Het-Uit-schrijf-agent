@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/tenderned/:path*",
+      "destination": "https://www.tenderned.nl/papi/tenderned-rs-tns/:path*"
+    }
+  ]
+}

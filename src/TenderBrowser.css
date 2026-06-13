@@ -1,0 +1,186 @@
+.tender-browser {
+  min-height: 100vh;
+  background: #f5f7f7;
+  color: #172033;
+  padding: 20px 24px 40px;
+}
+
+.tender-topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.tender-topbar h1 {
+  margin: 10px 0 6px;
+}
+
+.tender-topbar p {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.tender-topbar a {
+  color: #164f4a;
+}
+
+.tender-actions,
+.tender-toolbar-actions,
+.filter-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tender-link {
+  text-decoration: none;
+}
+
+.tender-filters {
+  margin-bottom: 14px;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.tender-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid #d9e0df;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.tender-list {
+  display: grid;
+  gap: 10px;
+}
+
+.tender-list article {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: start;
+  border: 1px solid #d9e0df;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.tender-list article.selected {
+  border-color: #164f4a;
+  box-shadow: 0 0 0 1px rgba(22, 79, 74, 0.15);
+}
+
+.tender-select input {
+  width: auto;
+  margin-top: 4px;
+}
+
+.tender-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tender-head .open {
+  color: #164f4a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tender-head .closed {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.tender-meta,
+.tender-desc {
+  margin: 6px 0 0;
+  color: #52606f;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.cpv-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.cpv-row span,
+.cpv-chip {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #eef3f2;
+  color: #164f4a;
+  font-size: 11px;
+}
+
+.cpv-row .cpv-main {
+  background: #fff8f2;
+  color: #b3541e;
+  font-weight: 700;
+}
+
+.cpv-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.cpv-chip {
+  border: 1px solid #d3dddb;
+  cursor: pointer;
+}
+
+.tender-list article a {
+  display: inline-block;
+  margin-top: 8px;
+  color: #164f4a;
+  font-size: 12px;
+}
+
+button.tiny {
+  min-height: 28px;
+  margin-top: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.tender-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 900px) {
+  .filter-grid,
+  .tender-topbar,
+  .tender-toolbar {
+    display: grid;
+  }
+}

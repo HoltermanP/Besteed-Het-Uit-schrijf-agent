@@ -1,0 +1,26 @@
+.style-guide-shell .style-guide-grid {
+  grid-template-columns: 1fr;
+  max-width: 920px;
+}
+
+.style-guide-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+  margin-bottom: 12px;
+}
+
+.style-guide-status {
+  margin-top: 8px;
+}
+
+.style-guide-list span {
+  display: block;
+  margin-top: 2px;
+}
+
+@media (max-width: 700px) {
+  .style-guide-fields {
+    grid-template-columns: 1fr;
+  }
+}
