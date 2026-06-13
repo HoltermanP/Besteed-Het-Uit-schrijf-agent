@@ -11,7 +11,6 @@ node_modules
 dist
 dist-ssr
 .data
-api/*.js
 test-results
 *.local
 .env.local
