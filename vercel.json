@@ -3,6 +3,10 @@
     {
       "source": "/api/tenderned/:path*",
       "destination": "https://www.tenderned.nl/papi/tenderned-rs-tns/:path*"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
     }
   ],
   "functions": {
@@ -18,6 +22,9 @@
     },
     "api/extract-text.js": {
       "maxDuration": 30
+    },
+    "api/tender-documents.js": {
+      "maxDuration": 60
     }
   }
 }
