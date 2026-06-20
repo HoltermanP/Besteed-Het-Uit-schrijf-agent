@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -49,6 +49,8 @@ export default function RulesPage() {
   const [uploadCategory, setUploadCategory] = useState<RulesCategory>('richtlijnen')
   const [draft, setDraft] = useState(emptyDraft)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const editorRef = useRef<HTMLDivElement>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
 
   const loadDocuments = async () => {
     setLoading(true)
@@ -150,6 +152,9 @@ export default function RulesPage() {
       content: document.content,
     })
     setStatus(`"${document.name}" bewerken.`)
+    // De editor staat bovenaan de pagina; scroll en focus erheen zodat de actie zichtbaar is.
+    editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    window.setTimeout(() => nameInputRef.current?.focus(), 350)
   }
 
   const handleDelete = async (id: string) => {
@@ -184,11 +189,11 @@ export default function RulesPage() {
       </header>
 
       <div className="admin-grid rules-grid">
-        <section className="admin-card config-card-wide">
+        <section className="admin-card config-card-wide" ref={editorRef}>
           <div className="admin-card-header">
             <Plus size={20} />
             <div>
-              <h2>Schrijfregel aanmaken</h2>
+              <h2>{editingId ? 'Schrijfregel bewerken' : 'Schrijfregel aanmaken'}</h2>
               <p>
                 Schrijf verplichte formulering, kwaliteitsnormen en verboden woorden. De schrijfagent
                 past deze regels toe bij elke inschrijving.
@@ -200,6 +205,7 @@ export default function RulesPage() {
             <label>
               Naam
               <input
+                ref={nameInputRef}
                 value={draft.name}
                 onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
                 placeholder="Bijv. Verboden formuleringen"
