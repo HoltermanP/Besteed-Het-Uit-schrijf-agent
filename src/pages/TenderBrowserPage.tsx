@@ -41,6 +41,12 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`
 }
 
+function formatDate(value: string): string {
+  if (!value) return 'onbekend'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'onbekend' : date.toLocaleDateString('nl-NL')
+}
+
 export default function TenderBrowserPage() {
   const [items, setItems] = useState<TenderListItem[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -372,7 +378,7 @@ export default function TenderBrowserPage() {
                   </span>
                 </div>
                 <p className="tender-meta">
-                  {item.opdrachtgeverNaam} · TN-{item.kenmerk} · sluit {new Date(item.sluitingsDatum).toLocaleDateString('nl-NL')}
+                  {item.opdrachtgeverNaam} · TN-{item.kenmerk} · sluit {formatDate(item.sluitingsDatum)}
                   {isSaved ? <span className="saved-pill"><CheckCircle2 size={13} /> opgeslagen</span> : null}
                 </p>
                 <p className="tender-desc">{item.opdrachtBeschrijving.slice(0, 220)}{item.opdrachtBeschrijving.length > 220 ? '...' : ''}</p>

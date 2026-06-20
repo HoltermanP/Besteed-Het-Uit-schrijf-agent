@@ -8,6 +8,32 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* Design tokens */
+  --ink: #172033;
+  --muted: #64748b;
+  --bg: #f4f6f6;
+  --surface: #ffffff;
+  --border: #dde4e3;
+  --border-strong: #c8d2d0;
+
+  --teal-900: #133f3b;
+  --teal-700: #164f4a;
+  --teal-600: #1c645d;
+  --teal-50: #eef3f2;
+  --accent: #b3541e;
+
+  --radius-sm: 8px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.07), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-md: 0 6px 16px -6px rgba(16, 24, 40, 0.18), 0 2px 6px -2px rgba(16, 24, 40, 0.08);
+  --shadow-teal: 0 1px 2px rgba(19, 63, 59, 0.28), 0 6px 16px -6px rgba(19, 63, 59, 0.4);
+
+  --ease: cubic-bezier(0.16, 0.84, 0.44, 1);
 }
 
 * {
@@ -24,4 +50,34 @@ body {
 
 ::selection {
   background: rgba(179, 84, 30, 0.2);
+}
+
+/* Zachtere, smallere scrollbars passend bij de UI */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #c4d0ce transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #cbd6d4;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #aebbb8;
+  background-clip: padding-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

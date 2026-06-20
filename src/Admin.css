@@ -142,30 +142,65 @@
 
 .admin-shell button,
 .admin-shell .admin-link {
-  min-height: 36px;
+  min-height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 13px;
   cursor: pointer;
   font: inherit;
-  font-weight: 650;
-  color: #172033;
-  background: #ffffff;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  transition: transform 0.12s var(--ease), box-shadow 0.15s var(--ease),
+    border-color 0.15s var(--ease), background 0.15s var(--ease), filter 0.15s var(--ease);
+}
+
+.admin-shell button:hover,
+.admin-shell .admin-link:hover {
+  border-color: #b3c1be;
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.admin-shell button:active {
+  transform: translateY(0);
+  box-shadow: var(--shadow-xs);
+}
+
+.admin-shell button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  box-shadow: none;
+  transform: none;
 }
 
 .admin-shell .primary {
-  background: #164f4a;
+  background: linear-gradient(180deg, var(--teal-600), var(--teal-700));
+  border-color: var(--teal-900);
   color: #ffffff;
+  box-shadow: var(--shadow-teal);
+}
+
+.admin-shell .primary:hover {
+  filter: brightness(1.08);
+  border-color: var(--teal-900);
 }
 
 .admin-shell .secondary {
-  background: #eef3f2;
+  background: var(--teal-50);
   border-color: #d3dddb;
-  color: #164f4a;
+  color: var(--teal-700);
+}
+
+.admin-shell .secondary:hover {
+  background: #e4ecea;
+  border-color: #bccac7;
 }
 
 .workspace-status {
