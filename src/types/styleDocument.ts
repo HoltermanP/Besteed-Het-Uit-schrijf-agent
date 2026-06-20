@@ -70,6 +70,31 @@ export const rulesCategoryLabels: Record<'richtlijnen' | 'kwaliteit', string> = 
 
 export const rulesCategories = Object.keys(rulesCategoryLabels) as Array<keyof typeof rulesCategoryLabels>
 
+/** De drie secties van het Schrijfkader: regels, schrijfwijze en kwaliteit op één pagina. */
+export type KaderSectionKey = 'richtlijnen' | 'schrijfstijl' | 'kwaliteit'
+
+export type KaderSectionMeta = {
+  key: KaderSectionKey
+  /** Korte titel zoals getoond op de pagina. */
+  title: string
+  /** Eén zin die de sectie typeert. */
+  tagline: string
+  /** Hoe de regels/bronnen in deze sectie de schrijfprompt voeden. */
+  promptType: StyleDocumentPromptType
+}
+
+export const kaderSections: KaderSectionMeta[] = [
+  { key: 'richtlijnen', title: 'Schrijfregels', tagline: 'Verplichte formuleringen, verboden woorden en voorschriften', promptType: 'rules' },
+  { key: 'schrijfstijl', title: 'Schrijfwijze', tagline: 'Toon, stijl, perspectief en opbouw', promptType: 'training' },
+  { key: 'kwaliteit', title: 'Kwaliteit', tagline: 'Onderbouwing, toetsbaarheid en reviewcriteria', promptType: 'rules' },
+]
+
+export const kaderSectionKeys = kaderSections.map((section) => section.key)
+
+export function isKaderCategory(category: StyleDocumentCategory): category is KaderSectionKey {
+  return (kaderSectionKeys as StyleDocumentCategory[]).includes(category)
+}
+
 export const styleCategoryDefaultPromptType: Record<
   StyleDocumentCategory,
   StyleDocumentPromptType

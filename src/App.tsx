@@ -1,7 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import AdminRoute from './components/AdminRoute'
 import ConfigPage from './pages/ConfigPage'
-import StyleGuidePage from './pages/StyleGuidePage'
 import RulesPage from './pages/RulesPage'
 import AdminPage from './pages/AdminPage'
 import TenderBrowserPage from './pages/TenderBrowserPage'
@@ -15,7 +14,7 @@ export default function App() {
         <Route path="/" element={<WorkspacePage />} />
         <Route path="/configuratie" element={<ConfigPage />} />
         <Route path="/schrijfregels" element={<RulesPage />} />
-        <Route path="/schrijfstijl" element={<StyleGuidePage />} />
+        <Route path="/schrijfstijl" element={<Navigate to="/schrijfregels" replace />} />
         <Route path="/aanbestedingen" element={<TenderBrowserPage />} />
         <Route
           path="/admin"

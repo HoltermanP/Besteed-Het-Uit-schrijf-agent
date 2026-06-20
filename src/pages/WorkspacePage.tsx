@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   Award,
   BadgeCheck,
-  BookOpen,
   Bot,
   Brain,
   Building2,
@@ -677,12 +676,7 @@ export default function WorkspacePage() {
           </Link>
           <Link className="rail-nav-link" to="/schrijfregels">
             <span className="rail-nav-icon"><ClipboardList size={16} /></span>
-            <span className="rail-nav-label">Schrijfregels</span>
-            <ChevronRight size={16} className="rail-nav-chev" />
-          </Link>
-          <Link className="rail-nav-link" to="/schrijfstijl">
-            <span className="rail-nav-icon"><BookOpen size={16} /></span>
-            <span className="rail-nav-label">Schrijfstijl &amp; kwaliteit</span>
+            <span className="rail-nav-label">Schrijfkader</span>
             <ChevronRight size={16} className="rail-nav-chev" />
           </Link>
         </nav>
@@ -787,8 +781,8 @@ export default function WorkspacePage() {
             onFiles={handleFileUpload}
           />
           <p className="source-upload-help">
-            Of plak tekst handmatig hieronder. Voor vaste schrijfregels gebruik je ook de pagina{' '}
-            <Link to="/schrijfregels">schrijfregelspagina</Link>.
+            Of plak tekst handmatig hieronder. Vaste schrijfregels, schrijfwijze en kwaliteit beheer je in het{' '}
+            <Link to="/schrijfregels">Schrijfkader</Link>.
           </p>
           {uploadNotice ? (
             <p className={`source-upload-notice source-upload-notice-${uploadNotice.tone}`}>{uploadNotice.message}</p>

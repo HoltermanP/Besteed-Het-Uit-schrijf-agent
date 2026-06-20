@@ -61,11 +61,12 @@ export async function createRulesTextDocument(input: {
   name: string
   category: StyleDocumentCategory
   content: string
+  promptType?: StyleDocumentPromptType
 }): Promise<StyleDocument> {
   const formData = new FormData()
   formData.append('name', input.name.trim())
   formData.append('category', input.category)
-  formData.append('promptType', 'rules')
+  formData.append('promptType', input.promptType ?? 'rules')
   formData.append('content', input.content)
 
   const response = await fetch('/api/style-documents', {
@@ -124,6 +125,31 @@ export async function analyzeStyleDocument(id: string): Promise<StyleDocument> {
   }
 
   return data.document
+}
+
+export async function distillRulesFromDocument(id: string): Promise<string> {
+  const apiConfig = getApiConfig()
+  const ai = isWriterConfigured(apiConfig)
+    ? {
+        provider: apiConfig.writer.provider,
+        baseUrl: apiConfig.writer.baseUrl,
+        apiKey: apiConfig.writer.apiKey,
+        model: apiConfig.writer.model,
+      }
+    : undefined
+
+  const response = await fetch('/api/style-documents', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'distill-rules', id, ai }),
+  })
+
+  const data = (await response.json()) as { rules?: string; error?: string }
+  if (!response.ok || data.error || typeof data.rules !== 'string') {
+    throw new Error(data.error ?? 'AI kon geen regels distilleren.')
+  }
+
+  return data.rules
 }
 
 export function isRulesDocument(document: StyleDocument): boolean {

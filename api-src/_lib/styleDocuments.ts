@@ -8,6 +8,7 @@ import type {
 } from '../../src/types/styleDocument'
 import { type AiRuntimeConfig, resolveAiFromRequest } from './aiClient'
 import { analyzeSourceProfile } from './analyzeSource'
+import { distillRulesFromContent } from './distillRules'
 import { extractDocumentText, validateStyleFileName } from './extractDocumentText'
 import { isDatabaseConfigured, prisma } from './prisma'
 
@@ -296,6 +297,23 @@ export async function analyzeStyleDocument(input: {
   return saveAnalysis(input.id, profile)
 }
 
+export async function distillRulesForDocument(input: {
+  id: string
+  ai?: AiRuntimeConfig
+}): Promise<string> {
+  if (!input.id.trim()) throw new Error('Document-id ontbreekt.')
+
+  const document = await getStyleDocument(input.id)
+  if (!document) throw new Error('Document niet gevonden.')
+
+  const ai = resolveAiFromRequest(input.ai, 'WRITER_MODEL')
+  return distillRulesFromContent(ai, {
+    name: document.name,
+    content: document.content,
+    category: document.category,
+  })
+}
+
 export async function deleteStyleDocument(id: string): Promise<void> {
   if (!id.trim()) throw new Error('Document-id ontbreekt.')
 
@@ -368,6 +386,11 @@ export async function handleStyleDocumentsRequest(request: Request): Promise<Res
       if (body.action === 'analyze') {
         const document = await analyzeStyleDocument({ id: body.id, ai: body.ai })
         return Response.json({ document })
+      }
+
+      if (body.action === 'distill-rules') {
+        const rules = await distillRulesForDocument({ id: body.id, ai: body.ai })
+        return Response.json({ rules })
       }
 
       const document = await updateStyleDocument({
