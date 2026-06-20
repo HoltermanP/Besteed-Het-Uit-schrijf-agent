@@ -17,12 +17,12 @@ const stageLabels: Record<Stage, string> = {
 }
 
 function summarize(text: string, max = 220) {
-  const clean = text.replace(/\s+/g, ' ').trim()
+  const clean = (text ?? '').replace(/\s+/g, ' ').trim()
   return clean.length > max ? `${clean.slice(0, max).trim()}...` : clean
 }
 
 function escapeHtml(text: string) {
-  return text
+  return (text ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

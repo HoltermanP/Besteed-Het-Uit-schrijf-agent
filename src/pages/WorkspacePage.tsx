@@ -157,6 +157,21 @@ const stagePrompts: Record<Stage, string> = {
 
 const makeId = () => Math.random().toString(36).slice(2, 10)
 
+// Oudere, opgeslagen analyses (localStorage) missen mogelijk nieuwere array-velden zoals
+// submissionRequirements. Zonder deze normalisatie crasht een `.length`/.map` in de render.
+function normalizeStoredAnalysis(analysis: TenderAnalysis | null): TenderAnalysis | null {
+  if (!analysis) return analysis
+  return {
+    ...analysis,
+    wordLimits: analysis.wordLimits ?? [],
+    contentRequirements: analysis.contentRequirements ?? [],
+    documentRequirements: analysis.documentRequirements ?? [],
+    submissionRequirements: analysis.submissionRequirements ?? [],
+    evaluationCriteria: analysis.evaluationCriteria ?? [],
+    gaps: analysis.gaps ?? [],
+  }
+}
+
 function loadInitialState() {
   const storedProject = loadStored<TenderProject>('bid-agent-project', initialProject)
   migrateLegacyNeonUrl(storedProject.neonUrl)
@@ -173,13 +188,13 @@ function loadInitialState() {
   const comments = loadStored<ReviewComment[]>('bid-agent-comments', [])
   const stage = loadStored<Stage>('bid-agent-stage', 'brons')
   const storedDraft = localStorage.getItem('bid-agent-draft')
-  const storedAnalysis = loadStored<TenderAnalysis | null>('bid-agent-analysis', null)
+  const storedAnalysis = normalizeStoredAnalysis(loadStored<TenderAnalysis | null>('bid-agent-analysis', null))
   const draft = storedDraft ?? buildHtmlDraft(stage, project, documents, comments, storedAnalysis)
   return { project, documents, comments, stage, draft, analysis: storedAnalysis }
 }
 
 function summarize(text: string, max = 220) {
-  const clean = text.replace(/\s+/g, ' ').trim()
+  const clean = (text ?? '').replace(/\s+/g, ' ').trim()
   return clean.length > max ? `${clean.slice(0, max).trim()}...` : clean
 }
 
