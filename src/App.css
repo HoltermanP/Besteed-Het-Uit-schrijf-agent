@@ -661,6 +661,46 @@ button:hover {
   color: #b42318;
 }
 
+.analysis-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: #164f4a;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+
+.analysis-badge-heuristic {
+  background: #6b7280;
+}
+
+.submission-list .submission-cat {
+  display: inline-block;
+  min-width: 64px;
+  padding: 1px 6px;
+  margin-right: 4px;
+  border-radius: 4px;
+  background: #eef3f2;
+  color: #164f4a;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.submission-list .submission-mandatory {
+  color: #1f2937;
+}
+
+.submission-list .submission-flag {
+  color: #b42318;
+  font-weight: 700;
+  font-size: 11px;
+}
+
 .analysis-results {
   margin-top: 10px;
 }

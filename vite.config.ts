@@ -2,16 +2,20 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { handleAnalyzeIntentRequest } from './api-src/_lib/analyzeIntent'
+import { handleAnalyzeTenderRequest } from './api-src/_lib/analyzeTender'
 import { handleCompanyEnrichRequest } from './api-src/_lib/companyEnrich'
 import { applyDevApiEnv } from './api-src/_lib/devApiEnv'
 import { handleExtractTextRequest } from './api-src/_lib/extractText'
 import { handleStyleDocumentsRequest } from './api-src/_lib/styleDocuments'
+import { handleTenderDocumentsRequest } from './api-src/_lib/tenderDocuments'
 import { handleWriteDraftRequest } from './api-src/_lib/writeDraft'
 import { getWriterStatusPayload } from './api-src/_lib/writerStatus'
 import type { AnalyzeIntentRequest } from './src/types/analyzeIntent'
+import type { AnalyzeTenderRequest } from './src/types/analyzeTender'
 
 const jsonApiRoutes: Record<string, (body: unknown) => Promise<Response>> = {
   '/api/analyze-intent': (body) => handleAnalyzeIntentRequest(body as AnalyzeIntentRequest),
+  '/api/analyze-tender': (body) => handleAnalyzeTenderRequest(body as AnalyzeTenderRequest),
   '/api/company-enrich': handleCompanyEnrichRequest,
   '/api/write-draft': handleWriteDraftRequest,
 }
@@ -74,9 +78,10 @@ function serverDevApi(env: Record<string, string>): Plugin {
         const isJsonRoute = req.method === 'POST' && jsonApiRoutes[req.url]
         const isStyleRoute = req.url.startsWith('/api/style-documents')
         const isExtractRoute = req.url === '/api/extract-text' && req.method === 'POST'
+        const isTenderDocsRoute = req.url.startsWith('/api/tender-documents') && req.method === 'GET'
         const isWriterStatusRoute = req.url === '/api/writer-status' && req.method === 'GET'
 
-        if (!isJsonRoute && !isStyleRoute && !isExtractRoute && !isWriterStatusRoute) {
+        if (!isJsonRoute && !isStyleRoute && !isExtractRoute && !isTenderDocsRoute && !isWriterStatusRoute) {
           next()
           return
         }
@@ -98,6 +103,12 @@ function serverDevApi(env: Record<string, string>): Plugin {
 
           if (isExtractRoute) {
             const response = await handleExtractTextRequest(await toWebRequest(req, req.url))
+            await sendWebResponse(res, response)
+            return
+          }
+
+          if (isTenderDocsRoute) {
+            const response = await handleTenderDocumentsRequest(await toWebRequest(req, req.url))
             await sendWebResponse(res, response)
             return
           }

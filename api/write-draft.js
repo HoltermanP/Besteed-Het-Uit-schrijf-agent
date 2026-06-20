@@ -301,6 +301,7 @@ INHOUDELIJKE REGELS
 - Beantwoord wat de opdrachtgever expliciet vraagt \xE9n adresseer de onderliggende behoefte uit de analyse "vraag achter de vraag"
 - Laat in elke sectie impliciet zien dat u het werkelijke doel van de opdrachtgever begrijpt (zekerheid, grip, beheersbaarheid, EMVI-prioriteiten)
 - Voeg geen standaardparagrafen toe over risico, duurzaamheid, implementatie of continuiteit tenzij de leidraad dat vereist
+- Respecteer de specifieke eisen aan de inschrijving (vorm, opmaak, indiening, geschiktheid) uit de analyse: schrijf bijvoorbeeld anoniem als dat vereist is, in het Nederlands, en houd je aan format-/structuureisen
 - Onderbouw uitspraken met feiten uit bedrijfsbronnen; geen lege superlatieven
 - Ontbrekende feiten niet verzinnen \u2014 weglaten of voorzichtig formuleren
 - Verwijs niet naar het schrijfproces, AI, prompts of interne review
@@ -447,6 +448,28 @@ function formatDocumentRequirements(analysis) {
     (doc) => `- ${doc.name} (${doc.mandatory ? "verplicht" : "optioneel"}) \u2014 ${doc.source}`
   ).join("\n");
 }
+function formatSubmissionRequirements(analysis) {
+  const requirements = analysis.submissionRequirements ?? [];
+  if (!requirements.length) {
+    return "- Geen specifieke vorm-/indieningseisen gedetecteerd \u2014 volg de algemene leidraadeisen.";
+  }
+  const mandatory = requirements.filter((req) => req.mandatory);
+  const optional = requirements.filter((req) => !req.mandatory);
+  const lines = [];
+  if (mandatory.length) {
+    lines.push("Verplichte eisen (hard \u2014 schending kan diskwalificeren):");
+    mandatory.forEach((req, index) => {
+      lines.push(`${index + 1}. [${req.category}] ${req.requirement} [${req.source}]`);
+    });
+  }
+  if (optional.length) {
+    lines.push("", "Overige aandachtspunten:");
+    optional.slice(0, 8).forEach((req, index) => {
+      lines.push(`${index + 1}. [${req.category}] ${req.requirement}`);
+    });
+  }
+  return lines.join("\n");
+}
 function formatUnderlyingIntent(analysis) {
   const intent = analysis.underlyingIntent;
   if (!intent) {
@@ -495,6 +518,9 @@ ${formatEvaluationCriteria(analysis)}
 
 Vraag achter de vraag (schrijflens \u2014 verwerk in inhoud, niet als apart meta-stuk):
 ${formatUnderlyingIntent(analysis)}
+
+Specifieke eisen aan de inschrijving (respecteer vanaf deze versie \u2014 vorm, opmaak, indiening, geschiktheid):
+${formatSubmissionRequirements(analysis)}
 
 Verwachte bijlagen (inhoudelijk verwerken waar het plan van aanpak dat vraagt; niet als losse lijst dumpen):
 ${formatDocumentRequirements(analysis)}`;

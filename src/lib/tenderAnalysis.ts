@@ -3,6 +3,7 @@ import type {
   ContentRequirement,
   DocumentRequirement,
   StyleProfile,
+  SubmissionRequirement,
   TenderAnalysis,
   UnderlyingIntent,
   WordLimit,
@@ -266,6 +267,47 @@ function extractDocumentRequirements(text: string, source: string): DocumentRequ
     seen.add(name)
     requirements.push({ name, mandatory: true, source })
   }
+
+  return requirements
+}
+
+const SUBMISSION_PATTERNS: Array<{
+  pattern: RegExp
+  category: SubmissionRequirement['category']
+  label: string
+}> = [
+  { pattern: /anoniem|geanonimiseerd|zonder (?:bedrijfs)?naam|herleidbaar/i, category: 'vorm', label: 'Inschrijving (mogelijk) anoniem/geanonimiseerd indienen' },
+  { pattern: /pdf(?:[-\s]?formaat|[-\s]?bestand)?|in pdf/i, category: 'vorm', label: 'Aanleveren in PDF-formaat' },
+  { pattern: /lettertype|arial|calibri|verdana|times new roman|font(?:grootte)?|pt(?:\s|$)|puntsgrootte/i, category: 'opmaak', label: 'Opmaak-eis (lettertype/lettergrootte)' },
+  { pattern: /marge|regelafstand|kantlijn|a4/i, category: 'opmaak', label: 'Opmaak-eis (marges/regelafstand/A4)' },
+  { pattern: /ondertekend|ondertekening|rechtsgeldig|bevoegd(?:e)? (?:persoon|vertegenwoordiger)/i, category: 'indiening', label: 'Rechtsgeldige ondertekening vereist' },
+  { pattern: /tenderned|via (?:het )?(?:digitale )?(?:aanbestedings)?platform|uploaden via/i, category: 'indiening', label: 'Indienen via voorgeschreven platform (bv. TenderNed)' },
+  { pattern: /uiterlijk|sluitingsdatum|sluitingstijd|deadline|voor \d{1,2}[:.]\d{2}/i, category: 'indiening', label: 'Harde sluitingsdatum/-tijd voor indiening' },
+  { pattern: /geschiktheidseis|kerncompetentie|omzeteis|referentie-eis|beroepsbevoegdheid/i, category: 'geschiktheid', label: 'Geschiktheidseis (referenties/omzet/bevoegdheid)' },
+  { pattern: /uitsluitingsgrond|uitsluiting|gedragsverklaring|verklaring omtrent gedrag|integriteit/i, category: 'uitsluiting', label: 'Uitsluitingsgrond / integriteitsverklaring' },
+  { pattern: /uniform europees aanbestedingsdocument|\buea\b|eigen verklaring/i, category: 'geschiktheid', label: 'UEA / eigen verklaring vereist' },
+  { pattern: /nota van inlichtingen|vragenronde|inlichtingen(?:ronde)?/i, category: 'proces', label: 'Vragen/Nota van Inlichtingen-procedure volgen' },
+  { pattern: /in het nederlands|nederlandstalig|taal van de inschrijving/i, category: 'vorm', label: 'Inschrijving in het Nederlands opstellen' },
+]
+
+function extractSubmissionRequirements(text: string, source: string): SubmissionRequirement[] {
+  const requirements: SubmissionRequirement[] = []
+  const seen = new Set<string>()
+  const mandatorySignal = /verplicht|dient|moet|uiterlijk|op straffe|uitsluiting|wordt terzijde/i
+
+  SUBMISSION_PATTERNS.forEach(({ pattern, category, label }) => {
+    const match = text.match(pattern)
+    if (!match) return
+    if (seen.has(label)) return
+    seen.add(label)
+    const sentence = text.match(new RegExp(`[^.\\n]{0,120}${pattern.source}[^.\\n]{0,120}`, 'i'))?.[0]
+    requirements.push({
+      category,
+      requirement: sentence ? normalize(sentence) : label,
+      mandatory: mandatorySignal.test(sentence ?? text),
+      source,
+    })
+  })
 
   return requirements
 }
@@ -607,6 +649,9 @@ export function analyzeTenderDocuments(
   const documentRequirements = analysisSources.flatMap((doc) =>
     extractDocumentRequirements(doc.content, doc.name),
   )
+  const submissionRequirements = analysisSources.flatMap((doc) =>
+    extractSubmissionRequirements(doc.content, doc.name),
+  )
   const evaluationCriteria = extractEvaluationCriteria(allTenderText || combinedText)
 
   const styleProfile = buildStyleProfile(companyDocs, tenderDocs, leidraad, buyerName)
@@ -636,6 +681,7 @@ export function analyzeTenderDocuments(
     wordLimits,
     contentRequirements,
     documentRequirements,
+    submissionRequirements,
     evaluationCriteria,
     styleProfile,
   }
@@ -738,6 +784,30 @@ export function reviewAgainstAnalysis(
         })
       }
     })
+
+  const mandatorySubmission = (analysis.submissionRequirements ?? []).filter((req) => req.mandatory)
+
+  // Anonimiteitseis: signaleer als de bedrijfsnaam toch in het concept staat
+  const anonymity = mandatorySubmission.find((req) => /anoniem|geanonimiseerd|herleidbaar/i.test(req.requirement))
+  const companyName = analysis.styleProfile.companyName?.trim()
+  if (anonymity && companyName && companyName.length > 2 && companyName.toLowerCase() !== 'inschrijver') {
+    if (plain.includes(companyName.toLowerCase())) {
+      findings.push({
+        priority: 'kritiek',
+        title: 'Anonimiteitseis geschonden',
+        detail: `De leidraad vraagt een anonieme inschrijving, maar de bedrijfsnaam "${companyName}" staat in het concept. Verwijder herleidbare gegevens.`,
+      })
+    }
+  }
+
+  // Verplichte inschrijvingseisen als toetsbare herinnering
+  mandatorySubmission.slice(0, 5).forEach((req) => {
+    findings.push({
+      priority: 'normaal',
+      title: `Inschrijvingseis bewaken: ${req.category}`,
+      detail: `${req.requirement} (${req.source})`,
+    })
+  })
 
   analysis.gaps.slice(0, 3).forEach((gap) => {
     findings.push({ priority: 'hoog', title: 'Dossiergap', detail: gap })

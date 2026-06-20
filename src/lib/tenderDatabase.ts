@@ -1,7 +1,7 @@
 import { getApiConfig, isNeonConfigured } from './apiConfig'
 import { loadStored, saveStored } from './storage'
-import type { SavedTender, TenderDetail } from '../types/tenderNed'
-import { fetchPublicationDocumentText } from './tenderNedApi'
+import type { SavedTender, SavedTenderDocument, TenderDetail } from '../types/tenderNed'
+import { fetchTenderDocumentBundle } from './tenderNedApi'
 
 const STORAGE_KEY = 'bid-agent-saved-tenders'
 
@@ -17,9 +17,19 @@ export function saveTendersLocally(tenders: SavedTender[]) {
 }
 
 export async function downloadTenderToDatabase(detail: TenderDetail): Promise<SavedTender> {
-  const documentText = await fetchPublicationDocumentText(detail.publicatieId).catch(
-    () => detail.opdrachtBeschrijving,
-  )
+  let documentText = detail.opdrachtBeschrijving
+  let documents: SavedTenderDocument[] | undefined
+
+  // Alle documenten bij de publicatie downloaden en tekst extraheren (server-side, incl. zip).
+  try {
+    const bundle = await fetchTenderDocumentBundle(detail.publicatieId)
+    documents = bundle.documents
+    if (bundle.combinedText.trim()) {
+      documentText = bundle.combinedText
+    }
+  } catch {
+    // Val terug op de opdrachtbeschrijving als de documentenservice faalt.
+  }
 
   const saved: SavedTender = {
     id: `tn-${detail.publicatieId}`,
@@ -31,6 +41,7 @@ export async function downloadTenderToDatabase(detail: TenderDetail): Promise<Sa
     cpvCodes: detail.cpvCodes,
     opdrachtBeschrijving: detail.opdrachtBeschrijving,
     documentText,
+    documents,
     tendernedUrl: detail.tendernedUrl,
     savedAt: new Date().toISOString(),
     syncStatus: isNeonConfigured() ? 'pending' : 'local',

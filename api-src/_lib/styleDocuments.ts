@@ -1,6 +1,13 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { StyleDocument, StyleDocumentCategory, StyleDocumentPromptType } from '../../src/types/styleDocument'
+import type {
+  SourceProfile,
+  StyleDocument,
+  StyleDocumentCategory,
+  StyleDocumentPromptType,
+} from '../../src/types/styleDocument'
+import { type AiRuntimeConfig, resolveAiFromRequest } from './aiClient'
+import { analyzeSourceProfile } from './analyzeSource'
 import { extractDocumentText, validateStyleFileName } from './extractDocumentText'
 import { isDatabaseConfigured, prisma } from './prisma'
 
@@ -21,6 +28,21 @@ function useMemoryStore() {
   return process.env.STYLE_DOCS_MEMORY === '1'
 }
 
+function parseAnalysis(raw: string | null): SourceProfile | null {
+  if (!raw?.trim()) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<SourceProfile>
+    return {
+      schrijfstijl: parsed.schrijfstijl ?? '',
+      kennis: parsed.kennis ?? '',
+      ervaringen: parsed.ervaringen ?? '',
+      achtergrond: parsed.achtergrond ?? '',
+    }
+  } catch {
+    return null
+  }
+}
+
 function mapRecord(record: {
   id: string
   name: string
@@ -29,6 +51,8 @@ function mapRecord(record: {
   category: string
   promptType: string
   content: string
+  analysis: string | null
+  analyzedAt: Date | null
   createdAt: Date
   updatedAt: Date
 }): StyleDocument {
@@ -40,6 +64,8 @@ function mapRecord(record: {
     category: record.category as StyleDocumentCategory,
     promptType: record.promptType as StyleDocumentPromptType,
     content: record.content,
+    analysis: parseAnalysis(record.analysis),
+    analyzedAt: record.analyzedAt ? record.analyzedAt.toISOString() : null,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   }
@@ -166,6 +192,8 @@ async function persistStyleDocument(input: {
     category: input.category,
     promptType: input.promptType,
     content: input.content,
+    analysis: null,
+    analyzedAt: null,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
   }
@@ -214,6 +242,58 @@ export async function updateStyleDocument(input: {
   store.documents[index] = updated
   await writeDevStore(store)
   return updated
+}
+
+async function getStyleDocument(id: string): Promise<StyleDocument | null> {
+  if (isDatabaseConfigured()) {
+    const record = await prisma.styleDocument.findUnique({ where: { id } })
+    return record ? mapRecord(record) : null
+  }
+  const store = await readDevStore()
+  return store.documents.find((doc) => doc.id === id) ?? null
+}
+
+async function saveAnalysis(id: string, profile: SourceProfile): Promise<StyleDocument> {
+  const analysis = JSON.stringify(profile)
+
+  if (isDatabaseConfigured()) {
+    const record = await prisma.styleDocument.update({
+      where: { id },
+      data: { analysis, analyzedAt: new Date() },
+    })
+    return mapRecord(record)
+  }
+
+  const store = await readDevStore()
+  const index = store.documents.findIndex((doc) => doc.id === id)
+  if (index < 0) throw new Error('Document niet gevonden.')
+  const updated: StyleDocument = {
+    ...store.documents[index],
+    analysis: profile,
+    analyzedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+  store.documents[index] = updated
+  await writeDevStore(store)
+  return updated
+}
+
+export async function analyzeStyleDocument(input: {
+  id: string
+  ai?: AiRuntimeConfig
+}): Promise<StyleDocument> {
+  if (!input.id.trim()) throw new Error('Document-id ontbreekt.')
+
+  const document = await getStyleDocument(input.id)
+  if (!document) throw new Error('Document niet gevonden.')
+
+  const ai = resolveAiFromRequest(input.ai, 'WRITER_MODEL')
+  const profile = await analyzeSourceProfile(ai, {
+    name: document.name,
+    content: document.content,
+  })
+
+  return saveAnalysis(input.id, profile)
 }
 
 export async function deleteStyleDocument(id: string): Promise<void> {
@@ -276,12 +356,20 @@ export async function handleStyleDocumentsRequest(request: Request): Promise<Res
 
     if (request.method === 'PUT') {
       const body = (await request.json()) as {
+        action?: string
         id?: string
         name?: string
         category?: StyleDocumentCategory
         content?: string
+        ai?: AiRuntimeConfig
       }
       if (!body.id?.trim()) throw new Error('Document-id ontbreekt.')
+
+      if (body.action === 'analyze') {
+        const document = await analyzeStyleDocument({ id: body.id, ai: body.ai })
+        return Response.json({ document })
+      }
+
       const document = await updateStyleDocument({
         id: body.id,
         name: body.name,

@@ -1,4 +1,5 @@
 import type { StyleDocument, StyleDocumentCategory, StyleDocumentPromptType } from '../types/styleDocument'
+import { getApiConfig, isWriterConfigured } from './apiConfig'
 
 type StyleDocumentsResponse = {
   documents: StyleDocument[]
@@ -95,6 +96,31 @@ export async function updateStyleDocument(input: {
   const data = (await response.json()) as StyleDocumentUploadResponse | StyleDocumentError
   if (!response.ok || 'error' in data) {
     throw new Error('error' in data ? data.error : 'Bijwerken mislukt.')
+  }
+
+  return data.document
+}
+
+export async function analyzeStyleDocument(id: string): Promise<StyleDocument> {
+  const apiConfig = getApiConfig()
+  const ai = isWriterConfigured(apiConfig)
+    ? {
+        provider: apiConfig.writer.provider,
+        baseUrl: apiConfig.writer.baseUrl,
+        apiKey: apiConfig.writer.apiKey,
+        model: apiConfig.writer.model,
+      }
+    : undefined
+
+  const response = await fetch('/api/style-documents', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'analyze', id, ai }),
+  })
+
+  const data = (await response.json()) as StyleDocumentUploadResponse | StyleDocumentError
+  if (!response.ok || 'error' in data) {
+    throw new Error('error' in data ? data.error : 'AI-analyse mislukt.')
   }
 
   return data.document

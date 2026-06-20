@@ -1,4 +1,11 @@
-import type { CpvCode, TenderDetail, TenderListItem, TenderSearchFilters } from '../types/tenderNed'
+import type {
+  CpvCode,
+  TenderDetail,
+  TenderDocument,
+  TenderDocumentBundle,
+  TenderListItem,
+  TenderSearchFilters,
+} from '../types/tenderNed'
 
 const API_BASE = '/api/tenderned'
 
@@ -109,10 +116,46 @@ export async function fetchPublicationDetail(publicatieId: string): Promise<Tend
   }
 }
 
-export async function fetchPublicationDocumentText(publicatieId: string): Promise<string> {
-  const response = await fetch(`${API_BASE}/v2/publicaties/${publicatieId}/pdf`)
-  if (!response.ok) throw new Error(`Document ${publicatieId} downloaden mislukt (${response.status})`)
-  return response.text()
+type RawDocument = {
+  documentId?: string
+  documentNaam?: string
+  typeDocument?: { code?: string; omschrijving?: string }
+  publicatieCategorie?: { code?: string; omschrijving?: string }
+  grootte?: number
+  links?: { download?: { href?: string } }
+}
+
+function mapDocument(raw: RawDocument): TenderDocument {
+  const naam = raw.documentNaam?.trim() || raw.documentId || 'Document'
+  return {
+    documentId: raw.documentId ?? naam,
+    documentNaam: naam,
+    type: (raw.typeDocument?.code || naam.split('.').pop() || 'onbekend').toLowerCase(),
+    categorie: raw.publicatieCategorie?.code ?? '',
+    categorieOmschrijving: raw.publicatieCategorie?.omschrijving ?? '',
+    grootte: raw.grootte ?? 0,
+    downloadHref: raw.links?.download?.href
+      ? `https://www.tenderned.nl${raw.links.download.href}`
+      : '',
+  }
+}
+
+/** Lichtgewicht metadata-lijst van alle documenten bij een publicatie (zonder download/extractie). */
+export async function fetchPublicationDocumentList(publicatieId: string): Promise<TenderDocument[]> {
+  const response = await fetch(`${API_BASE}/v2/publicaties/${publicatieId}/documenten`)
+  if (!response.ok) throw new Error(`Documentenlijst ${publicatieId} laden mislukt (${response.status})`)
+  const data = (await response.json()) as { documenten?: RawDocument[] }
+  return (data.documenten ?? []).map(mapDocument)
+}
+
+/** Downloadt alle documenten bij een publicatie en haalt er tekst uit (server-side, incl. zip-inhoud). */
+export async function fetchTenderDocumentBundle(publicatieId: string): Promise<TenderDocumentBundle> {
+  const response = await fetch(`/api/tender-documents?publicatieId=${encodeURIComponent(publicatieId)}`)
+  const data = (await response.json()) as TenderDocumentBundle | { error: string }
+  if (!response.ok || 'error' in data) {
+    throw new Error('error' in data ? data.error : `Documenten ${publicatieId} downloaden mislukt`)
+  }
+  return data
 }
 
 export async function enrichWithCpv(items: TenderListItem[]): Promise<TenderListItem[]> {

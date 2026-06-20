@@ -8,5 +8,14 @@ export function loadStored<T>(key: string, fallback: T): T {
 }
 
 export function saveStored<T>(key: string, value: T) {
-  localStorage.setItem(key, JSON.stringify(value))
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === 'QuotaExceededError' || error.code === 22)) {
+      throw new Error('Lokale opslag is vol. Verwijder eerder opgeslagen aanbestedingen of synchroniseer naar Neon.', {
+        cause: error,
+      })
+    }
+    throw error
+  }
 }

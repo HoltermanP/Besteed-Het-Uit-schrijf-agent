@@ -36,7 +36,7 @@ import {
 import { buildHtmlDraft } from '../lib/buildDraft'
 import { revealDraftProgressively } from '../lib/draftProgress'
 import { analyzeTenderDocuments, countCharacters, countWords, reviewAgainstAnalysis } from '../lib/tenderAnalysis'
-import { enrichIntentViaApi } from '../lib/analyzeIntentApi'
+import { analyzeTenderViaApi } from '../lib/analyzeTenderApi'
 import { assessSourceContent } from '../lib/sourceQuality'
 import { readFileContent } from '../lib/extractTextApi'
 import FileUploadZone from '../components/FileUploadZone'
@@ -360,21 +360,23 @@ export default function WorkspacePage() {
   }, [analysis, comments, draft, effectiveDocuments.length])
 
   const runAnalysis = async () => {
-    const result = analyzeTenderDocuments(effectiveDocuments, project.buyer)
-    setAnalysis(result)
-    setSyncStatus(`Leidraadanalyse: ${result.contentRequirements.length} eisen, ${result.documentRequirements.length} documenten`)
+    const baseline = analyzeTenderDocuments(effectiveDocuments, project.buyer)
+    setAnalysis(baseline)
+    setSyncStatus('AI analyseert de uitvraag (documenten, limieten, vragen, eisen, stijl)…')
 
-    const enriched = await enrichIntentViaApi(project.buyer, effectiveDocuments, result.underlyingIntent!)
+    const enriched = await analyzeTenderViaApi(project.buyer, effectiveDocuments, baseline)
     if (enriched?.enriched) {
-      const merged = { ...result, underlyingIntent: enriched.underlyingIntent }
-      setAnalysis(merged)
+      setAnalysis(enriched.analysis)
       setSyncStatus(
-        `Vraag achter de vraag verrijkt met ${enriched.provider} (${enriched.model})`,
+        `Uitvraag-analyse door ${enriched.provider} (${enriched.model}): ${enriched.analysis.contentRequirements.length} vragen, ${enriched.analysis.documentRequirements.length} documenten, ${enriched.analysis.submissionRequirements.length} inschrijvingseisen`,
       )
-      return merged
+      return enriched.analysis
     }
 
-    return result
+    setSyncStatus(
+      `Heuristische analyse: ${baseline.contentRequirements.length} vragen, ${baseline.documentRequirements.length} documenten, ${baseline.submissionRequirements.length} inschrijvingseisen`,
+    )
+    return baseline
   }
 
   const analyzeAndGenerate = async (targetStage = stage) => {
@@ -921,10 +923,18 @@ export default function WorkspacePage() {
           <button className="secondary" onClick={() => void runAnalysis()}><Search size={16} /> Analyseer dossier</button>
           {analysis ? (
             <div className="analysis-results">
-              <p className="analysis-summary">{analysis.summary}</p>
+              <p className="analysis-summary">
+                {analysis.aiAnalyzed ? (
+                  <span className="analysis-badge">AI-analyse{analysis.analysisModel ? ` · ${analysis.analysisModel}` : ''}</span>
+                ) : (
+                  <span className="analysis-badge analysis-badge-heuristic">Heuristisch</span>
+                )}{' '}
+                {analysis.summary}
+              </p>
               <div className="analysis-chips">
-                <span>{analysis.contentRequirements.length} inhoudseisen</span>
+                <span>{analysis.contentRequirements.length} vragen/onderwerpen</span>
                 <span>{analysis.documentRequirements.length} documenten</span>
+                <span>{analysis.submissionRequirements.length} inschrijvingseisen</span>
                 <span>{analysis.wordLimits.length} limieten</span>
               </div>
               {analysis.underlyingIntent ? (
@@ -985,6 +995,19 @@ export default function WorkspacePage() {
                   <ul className="analysis-list">
                     {analysis.documentRequirements.map((req) => (
                       <li key={req.name}>{req.name}{req.mandatory ? ' (verplicht)' : ''}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+              {analysis.submissionRequirements.length > 0 ? (
+                <>
+                  <h3>Specifieke eisen aan de inschrijving</h3>
+                  <ul className="analysis-list submission-list">
+                    {analysis.submissionRequirements.map((req, index) => (
+                      <li key={`${req.category}-${index}`} className={req.mandatory ? 'submission-mandatory' : ''}>
+                        <span className="submission-cat">{req.category}</span> {req.requirement}
+                        {req.mandatory ? <span className="submission-flag"> verplicht</span> : null}
+                      </li>
                     ))}
                   </ul>
                 </>

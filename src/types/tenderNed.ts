@@ -27,6 +27,38 @@ export type TenderDetail = TenderListItem & {
   raw?: Record<string, unknown>
 }
 
+/** Document dat bij een publicatie hoort (metadata uit de TNS documentenlijst). */
+export type TenderDocument = {
+  documentId: string
+  documentNaam: string
+  type: string
+  categorie: string
+  categorieOmschrijving: string
+  grootte: number
+  downloadHref: string
+}
+
+export type SavedTenderDocumentStatus = 'ok' | 'leeg' | 'overgeslagen' | 'fout'
+
+/** Resultaat per gedownload document na tekstextractie. */
+export type SavedTenderDocument = {
+  naam: string
+  type: string
+  categorie: string
+  categorieOmschrijving: string
+  grootte: number
+  chars: number
+  status: SavedTenderDocumentStatus
+  note?: string
+}
+
+/** Respons van /api/tender-documents: alle documenten + samengevoegde tekst. */
+export type TenderDocumentBundle = {
+  publicatieId: string
+  documents: SavedTenderDocument[]
+  combinedText: string
+}
+
 export type SavedTender = {
   id: string
   publicatieId: string
@@ -37,6 +69,7 @@ export type SavedTender = {
   cpvCodes: CpvCode[]
   opdrachtBeschrijving: string
   documentText: string
+  documents?: SavedTenderDocument[]
   tendernedUrl: string
   savedAt: string
   syncStatus: 'local' | 'pending' | 'synced'
