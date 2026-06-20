@@ -283,33 +283,160 @@ button:disabled {
   display: none;
 }
 
-.config-nav-link {
+/* Zijbalk-navigatie als nette lijst met icoon-badges en chevron */
+.rail-nav {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.rail-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 13.5px;
+  letter-spacing: -0.01em;
+  box-shadow: var(--shadow-xs);
+  transition: transform 0.12s var(--ease), box-shadow 0.15s var(--ease),
+    border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+
+.rail-nav-link:hover {
+  border-color: #b9c7c4;
+  background: #f7faf9;
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.rail-nav-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--teal-50);
+  color: var(--teal-700);
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+
+.rail-nav-link:hover .rail-nav-icon {
+  background: var(--teal-700);
+  color: #ffffff;
+}
+
+.rail-nav-label {
+  flex: 1;
+}
+
+.rail-nav-chev {
+  color: #a3b1ae;
+  transition: transform 0.15s var(--ease), color 0.15s var(--ease);
+}
+
+.rail-nav-link:hover .rail-nav-chev {
+  color: var(--teal-700);
+  transform: translateX(2px);
+}
+
+/* TenderNed-paneel: catalogus als primaire actie, daaronder database-import, manueel onderaan */
+.tenderned-cta {
   display: inline-flex;
   width: 100%;
   min-height: 42px;
   justify-content: center;
   text-decoration: none;
-  margin-bottom: 14px;
   font-size: 13.5px;
 }
 
-.tender-browser-link {
-  display: inline-flex;
-  margin-top: 10px;
-  text-decoration: none;
-  width: 100%;
-  justify-content: center;
-}
-
-.saved-tender-import {
-  margin-top: 12px;
+.tenderned-import {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
   display: grid;
   gap: 8px;
 }
 
-.saved-tender-import select {
+.tenderned-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #52606f;
+}
+
+.tenderned-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--teal-50);
+  color: var(--teal-700);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tenderned-import select {
   width: 100%;
-  margin-top: 4px;
+}
+
+.tenderned-empty {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #7a8791;
+}
+
+.tenderned-manual {
+  margin-top: 12px;
+}
+
+.tenderned-manual > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--teal-700);
+  padding: 4px 0;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tenderned-manual > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tenderned-manual > summary::before {
+  content: "+";
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  background: var(--teal-50);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.tenderned-manual[open] > summary::before {
+  content: "−";
+}
+
+.tenderned-manual .inline {
+  margin-top: 8px;
 }
 
 .source-panel textarea {

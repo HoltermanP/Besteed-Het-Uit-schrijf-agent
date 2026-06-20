@@ -10,6 +10,7 @@ import {
   Building2,
   Check,
   CheckCircle2,
+  ChevronRight,
   ClipboardCheck,
   ClipboardList,
   Crown,
@@ -668,15 +669,23 @@ export default function WorkspacePage() {
             <span>Besteed Het Uit</span>
           </div>
         </div>
-        <Link className="secondary config-nav-link" to="/configuratie">
-          <Building2 size={16} /> Bedrijfsconfiguratie
-        </Link>
-        <Link className="secondary config-nav-link" to="/schrijfregels">
-          <ClipboardList size={16} /> Schrijfregels
-        </Link>
-        <Link className="secondary config-nav-link" to="/schrijfstijl">
-          <BookOpen size={16} /> Schrijfstijl &amp; kwaliteit
-        </Link>
+        <nav className="rail-nav">
+          <Link className="rail-nav-link" to="/configuratie">
+            <span className="rail-nav-icon"><Building2 size={16} /></span>
+            <span className="rail-nav-label">Bedrijfsconfiguratie</span>
+            <ChevronRight size={16} className="rail-nav-chev" />
+          </Link>
+          <Link className="rail-nav-link" to="/schrijfregels">
+            <span className="rail-nav-icon"><ClipboardList size={16} /></span>
+            <span className="rail-nav-label">Schrijfregels</span>
+            <ChevronRight size={16} className="rail-nav-chev" />
+          </Link>
+          <Link className="rail-nav-link" to="/schrijfstijl">
+            <span className="rail-nav-icon"><BookOpen size={16} /></span>
+            <span className="rail-nav-label">Schrijfstijl &amp; kwaliteit</span>
+            <ChevronRight size={16} className="rail-nav-chev" />
+          </Link>
+        </nav>
 
         <section className="panel">
           <div className="panel-heading">
@@ -697,24 +706,23 @@ export default function WorkspacePage() {
           </label>
         </section>
 
-        <section className="panel">
+        <section className="panel tenderned-panel">
           <div className="panel-heading">
             <Import size={17} />
             <h2>TenderNed</h2>
           </div>
-          <div className="inline">
-            <input value={tendernedQuery} onChange={(event) => setTendernedQuery(event.target.value)} />
-            <button className="icon-button" onClick={importTenderned} title="Importeer TenderNed dossier">
-              <Download size={18} />
-            </button>
-          </div>
-          <Link className="secondary tender-browser-link" to="/aanbestedingen">
-            <Search size={16} /> CPV-catalogus &amp; download
+
+          <Link className="primary tenderned-cta" to="/aanbestedingen">
+            <Search size={16} /> Zoek &amp; download aanbestedingen
           </Link>
-          {savedTenders.length ? (
-            <div className="saved-tender-import">
-              <label>
-                Uit database ({savedTenders.length})
+
+          <div className="tenderned-import">
+            <p className="tenderned-label">
+              Uit je database
+              <span className="tenderned-count">{savedTenders.length}</span>
+            </p>
+            {savedTenders.length ? (
+              <>
                 <select value={savedTenderId} onChange={(event) => setSavedTenderId(event.target.value)}>
                   <option value="">Kies opgeslagen aanbesteding</option>
                   {savedTenders.map((tender) => (
@@ -723,12 +731,30 @@ export default function WorkspacePage() {
                     </option>
                   ))}
                 </select>
-              </label>
-              <button className="secondary" onClick={importSavedTender} disabled={!savedTenderId}>
-                <Download size={16} /> Importeer in dossier
+                <button className="secondary tenderned-import-btn" onClick={importSavedTender} disabled={!savedTenderId}>
+                  <Download size={16} /> Importeer in dossier
+                </button>
+              </>
+            ) : (
+              <p className="tenderned-empty">
+                Nog niets opgeslagen. Open de catalogus om alle documenten van een publicatie te downloaden.
+              </p>
+            )}
+          </div>
+
+          <details className="tenderned-manual">
+            <summary>Handmatig kenmerk invoeren</summary>
+            <div className="inline">
+              <input
+                value={tendernedQuery}
+                onChange={(event) => setTendernedQuery(event.target.value)}
+                placeholder="bijv. TN-2026-00421"
+              />
+              <button className="icon-button" onClick={importTenderned} title="Importeer TenderNed dossier">
+                <Download size={18} />
               </button>
             </div>
-          ) : null}
+          </details>
         </section>
 
         <p className="status workspace-status">
