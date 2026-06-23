@@ -48,7 +48,7 @@ import FileUploadZone from '../components/FileUploadZone'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog'
 import { acceptedStyleExtensions } from '../types/styleDocument'
 import type { TenderAnalysis } from '../types/tenderAnalysis'
-import { exportPdfFromHtml, exportWordDocument } from '../lib/documentExport'
+import { exportPdfFromHtml } from '../lib/documentExport'
 import { isNeonConfigured, isWriterConfigured, migrateLegacyNeonUrl } from '../lib/apiConfig'
 import { generateDraftViaApi, fetchWriterStatus, isNoAiConfigError, type WriterStatus } from '../lib/writeDraftApi'
 import { rewriteFragmentViaApi } from '../lib/rewriteFragmentApi'
@@ -1167,10 +1167,11 @@ export default function WorkspacePage() {
   const exportWord = async () => {
     syncDraftFromEditor()
     const html = getExportHtml()
-    const filename = `${project.title.toLowerCase().replace(/\s+/g, '-')}-${stage}.doc`
+    const filename = `${project.title.toLowerCase().replace(/\s+/g, '-')}-${stage}.docx`
     setSyncStatus('Word genereren…')
     try {
-      await exportWordDocument(html, project.title, filename)
+      const { exportDocxDocument } = await import('../lib/docxExport')
+      await exportDocxDocument(html, project.title, filename)
       setSyncStatus('Word-document gedownload.')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Word-export mislukt.'
