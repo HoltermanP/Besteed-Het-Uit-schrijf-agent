@@ -551,9 +551,9 @@ export default function WorkspacePage() {
           stage: targetStage,
           project,
           documents: effectiveDocuments,
-          comments,
+          comments: toLegacyComments(comments),
           analysis: result,
-          currentDraft: targetStage === 'brons' ? undefined : draft,
+          currentDraft: targetStage === 'brons' ? undefined : stripCommentMarks(draft),
         },
         (accumulated) => {
           updateEditorHtml(accumulated || '<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
