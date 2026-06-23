@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
+  ArrowRight,
   Award,
   BadgeCheck,
   Bot,
@@ -12,12 +13,14 @@ import {
   ChevronRight,
   ClipboardCheck,
   ClipboardList,
+  Clock,
   Crown,
   Download,
   Eye,
   FileDown,
   FileText,
   Flag,
+  FolderOpen,
   Highlighter,
   Import,
   Loader2,
@@ -50,9 +53,27 @@ import { fetchStyleDocuments } from '../lib/styleDocumentsApi'
 import { mergeDocumentsWithStyleDocuments } from '../lib/styleDocumentMerge'
 import type { StyleDocument } from '../types/styleDocument'
 import { getSavedTenders } from '../lib/tenderDatabase'
+import type { SavedTender } from '../types/tenderNed'
+import {
+  getActiveDossierId,
+  getDossierUpdatedAt,
+  hasDossier,
+  loadDossier,
+  saveDossier,
+  setActiveDossierId,
+} from '../lib/dossier'
 import { loadStored } from '../lib/storage'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
+import { Progress } from '@/components/ui/progress'
+import { ModeToggle } from '@/components/mode-toggle'
+import { cn } from '@/lib/utils'
 import '../styles/proposalDocument.css'
-import '../App.css'
 
 type Stage = 'brons' | 'zilver' | 'goud'
 type SourceType = 'tender' | 'company' | 'rules' | 'training'
@@ -86,6 +107,18 @@ type TenderProject = {
   buyer: string
   deadline: string
   neonUrl?: string
+}
+
+// Volledige momentopname van een dossier; per gedownloade aanbesteding bewaard zodat je
+// later verder kunt waar je was gebleven.
+type DossierSnapshot = {
+  project: TenderProject
+  documents: SourceDocument[]
+  comments: ReviewComment[]
+  stage: Stage
+  draft: string
+  analysis: TenderAnalysis | null
+  updatedAt: string
 }
 
 const stageMeta: Record<
@@ -278,8 +311,27 @@ export default function WorkspacePage() {
   const [selectedFragment, setSelectedFragment] = useState('')
   const [commentText, setCommentText] = useState('')
   const [tendernedQuery, setTendernedQuery] = useState('TN-2026-00421')
-  const [savedTenderId, setSavedTenderId] = useState('')
+  const [activeTenderId, setActiveTenderId] = useState(() => getActiveDossierId())
+  const [dossierSearch, setDossierSearch] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
   const savedTenders = getSavedTenders()
+  const filteredSavedTenders = (() => {
+    const term = dossierSearch.trim().toLowerCase()
+    const matched = term
+      ? savedTenders.filter((tender) =>
+          `${tender.aanbestedingNaam} ${tender.opdrachtgeverNaam} TN-${tender.kenmerk}`
+            .toLowerCase()
+            .includes(term),
+        )
+      : savedTenders
+    return [...matched].sort((a, b) => {
+      if (a.publicatieId === activeTenderId) return -1
+      if (b.publicatieId === activeTenderId) return 1
+      const aUpdated = getDossierUpdatedAt(a.publicatieId) ?? a.savedAt
+      const bUpdated = getDossierUpdatedAt(b.publicatieId) ?? b.savedAt
+      return bUpdated.localeCompare(aUpdated)
+    })
+  })()
   const [syncStatus, setSyncStatus] = useState('Lokaal opgeslagen')
   const [generating, setGenerating] = useState(false)
   const [uploadNotice, setUploadNotice] = useState<{ tone: 'ok' | 'warning' | 'error'; message: string } | null>(null)
@@ -395,6 +447,8 @@ export default function WorkspacePage() {
   }
 
   const analyzeAndGenerate = async (targetStage = stage) => {
+    // Bewaar de huidige tekst, zodat een mislukte generatie het concept niet wist.
+    const previousDraft = editorRef.current?.innerHTML ?? draft
     setGenerating(true)
     setSyncStatus('Leidraad analyseren…')
     const result = await runAnalysis()
@@ -434,7 +488,9 @@ export default function WorkspacePage() {
         setSyncStatus(isNeonConfigured() ? 'Analyse, concept en Neon-sync gereed' : 'Analyse en concept lokaal opgeslagen')
         return
       }
-      setSyncStatus(message)
+      // Generatie mislukt om een andere reden: zet de vorige tekst terug i.p.v. een leeg vel.
+      updateEditorHtml(previousDraft)
+      setSyncStatus(`Genereren mislukt — vorige tekst hersteld. ${message}`)
     } finally {
       setGenerating(false)
     }
@@ -533,34 +589,125 @@ export default function WorkspacePage() {
     )
   }
 
-  const importSavedTender = () => {
-    const tender = savedTenders.find((item) => item.publicatieId === savedTenderId)
-    if (!tender) return
-    addDocument({
-      name: tender.aanbestedingNaam,
-      type: 'tender',
-      content: tender.documentText || tender.opdrachtBeschrijving,
+  const nowImportedLabel = () =>
+    new Date().toLocaleString('nl-NL', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
     })
+
+  // Verse werkruimte voor een aanbesteding waar nog niet in is gewerkt.
+  const buildFreshDossier = (tender: SavedTender): DossierSnapshot => {
+    const documents: SourceDocument[] = [
+      {
+        id: makeId(),
+        name: tender.aanbestedingNaam,
+        type: 'tender',
+        content: tender.documentText || tender.opdrachtBeschrijving,
+        importedAt: nowImportedLabel(),
+      },
+    ]
     if (tender.opdrachtBeschrijving && tender.opdrachtBeschrijving !== tender.documentText) {
-      addDocument({
+      documents.push({
+        id: makeId(),
         name: `${tender.aanbestedingNaam} — samenvatting`,
         type: 'tender',
         content: tender.opdrachtBeschrijving,
+        importedAt: nowImportedLabel(),
       })
     }
-    setProject((current) => ({
-      ...current,
+    const project: TenderProject = {
       title: tender.aanbestedingNaam,
       buyer: tender.opdrachtgeverNaam,
       tendernedId: `TN-${tender.kenmerk}`,
       deadline: tender.sluitingsDatum.slice(0, 10),
-    }))
-    setTendernedQuery(`TN-${tender.kenmerk}`)
-    setSyncStatus(`Geïmporteerd uit database: ${tender.aanbestedingNaam}`)
+    }
+    return {
+      project,
+      documents,
+      comments: [],
+      stage: 'brons',
+      draft: buildHtmlDraft('brons', project, documents, [], null),
+      analysis: null,
+      updatedAt: new Date().toISOString(),
+    }
   }
 
-  const generateStage = (targetStage = stage) => {
-    void analyzeAndGenerate(targetStage)
+  // Momentopname van het dossier dat nu open staat (gebruik de live editor-HTML).
+  const captureCurrentDossier = (): DossierSnapshot => ({
+    project,
+    documents,
+    comments,
+    stage,
+    draft: editorRef.current?.innerHTML ?? draft,
+    analysis,
+    updatedAt: new Date().toISOString(),
+  })
+
+  const applyDossier = (snapshot: DossierSnapshot) => {
+    setProject(snapshot.project)
+    setDocuments(snapshot.documents)
+    setComments(snapshot.comments)
+    setStage(snapshot.stage)
+    setAnalysis(snapshot.analysis)
+    setFindings([])
+    updateEditorHtml(snapshot.draft)
+    setSelectedSourceId(snapshot.documents[0]?.id ?? null)
+    setTendernedQuery(snapshot.project.tendernedId)
+  }
+
+  // Open een gedownloade aanbesteding: bewaar eerst het huidige dossier, herstel daarna
+  // het doel-dossier (of maak een vers dossier als er nog niet in gewerkt is).
+  const openDossier = (tender: SavedTender) => {
+    const targetId = tender.publicatieId
+    if (targetId === activeTenderId) {
+      setSyncStatus(`Dossier staat al open: ${tender.aanbestedingNaam}`)
+      return
+    }
+    if (activeTenderId) {
+      saveDossier(activeTenderId, captureCurrentDossier())
+    }
+    const restored = loadDossier<DossierSnapshot>(targetId)
+    applyDossier(restored ?? buildFreshDossier(tender))
+    setActiveTenderId(targetId)
+    setActiveDossierId(targetId)
+    setDossierSearch('')
+    setSyncStatus(
+      restored
+        ? `Verder met dossier: ${tender.aanbestedingNaam}`
+        : `Dossier geopend: ${tender.aanbestedingNaam}`,
+    )
+  }
+
+  // Open automatisch een aanbesteding die via de catalogus is doorgegeven (/?open=<id>).
+  const openParamHandled = useRef(false)
+  useEffect(() => {
+    if (openParamHandled.current) return
+    const openId = searchParams.get('open')
+    if (!openId) return
+    openParamHandled.current = true
+    const tender = getSavedTenders().find((item) => item.publicatieId === openId)
+    // Eénmalige open-actie na navigatie vanuit de catalogus; bewuste setState na mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (tender) openDossier(tender)
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current)
+        next.delete('open')
+        return next
+      },
+      { replace: true },
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Wissel alleen het stadium; de bestaande tekst blijft staan. (Re)genereren gebeurt
+  // bewust via de knop "Genereer", niet door op een stadium te klikken.
+  const selectStage = (targetStage: Stage) => {
+    setStage(targetStage)
+    setSyncStatus(`Stadium: ${stageMeta[targetStage].label}. Klik "Genereer" om dit niveau te (her)schrijven.`)
   }
 
   const applyAiRewrite = async () => {
@@ -659,99 +806,186 @@ export default function WorkspacePage() {
   }
 
   return (
-    <main className="workspace">
-      <aside className="rail">
-        <div className="brand">
-          <div className="brand-mark"><PenLine size={20} /></div>
-          <div>
-            <strong>Bid Writer</strong>
-            <span>Besteed Het Uit</span>
+    <main className="grid min-h-screen grid-cols-1 bg-background text-foreground xl:grid-cols-[340px_minmax(0,1fr)_350px]">
+      <aside className="h-auto min-w-0 overflow-auto border-b bg-muted/30 p-4 sm:p-[18px] xl:h-screen xl:border-b-0 xl:border-r">
+        <div className="mb-[18px] flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-[10px]">
+            <div className="grid size-10 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
+              <PenLine size={20} />
+            </div>
+            <div className="min-w-0 leading-tight">
+              <strong className="block truncate">Bid Writer</strong>
+              <span className="mt-0.5 block truncate text-xs text-muted-foreground">Besteed Het Uit</span>
+            </div>
           </div>
+          <ModeToggle />
         </div>
-        <nav className="rail-nav">
-          <Link className="rail-nav-link" to="/configuratie">
-            <span className="rail-nav-icon"><Building2 size={16} /></span>
-            <span className="rail-nav-label">Bedrijfsconfiguratie</span>
-            <ChevronRight size={16} className="rail-nav-chev" />
+        <nav className="mb-4 grid gap-1.5">
+          <Link
+            to="/configuratie"
+            className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-sm font-semibold shadow-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
+          >
+            <span className="grid size-8 flex-none place-items-center rounded-lg bg-primary/10 text-primary">
+              <Building2 size={16} />
+            </span>
+            <span className="min-w-0 flex-1">Bedrijfsconfiguratie</span>
+            <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
           </Link>
-          <Link className="rail-nav-link" to="/schrijfregels">
-            <span className="rail-nav-icon"><ClipboardList size={16} /></span>
-            <span className="rail-nav-label">Schrijfkader</span>
-            <ChevronRight size={16} className="rail-nav-chev" />
+          <Link
+            to="/schrijfregels"
+            className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-sm font-semibold shadow-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
+          >
+            <span className="grid size-8 flex-none place-items-center rounded-lg bg-primary/10 text-primary">
+              <ClipboardList size={16} />
+            </span>
+            <span className="min-w-0 flex-1">Schrijfkader</span>
+            <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
           </Link>
         </nav>
 
-        <section className="panel">
-          <div className="panel-heading">
-            <FileText size={17} />
-            <h2>Dossier</h2>
-          </div>
-          <label>
-            Titel
-            <input value={project.title} onChange={(event) => setProject({ ...project, title: event.target.value })} />
-          </label>
-          <label>
-            Opdrachtgever
-            <input value={project.buyer} onChange={(event) => setProject({ ...project, buyer: event.target.value })} />
-          </label>
-          <label>
-            Deadline
-            <input type="date" value={project.deadline} onChange={(event) => setProject({ ...project, deadline: event.target.value })} />
-          </label>
-        </section>
-
-        <section className="panel tenderned-panel">
-          <div className="panel-heading">
-            <Import size={17} />
-            <h2>TenderNed</h2>
-          </div>
-
-          <Link className="primary tenderned-cta" to="/aanbestedingen">
-            <Search size={16} /> Zoek &amp; download aanbestedingen
-          </Link>
-
-          <div className="tenderned-import">
-            <p className="tenderned-label">
-              Uit je database
-              <span className="tenderned-count">{savedTenders.length}</span>
-            </p>
-            {savedTenders.length ? (
-              <>
-                <select value={savedTenderId} onChange={(event) => setSavedTenderId(event.target.value)}>
-                  <option value="">Kies opgeslagen aanbesteding</option>
-                  {savedTenders.map((tender) => (
-                    <option key={tender.publicatieId} value={tender.publicatieId}>
-                      TN-{tender.kenmerk} — {tender.aanbestedingNaam.slice(0, 48)}
-                    </option>
-                  ))}
-                </select>
-                <button className="secondary tenderned-import-btn" onClick={importSavedTender} disabled={!savedTenderId}>
-                  <Download size={16} /> Importeer in dossier
-                </button>
-              </>
-            ) : (
-              <p className="tenderned-empty">
-                Nog niets opgeslagen. Open de catalogus om alle documenten van een publicatie te downloaden.
-              </p>
-            )}
-          </div>
-
-          <details className="tenderned-manual">
-            <summary>Handmatig kenmerk invoeren</summary>
-            <div className="inline">
-              <input
-                value={tendernedQuery}
-                onChange={(event) => setTendernedQuery(event.target.value)}
-                placeholder="bijv. TN-2026-00421"
-              />
-              <button className="icon-button" onClick={importTenderned} title="Importeer TenderNed dossier">
-                <Download size={18} />
-              </button>
+        <Card className="mb-[14px]">
+          <CardContent className="space-y-[10px]">
+            <div className="flex items-center gap-2 text-primary">
+              <FileText size={17} />
+              <h2 className="text-sm font-semibold">Dossier</h2>
             </div>
-          </details>
-        </section>
+            <div className="space-y-1.5">
+              <Label htmlFor="project-title">Titel</Label>
+              <Input
+                id="project-title"
+                value={project.title}
+                onChange={(event) => setProject({ ...project, title: event.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="project-buyer">Opdrachtgever</Label>
+              <Input
+                id="project-buyer"
+                value={project.buyer}
+                onChange={(event) => setProject({ ...project, buyer: event.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="project-deadline">Deadline</Label>
+              <Input
+                id="project-deadline"
+                type="date"
+                value={project.deadline}
+                onChange={(event) => setProject({ ...project, deadline: event.target.value })}
+              />
+            </div>
+          </CardContent>
+        </Card>
 
-        <p className="status workspace-status">
+        <Card className="mb-[14px]">
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-2 text-primary">
+              <Import size={17} />
+              <h2 className="text-sm font-semibold">TenderNed</h2>
+            </div>
+
+            <Button asChild className="h-auto w-full justify-start whitespace-normal py-2.5 text-left leading-snug">
+              <Link to="/aanbestedingen">
+                <Search size={16} className="shrink-0" /> <span className="min-w-0">Zoek &amp; download aanbestedingen</span>
+              </Link>
+            </Button>
+
+            <Separator />
+
+            <div className="space-y-2">
+              <p className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                Jouw aanbestedingen
+                <Badge variant="secondary">{savedTenders.length}</Badge>
+              </p>
+              {savedTenders.length ? (
+                <>
+                  <div className="relative">
+                    <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      className="pl-8"
+                      value={dossierSearch}
+                      onChange={(event) => setDossierSearch(event.target.value)}
+                      placeholder="Zoek in je database…"
+                    />
+                  </div>
+                  {filteredSavedTenders.length ? (
+                    <ul className="flex max-h-64 list-none flex-col gap-1.5 overflow-y-auto overflow-x-hidden p-0">
+                      {filteredSavedTenders.map((tender) => {
+                        const isActive = tender.publicatieId === activeTenderId
+                        const worked = hasDossier(tender.publicatieId)
+                        return (
+                          <li key={tender.publicatieId} className="min-w-0">
+                            <button
+                              type="button"
+                              onClick={() => openDossier(tender)}
+                              className={cn(
+                                'flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-left text-xs transition-colors',
+                                isActive
+                                  ? 'border-primary bg-primary/5'
+                                  : 'bg-card hover:border-primary/40 hover:bg-primary/5',
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  'mt-0.5 grid size-6 flex-none place-items-center rounded-md',
+                                  isActive ? 'bg-primary text-primary-foreground' : 'bg-primary/10 text-primary',
+                                )}
+                              >
+                                {isActive ? <FolderOpen size={13} /> : <FileText size={13} />}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate font-semibold">{tender.aanbestedingNaam}</span>
+                                <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                                  TN-{tender.kenmerk}
+                                  {isActive ? (
+                                    <Badge variant="default" className="rounded-full px-1.5 py-0 text-[10px] font-normal">
+                                      open
+                                    </Badge>
+                                  ) : worked ? (
+                                    <Badge variant="outline" className="gap-1 rounded-full px-1.5 py-0 text-[10px] font-normal">
+                                      <Clock size={10} /> bewerkt
+                                    </Badge>
+                                  ) : null}
+                                </span>
+                              </span>
+                              {!isActive ? <ArrowRight size={14} className="mt-0.5 flex-none text-muted-foreground" /> : null}
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      Geen aanbesteding gevonden voor “{dossierSearch}”.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Nog niets opgeslagen. Open de catalogus om alle documenten van een publicatie te downloaden — je werkt er daarna meteen in verder.
+                </p>
+              )}
+            </div>
+
+            <details className="mt-1">
+              <summary className="cursor-pointer select-none py-1 text-xs font-semibold text-primary">
+                Handmatig kenmerk invoeren
+              </summary>
+              <div className="mt-2 flex gap-2">
+                <Input
+                  value={tendernedQuery}
+                  onChange={(event) => setTendernedQuery(event.target.value)}
+                  placeholder="bijv. TN-2026-00421"
+                />
+                <Button variant="outline" size="icon" onClick={importTenderned} title="Importeer TenderNed dossier">
+                  <Download size={18} />
+                </Button>
+              </div>
+            </details>
+          </CardContent>
+        </Card>
+
+        <p className="mt-[10px] text-xs leading-snug text-muted-foreground">
           {syncStatus}
           {writerActive
             ? ` · Schrijfagent actief${serverWriter.available && !isWriterConfigured() ? ' (server)' : ''}`
@@ -760,185 +994,255 @@ export default function WorkspacePage() {
           {styleLibraryActive ? ' · Stijlbibliotheek actief' : ''}
         </p>
 
-        <section className="panel source-panel">
-          <div className="panel-heading">
-            <Upload size={17} />
-            <h2>Bronnen ({documents.length})</h2>
-          </div>
-          <div className="segmented">
-            {(Object.keys(sourceLabels) as SourceType[]).map((type) => (
-              <button key={type} className={activeType === type ? 'active' : ''} onClick={() => setActiveType(type)}>
-                {sourceLabels[type]}
-              </button>
-            ))}
-          </div>
-          <FileUploadZone
-            accept={acceptedStyleExtensions}
-            loading={uploadingFiles}
-            title="Sleep bestanden hierheen of klik om te uploaden"
-            hint={`Wordt toegevoegd als ${sourceLabels[activeType].toLowerCase()}-bron`}
-            formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 12 MB per bestand"
-            onFiles={handleFileUpload}
-          />
-          <p className="source-upload-help">
-            Of plak tekst handmatig hieronder. Vaste schrijfregels, schrijfwijze en kwaliteit beheer je in het{' '}
-            <Link to="/schrijfregels">Schrijfkader</Link>.
-          </p>
-          {uploadNotice ? (
-            <p className={`source-upload-notice source-upload-notice-${uploadNotice.tone}`}>{uploadNotice.message}</p>
-          ) : null}
-          <input placeholder="Naam bron" value={manualName} onChange={(event) => setManualName(event.target.value)} />
-          <textarea placeholder="Plak broninformatie, rules of training..." value={manualText} onChange={(event) => setManualText(event.target.value)} />
-          <button
-            className="secondary"
-            onClick={() => {
-              if (!manualText.trim()) return
-              const created = addDocument({
-                name: manualName || `${sourceLabels[activeType]} handmatig`,
-                type: activeType,
-                content: manualText,
-              })
-              const quality = assessSourceContent(created.content)
-              setUploadNotice({
-                tone: quality.quality === 'ok' ? 'ok' : quality.quality === 'warning' ? 'warning' : 'error',
-                message: `"${created.name}" toegevoegd — ${quality.label.toLowerCase()} (${quality.words} woorden).`,
-              })
-              setManualText('')
-              setManualName('')
-            }}
-          >
-            <ClipboardCheck size={16} /> Toevoegen
-          </button>
-
-          <div className="source-panel-toolbar">
-            <button className="secondary source-filter-btn" onClick={() => setShowAllSources((current) => !current)}>
-              {showAllSources ? 'Filter op tab' : 'Toon alle bronnen'}
-            </button>
-          </div>
-
-          <div className="source-library">
-            {visibleSources.length ? (
-              visibleSources.map((doc) => {
-                const quality = assessSourceContent(doc.content)
-                const StatusIcon =
-                  quality.quality === 'ok' ? CheckCircle2 : quality.quality === 'warning' ? AlertTriangle : XCircle
-                return (
-                  <article
-                    key={doc.id}
-                    className={`source-card source-card-${quality.quality}${selectedSourceId === doc.id ? ' selected' : ''}`}
-                  >
-                    <div className="source-card-head">
-                      <span className="source-type-badge">{sourceLabels[doc.type]}</span>
-                      <span className={`source-status source-status-${quality.quality}`}>
-                        <StatusIcon size={14} /> {quality.label}
-                      </span>
-                    </div>
-                    <strong>{doc.name}</strong>
-                    <p className="source-card-meta">
-                      {quality.words.toLocaleString('nl-NL')} woorden · {quality.chars.toLocaleString('nl-NL')} tekens · {doc.importedAt}
-                    </p>
-                    <p>{summarize(doc.content, 140)}</p>
-                    <div className="source-card-actions">
-                      <button className="secondary" onClick={() => setSelectedSourceId(doc.id)}>
-                        <Eye size={14} /> Bekijken
-                      </button>
-                      <button className="secondary source-delete-btn" onClick={() => removeDocument(doc.id)}>
-                        <Trash2 size={14} /> Verwijder
-                      </button>
-                    </div>
-                  </article>
-                )
-              })
-            ) : (
-              <p className="status">Nog geen bronnen in deze categorie. Upload of plak tekst hierboven.</p>
-            )}
-          </div>
-
-          {selectedSource ? (
-            <div className="source-preview">
-              <div className="source-preview-head">
-                <h3>{selectedSource.name}</h3>
-                <button className="secondary" onClick={() => setSelectedSourceId(null)}>Sluiten</button>
-              </div>
-              <p className="source-card-meta">
-                {sourceLabels[selectedSource.type]} · {assessSourceContent(selectedSource.content).words.toLocaleString('nl-NL')} woorden
-              </p>
-              <pre className="source-preview-body">{selectedSource.content}</pre>
+        <Card className="mt-[14px] mb-[14px]">
+          <CardContent className="space-y-[10px]">
+            <div className="flex items-center gap-2 text-primary">
+              <Upload size={17} />
+              <h2 className="text-sm font-semibold">Bronnen ({documents.length})</h2>
             </div>
-          ) : null}
-        </section>
+            <div className="grid grid-cols-2 gap-1.5 rounded-md border bg-muted p-1">
+              {(Object.keys(sourceLabels) as SourceType[]).map((type) => (
+                <button
+                  key={type}
+                  className={cn(
+                    'min-h-8 truncate rounded-sm px-2 text-xs font-medium transition-colors',
+                    activeType === type
+                      ? 'bg-background text-primary shadow-sm'
+                      : 'text-muted-foreground hover:bg-background/60',
+                  )}
+                  onClick={() => setActiveType(type)}
+                >
+                  {sourceLabels[type]}
+                </button>
+              ))}
+            </div>
+            <FileUploadZone
+              accept={acceptedStyleExtensions}
+              loading={uploadingFiles}
+              title="Sleep bestanden hierheen of klik om te uploaden"
+              hint={`Wordt toegevoegd als ${sourceLabels[activeType].toLowerCase()}-bron`}
+              formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 12 MB per bestand"
+              onFiles={handleFileUpload}
+            />
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Of plak tekst handmatig hieronder. Vaste schrijfregels, schrijfwijze en kwaliteit beheer je in het{' '}
+              <Link to="/schrijfregels" className="font-medium text-primary underline-offset-2 hover:underline">
+                Schrijfkader
+              </Link>
+              .
+            </p>
+            {uploadNotice ? (
+              <p
+                className={cn(
+                  'rounded-md border px-[10px] py-2 text-xs leading-snug',
+                  uploadNotice.tone === 'ok' && 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200',
+                  uploadNotice.tone === 'warning' && 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200',
+                  uploadNotice.tone === 'error' && 'border-red-300 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200',
+                )}
+              >
+                {uploadNotice.message}
+              </p>
+            ) : null}
+            <Input placeholder="Naam bron" value={manualName} onChange={(event) => setManualName(event.target.value)} />
+            <Textarea
+              className="min-h-[118px]"
+              placeholder="Plak broninformatie, rules of training..."
+              value={manualText}
+              onChange={(event) => setManualText(event.target.value)}
+            />
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                if (!manualText.trim()) return
+                const created = addDocument({
+                  name: manualName || `${sourceLabels[activeType]} handmatig`,
+                  type: activeType,
+                  content: manualText,
+                })
+                const quality = assessSourceContent(created.content)
+                setUploadNotice({
+                  tone: quality.quality === 'ok' ? 'ok' : quality.quality === 'warning' ? 'warning' : 'error',
+                  message: `"${created.name}" toegevoegd — ${quality.label.toLowerCase()} (${quality.words} woorden).`,
+                })
+                setManualText('')
+                setManualName('')
+              }}
+            >
+              <ClipboardCheck size={16} /> Toevoegen
+            </Button>
+
+            <div className="flex justify-end">
+              <Button variant="outline" size="sm" onClick={() => setShowAllSources((current) => !current)}>
+                {showAllSources ? 'Filter op tab' : 'Toon alle bronnen'}
+              </Button>
+            </div>
+
+            <div className="grid max-h-80 gap-[10px] overflow-auto">
+              {visibleSources.length ? (
+                visibleSources.map((doc) => {
+                  const quality = assessSourceContent(doc.content)
+                  const StatusIcon =
+                    quality.quality === 'ok' ? CheckCircle2 : quality.quality === 'warning' ? AlertTriangle : XCircle
+                  const statusColor =
+                    quality.quality === 'ok'
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : quality.quality === 'warning'
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-red-600 dark:text-red-400'
+                  return (
+                    <article
+                      key={doc.id}
+                      className={cn(
+                        'rounded-lg border bg-card p-[10px]',
+                        selectedSourceId === doc.id && 'border-primary ring-1 ring-primary/15',
+                      )}
+                    >
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <Badge variant="secondary" className="shrink-0">{sourceLabels[doc.type]}</Badge>
+                        <span className={cn('inline-flex shrink-0 items-center gap-1 text-xs font-semibold', statusColor)}>
+                          <StatusIcon size={14} /> {quality.label}
+                        </span>
+                      </div>
+                      <strong className="block break-words text-sm">{doc.name}</strong>
+                      <p className="my-1 break-words text-xs text-muted-foreground">
+                        {quality.words.toLocaleString('nl-NL')} woorden · {quality.chars.toLocaleString('nl-NL')} tekens · {doc.importedAt}
+                      </p>
+                      <p className="break-words text-xs text-muted-foreground">{summarize(doc.content, 140)}</p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <Button variant="outline" size="sm" onClick={() => setSelectedSourceId(doc.id)}>
+                          <Eye size={14} /> Bekijken
+                        </Button>
+                        <Button variant="outline" size="sm" className="text-destructive" onClick={() => removeDocument(doc.id)}>
+                          <Trash2 size={14} /> Verwijder
+                        </Button>
+                      </div>
+                    </article>
+                  )
+                })
+              ) : (
+                <p className="text-xs text-muted-foreground">Nog geen bronnen in deze categorie. Upload of plak tekst hierboven.</p>
+              )}
+            </div>
+
+            {selectedSource ? (
+              <div className="rounded-lg border bg-card p-[10px]">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="min-w-0 break-words text-sm font-semibold">{selectedSource.name}</h3>
+                  <Button variant="outline" size="sm" className="shrink-0" onClick={() => setSelectedSourceId(null)}>
+                    Sluiten
+                  </Button>
+                </div>
+                <p className="my-1 text-xs text-muted-foreground">
+                  {sourceLabels[selectedSource.type]} · {assessSourceContent(selectedSource.content).words.toLocaleString('nl-NL')} woorden
+                </p>
+                <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted p-[10px] text-xs leading-relaxed font-sans">
+                  {selectedSource.content}
+                </pre>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
       </aside>
 
-      <section className="compose">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Aanbestedingsanalyse en inschrijving</p>
-            <h1>{project.title}</h1>
+      <section className="h-auto min-w-0 overflow-auto p-4 sm:p-6 xl:h-screen">
+        <header className="mb-[14px] flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="mb-[5px] text-xs font-bold uppercase text-muted-foreground">Besteed Het Uit · AI-Schrijfagent</p>
+            <h1 className="break-words text-[25px] leading-tight font-bold">{project.title}</h1>
           </div>
-          <div className="actions">
-            <button className="secondary" onClick={exportPdf} disabled={exportingPdf}>
+          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            <Button variant="outline" onClick={exportPdf} disabled={exportingPdf}>
               <FileDown size={17} /> {exportingPdf ? 'PDF...' : 'PDF'}
-            </button>
-            <button className="secondary" onClick={exportWord}><FileDown size={17} /> Word</button>
-            <button
-              className="primary"
-              disabled={generating}
-              onClick={() => void analyzeAndGenerate(stage)}
-            >
-              {generating ? <Loader2 size={17} className="spin" /> : <Sparkles size={17} />}
+            </Button>
+            <Button variant="outline" onClick={exportWord}>
+              <FileDown size={17} /> Word
+            </Button>
+            <Button disabled={generating} onClick={() => void analyzeAndGenerate(stage)}>
+              {generating ? <Loader2 size={17} className="animate-spin" /> : <Sparkles size={17} />}
               {generating ? 'Genereren…' : 'Genereer'}
-            </button>
+            </Button>
           </div>
         </header>
 
-        <nav className="stagebar" aria-label="Schrijfstadia">
+        <nav className="my-3 grid grid-cols-2 gap-[10px] sm:grid-cols-3" aria-label="Schrijfstadia">
           {(['brons', 'zilver', 'goud'] as Stage[]).map((item) => {
             const meta = stageMeta[item]
             const Icon = meta.Icon
+            const active = stage === item
             return (
               <button
                 key={item}
                 type="button"
-                className={`stage-chip stage-${item}${stage === item ? ' active' : ''}`}
-                onClick={() => generateStage(item)}
-                aria-pressed={stage === item}
+                className={cn(
+                  'flex items-center gap-3 rounded-xl border bg-card p-[11px] text-left transition-all hover:-translate-y-px hover:shadow-md',
+                  active && 'border-primary bg-accent ring-1 ring-primary/30',
+                )}
+                onClick={() => selectStage(item)}
+                aria-pressed={active}
               >
-                <span className="stage-icon" aria-hidden="true">
+                <span
+                  className={cn(
+                    'inline-flex size-[38px] flex-shrink-0 items-center justify-center rounded-full',
+                    active ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground',
+                  )}
+                  aria-hidden="true"
+                >
                   <Icon size={18} strokeWidth={2.2} />
                 </span>
-                <span className="stage-copy">
-                  <strong>{meta.label}</strong>
-                  <span>{meta.hint}</span>
+                <span className="grid min-w-0 gap-0.5">
+                  <strong className="text-sm font-bold leading-tight">{meta.label}</strong>
+                  <span className="text-xs leading-tight text-muted-foreground">{meta.hint}</span>
                 </span>
               </button>
             )
           })}
         </nav>
 
-        <section className="metrics">
-          <div><span>{stats.score}%</span><p>Kansscore</p></div>
-          <div><span>{stats.words}{stats.wordTarget ? `/${stats.wordTarget}` : ''}</span><p>Woorden{stats.wordTarget ? ' (max)' : ''}</p></div>
+        <section className="mb-[14px] grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="min-w-0 rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-900/50 dark:bg-blue-950/40">
+            <span className="block text-[22px] font-extrabold text-blue-700 dark:text-blue-300">{stats.score}%</span>
+            <p className="mt-1 text-xs text-muted-foreground">Kansscore</p>
+            <Progress value={stats.score} className="mt-2" />
+          </div>
+          <div className="min-w-0 rounded-md border border-violet-200 bg-violet-50 p-3 dark:border-violet-900/50 dark:bg-violet-950/40">
+            <span className="block text-[22px] font-extrabold text-violet-700 dark:text-violet-300">
+              {stats.words}{stats.wordTarget ? `/${stats.wordTarget}` : ''}
+            </span>
+            <p className="mt-1 text-xs text-muted-foreground">Woorden{stats.wordTarget ? ' (max)' : ''}</p>
+          </div>
           {stats.charTarget ? (
-            <div><span>{stats.chars.toLocaleString('nl-NL')}/{stats.charTarget.toLocaleString('nl-NL')}</span><p>Karakters (max)</p></div>
+            <div className="min-w-0 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/50 dark:bg-amber-950/40">
+              <span className="block text-[22px] font-extrabold text-amber-700 dark:text-amber-300">
+                {stats.chars.toLocaleString('nl-NL')}/{stats.charTarget.toLocaleString('nl-NL')}
+              </span>
+              <p className="mt-1 text-xs text-muted-foreground">Karakters (max)</p>
+            </div>
           ) : null}
-          <div><span>{stats.leidraad ? 'Ja' : 'Nee'}</span><p>Leidraad</p></div>
-          <div><span>{stats.sources}</span><p>Bronnen</p></div>
+          <div className="min-w-0 rounded-md border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/40">
+            <span className="block text-[22px] font-extrabold text-emerald-700 dark:text-emerald-300">{stats.leidraad ? 'Ja' : 'Nee'}</span>
+            <p className="mt-1 text-xs text-muted-foreground">Leidraad</p>
+          </div>
+          <div className="min-w-0 rounded-md border border-violet-200 bg-violet-50 p-3 dark:border-violet-900/50 dark:bg-violet-950/40">
+            <span className="block text-[22px] font-extrabold text-violet-700 dark:text-violet-300">{stats.sources}</span>
+            <p className="mt-1 text-xs text-muted-foreground">Bronnen</p>
+          </div>
         </section>
 
-        <div className="editor-shell">
-          <div className="editor-toolbar">
-            <div>
-              {generating ? <Loader2 size={17} className="spin" /> : <Bot size={17} />}
-              {generating ? 'Concept wordt opgebouwd…' : stagePrompts[stage]}
+        <div className="overflow-hidden rounded-md border bg-card">
+          <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-b bg-muted px-3 py-[10px] text-sm text-muted-foreground">
+            <div className="flex min-w-0 items-center gap-2">
+              {generating ? <Loader2 size={17} className="shrink-0 animate-spin" /> : <Bot size={17} className="shrink-0" />}
+              <span className="min-w-0 break-words">{generating ? 'Concept wordt opgebouwd…' : stagePrompts[stage]}</span>
             </div>
-            <button className="secondary" onClick={() => void applyAiRewrite()} disabled={generating}>
-              {generating ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-              {generating ? 'Verwerken…' : 'Verwerk opmerkingen'}
-            </button>
+            <Button variant="outline" size="sm" className="shrink-0" onClick={() => void applyAiRewrite()} disabled={generating}>
+              {generating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+              <span className="sr-only sm:not-sr-only">{generating ? 'Verwerken…' : 'Verwerk opmerkingen'}</span>
+            </Button>
           </div>
           <div
             ref={editorRef}
-            className={`document-editor${generating ? ' is-generating' : ''}`}
+            className={cn('document-editor min-w-0 break-words', generating && 'is-generating')}
             contentEditable={!generating}
             suppressContentEditableWarning
             onMouseUp={captureSelection}
@@ -949,182 +1253,226 @@ export default function WorkspacePage() {
         </div>
       </section>
 
-      <aside className="review">
-        <section className="panel analysis-panel">
-          <div className="panel-heading">
-            <ScanSearch size={17} />
-            <h2>Leidraadanalyse</h2>
-          </div>
-          <button className="secondary" onClick={() => void runAnalysis()}><Search size={16} /> Analyseer dossier</button>
-          {analysis ? (
-            <div className="analysis-results">
-              <p className="analysis-summary">
-                {analysis.aiAnalyzed ? (
-                  <span className="analysis-badge">AI-analyse{analysis.analysisModel ? ` · ${analysis.analysisModel}` : ''}</span>
-                ) : (
-                  <span className="analysis-badge analysis-badge-heuristic">Heuristisch</span>
-                )}{' '}
-                {analysis.summary}
-              </p>
-              <div className="analysis-chips">
-                <span>{analysis.contentRequirements.length} vragen/onderwerpen</span>
-                <span>{analysis.documentRequirements.length} documenten</span>
-                <span>{analysis.submissionRequirements.length} inschrijvingseisen</span>
-                <span>{analysis.wordLimits.length} limieten</span>
-              </div>
-              {analysis.underlyingIntent ? (
-                <div className="intent-panel">
-                  <h3>Vraag achter de vraag</h3>
-                  <p className="intent-explicit">
-                    <strong>Expliciet gevraagd:</strong> {analysis.underlyingIntent.explicitQuestion}
-                  </p>
-                  <p className="intent-core">{analysis.underlyingIntent.questionBehindQuestion}</p>
-                  <p className="intent-underlying">
-                    <strong>Onderliggende behoefte:</strong> {analysis.underlyingIntent.underlyingNeed}
-                  </p>
-                  {analysis.underlyingIntent.buyerPriorities.length > 0 ? (
-                    <>
-                      <h4>Prioriteiten opdrachtgever</h4>
-                      <ul className="analysis-list">
-                        {analysis.underlyingIntent.buyerPriorities.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                    </>
-                  ) : null}
-                  <details className="intent-brief-details">
-                    <summary>Intern teambrief (niet indienen)</summary>
-                    <pre className="intent-team-brief">{analysis.underlyingIntent.teamBrief}</pre>
-                  </details>
-                </div>
-              ) : null}
-              {analysis.leidraadSource ? (
-                <p className="analysis-meta"><strong>Leidraad:</strong> {analysis.leidraadSource}</p>
-              ) : null}
-              <h3>Schrijfstijl (inschrijver × opdrachtgever)</h3>
-              <p className="analysis-style">{analysis.styleProfile.blendedGuidance}</p>
-              <ul className="analysis-style-list">
-                {analysis.styleProfile.companySignals.map((signal) => (
-                  <li key={signal}><strong>Inschrijver:</strong> {signal}</li>
-                ))}
-                {analysis.styleProfile.buyerSignals.map((signal) => (
-                  <li key={signal}><strong>Opdrachtgever:</strong> {signal}</li>
-                ))}
-              </ul>
-              {analysis.wordLimits.length > 0 ? (
-                <>
-                  <h3>Formele eisen</h3>
-                  <ul className="analysis-list">
-                    {analysis.wordLimits.map((limit) => (
-                      <li key={`${limit.label}-${limit.max}`}>
-                        {limit.section ?? limit.label}:{' '}
-                        {limit.max ? `max. ${limit.max} ${limit.unit}` : limit.min ? `min. ${limit.min} ${limit.unit}` : limit.unit}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : null}
-              {analysis.documentRequirements.length > 0 ? (
-                <>
-                  <h3>Verplichte documenten</h3>
-                  <ul className="analysis-list">
-                    {analysis.documentRequirements.map((req) => (
-                      <li key={req.name}>{req.name}{req.mandatory ? ' (verplicht)' : ''}</li>
-                    ))}
-                  </ul>
-                </>
-              ) : null}
-              {analysis.submissionRequirements.length > 0 ? (
-                <>
-                  <h3>Specifieke eisen aan de inschrijving</h3>
-                  <ul className="analysis-list submission-list">
-                    {analysis.submissionRequirements.map((req, index) => (
-                      <li key={`${req.category}-${index}`} className={req.mandatory ? 'submission-mandatory' : ''}>
-                        <span className="submission-cat">{req.category}</span> {req.requirement}
-                        {req.mandatory ? <span className="submission-flag"> verplicht</span> : null}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : null}
-              {analysis.gaps.length > 0 ? (
-                <>
-                  <h3>Gaps</h3>
-                  <ul className="analysis-gaps">
-                    {analysis.gaps.map((gap) => (
-                      <li key={gap}>{gap}</li>
-                    ))}
-                  </ul>
-                </>
-              ) : null}
+      <aside className="h-auto min-w-0 space-y-[14px] overflow-auto border-t bg-muted/30 p-4 sm:p-[18px] xl:h-screen xl:border-l xl:border-t-0">
+        <Card>
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-2 text-primary">
+              <ScanSearch size={17} />
+              <h2 className="text-sm font-semibold">Leidraadanalyse</h2>
             </div>
-          ) : (
-            <p className="status">Analyseer de leidraad en aanbestedingsstukken voor woordlimieten, onderwerpen, documenten en schrijfstijl.</p>
-          )}
-        </section>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <MessageSquarePlus size={17} />
-            <h2>Menselijke review</h2>
-          </div>
-          <p className="selection"><Highlighter size={15} /> {selectedFragment || 'Selecteer tekst in het concept'}</p>
-          <textarea placeholder="Plaats opmerking of wijzigingsinstructie..." value={commentText} onChange={(event) => setCommentText(event.target.value)} />
-          <button className="primary" onClick={addComment}><MessageSquarePlus size={16} /> Opmerking plaatsen</button>
-          <div className="comment-list">
-            {comments.map((comment) => (
-              <article key={comment.id} className={comment.resolved ? 'resolved' : ''}>
-                <strong>{comment.fragment}</strong>
-                <p>{comment.note}</p>
-                <button onClick={() => setComments((current) => current.map((item) => item.id === comment.id ? { ...item, resolved: !item.resolved } : item))}>
-                  <Check size={14} /> {comment.resolved ? 'Heropen' : 'Afvinken'}
-                </button>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <Brain size={17} />
-            <h2>AI-review agent</h2>
-          </div>
-          <button className="secondary" onClick={() => setFindings(reviewDraft(draft, effectiveDocuments, analysis))}><Search size={16} /> Review uitvoeren</button>
-          <div className="finding-list">
-            {findings.map((finding) => (
-              <article key={finding.id} className={`finding ${finding.priority}`}>
-                <div>
-                  {finding.priority === 'kritiek' ? <Flag size={15} /> : finding.priority === 'hoog' ? <ShieldCheck size={15} /> : <BadgeCheck size={15} />}
-                  <strong>{finding.title}</strong>
+            <Button variant="outline" className="w-full" onClick={() => void runAnalysis()}>
+              <Search size={16} /> Analyseer dossier
+            </Button>
+            {analysis ? (
+              <div className="space-y-3">
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {analysis.aiAnalyzed ? (
+                    <Badge className="mr-1 align-middle">AI-analyse{analysis.analysisModel ? ` · ${analysis.analysisModel}` : ''}</Badge>
+                  ) : (
+                    <Badge variant="secondary" className="mr-1 align-middle">Heuristisch</Badge>
+                  )}{' '}
+                  {analysis.summary}
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  <Badge variant="secondary">{analysis.contentRequirements.length} vragen/onderwerpen</Badge>
+                  <Badge variant="secondary">{analysis.documentRequirements.length} documenten</Badge>
+                  <Badge variant="secondary">{analysis.submissionRequirements.length} inschrijvingseisen</Badge>
+                  <Badge variant="secondary">{analysis.wordLimits.length} limieten</Badge>
                 </div>
-                <p>{finding.detail}</p>
-              </article>
-            ))}
-          </div>
-        </section>
+                {analysis.underlyingIntent ? (
+                  <div className="space-y-2 rounded-md border bg-accent/40 p-3">
+                    <h3 className="text-sm font-semibold text-primary">Vraag achter de vraag</h3>
+                    <p className="text-xs leading-relaxed text-foreground">
+                      <strong>Expliciet gevraagd:</strong> {analysis.underlyingIntent.explicitQuestion}
+                    </p>
+                    <p className="text-xs font-semibold leading-relaxed text-primary">{analysis.underlyingIntent.questionBehindQuestion}</p>
+                    <p className="text-xs leading-relaxed text-foreground">
+                      <strong>Onderliggende behoefte:</strong> {analysis.underlyingIntent.underlyingNeed}
+                    </p>
+                    {analysis.underlyingIntent.buyerPriorities.length > 0 ? (
+                      <>
+                        <h4 className="text-xs font-semibold text-primary">Prioriteiten opdrachtgever</h4>
+                        <ul className="list-disc pl-[18px] text-xs leading-relaxed text-muted-foreground">
+                          {analysis.underlyingIntent.buyerPriorities.map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : null}
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-xs font-semibold text-primary">Intern teambrief (niet indienen)</summary>
+                      <pre className="mt-2 whitespace-pre-wrap rounded-md border border-dashed bg-card p-[10px] text-xs leading-relaxed font-sans text-muted-foreground">
+                        {analysis.underlyingIntent.teamBrief}
+                      </pre>
+                    </details>
+                  </div>
+                ) : null}
+                {analysis.leidraadSource ? (
+                  <p className="text-xs text-muted-foreground"><strong>Leidraad:</strong> {analysis.leidraadSource}</p>
+                ) : null}
+                <h3 className="text-sm font-semibold text-primary">Schrijfstijl (inschrijver × opdrachtgever)</h3>
+                <p className="text-xs leading-relaxed text-muted-foreground">{analysis.styleProfile.blendedGuidance}</p>
+                <ul className="list-disc pl-[18px] text-xs leading-relaxed text-muted-foreground">
+                  {analysis.styleProfile.companySignals.map((signal) => (
+                    <li key={signal}><strong>Inschrijver:</strong> {signal}</li>
+                  ))}
+                  {analysis.styleProfile.buyerSignals.map((signal) => (
+                    <li key={signal}><strong>Opdrachtgever:</strong> {signal}</li>
+                  ))}
+                </ul>
+                {analysis.wordLimits.length > 0 ? (
+                  <>
+                    <h3 className="text-sm font-semibold text-primary">Formele eisen</h3>
+                    <ul className="list-disc pl-[18px] text-xs leading-relaxed text-muted-foreground">
+                      {analysis.wordLimits.map((limit) => (
+                        <li key={`${limit.label}-${limit.max}`}>
+                          {limit.section ?? limit.label}:{' '}
+                          {limit.max ? `max. ${limit.max} ${limit.unit}` : limit.min ? `min. ${limit.min} ${limit.unit}` : limit.unit}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+                {analysis.documentRequirements.length > 0 ? (
+                  <>
+                    <h3 className="text-sm font-semibold text-primary">Verplichte documenten</h3>
+                    <ul className="list-disc pl-[18px] text-xs leading-relaxed text-muted-foreground">
+                      {analysis.documentRequirements.map((req) => (
+                        <li key={req.name}>{req.name}{req.mandatory ? ' (verplicht)' : ''}</li>
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+                {analysis.submissionRequirements.length > 0 ? (
+                  <>
+                    <h3 className="text-sm font-semibold text-primary">Specifieke eisen aan de inschrijving</h3>
+                    <ul className="list-none space-y-1 text-xs leading-relaxed text-muted-foreground">
+                      {analysis.submissionRequirements.map((req, index) => (
+                        <li key={`${req.category}-${index}`} className={req.mandatory ? 'text-foreground' : ''}>
+                          <Badge variant="outline" className="mr-1 align-middle text-[10px] uppercase">{req.category}</Badge> {req.requirement}
+                          {req.mandatory ? <span className="font-semibold text-destructive"> verplicht</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+                {analysis.gaps.length > 0 ? (
+                  <>
+                    <h3 className="text-sm font-semibold text-primary">Gaps</h3>
+                    <ul className="list-disc pl-[18px] text-xs leading-relaxed text-destructive">
+                      {analysis.gaps.map((gap) => (
+                        <li key={gap}>{gap}</li>
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">Analyseer de leidraad en aanbestedingsstukken voor woordlimieten, onderwerpen, documenten en schrijfstijl.</p>
+            )}
+          </CardContent>
+        </Card>
 
-        <section className="panel">
-          <div className="panel-heading">
-            <Building2 size={17} />
-            <h2>Bronmatrix</h2>
-          </div>
-          <div className="source-list">
-            {effectiveDocuments.map((doc, index) => {
-              const quality = assessSourceContent(doc.content)
-              const isAuto = !documents.some((item) => item.name === doc.name && item.type === doc.type)
-              return (
-                <article key={`${doc.type}-${doc.name}-${index}`}>
-                  <span>{sourceLabels[doc.type]}{isAuto ? ' · auto' : ''}</span>
-                  <strong>{doc.name}</strong>
-                  <p className={`source-status-inline source-status-${quality.quality}`}>
-                    {quality.label} · {quality.words} woorden
-                  </p>
-                  <p>{summarize(doc.content, 120)}</p>
+        <Card>
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-2 text-primary">
+              <MessageSquarePlus size={17} />
+              <h2 className="text-sm font-semibold">Menselijke review</h2>
+            </div>
+            <p className="flex min-h-9 items-center gap-2 rounded-md border bg-muted p-2 text-xs leading-snug text-muted-foreground">
+              <Highlighter size={15} /> {selectedFragment || 'Selecteer tekst in het concept'}
+            </p>
+            <Textarea
+              placeholder="Plaats opmerking of wijzigingsinstructie..."
+              value={commentText}
+              onChange={(event) => setCommentText(event.target.value)}
+            />
+            <Button className="w-full" onClick={addComment}>
+              <MessageSquarePlus size={16} /> Opmerking plaatsen
+            </Button>
+            <div className="grid gap-[9px]">
+              {comments.map((comment) => (
+                <article key={comment.id} className={cn('rounded-md border bg-card p-[10px]', comment.resolved && 'opacity-60')}>
+                  <strong className="block break-words text-sm">{comment.fragment}</strong>
+                  <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">{comment.note}</p>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => setComments((current) => current.map((item) => item.id === comment.id ? { ...item, resolved: !item.resolved } : item))}
+                  >
+                    <Check size={14} /> {comment.resolved ? 'Heropen' : 'Afvinken'}
+                  </Button>
                 </article>
-              )
-            })}
-          </div>
-        </section>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-2 text-primary">
+              <Brain size={17} />
+              <h2 className="text-sm font-semibold">AI-review agent</h2>
+            </div>
+            <Button variant="outline" className="w-full" onClick={() => setFindings(reviewDraft(draft, effectiveDocuments, analysis))}>
+              <Search size={16} /> Review uitvoeren
+            </Button>
+            <div className="grid gap-[9px]">
+              {findings.map((finding) => (
+                <article
+                  key={finding.id}
+                  data-testid="review-finding"
+                  className={cn(
+                    'rounded-md border bg-card p-[10px]',
+                    finding.priority === 'kritiek' && 'border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/40',
+                    finding.priority === 'hoog' && 'border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40',
+                    finding.priority === 'normaal' && 'border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40',
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="shrink-0">
+                      {finding.priority === 'kritiek' ? <Flag size={15} /> : finding.priority === 'hoog' ? <ShieldCheck size={15} /> : <BadgeCheck size={15} />}
+                    </span>
+                    <strong className="min-w-0 break-words text-sm">{finding.title}</strong>
+                  </div>
+                  <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">{finding.detail}</p>
+                </article>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-2 text-primary">
+              <Building2 size={17} />
+              <h2 className="text-sm font-semibold">Bronmatrix</h2>
+            </div>
+            <div className="grid gap-[9px]">
+              {effectiveDocuments.map((doc, index) => {
+                const quality = assessSourceContent(doc.content)
+                const isAuto = !documents.some((item) => item.name === doc.name && item.type === doc.type)
+                const statusColor =
+                  quality.quality === 'ok'
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : quality.quality === 'warning'
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-red-600 dark:text-red-400'
+                return (
+                  <article key={`${doc.type}-${doc.name}-${index}`} className="rounded-md border bg-card p-[10px]">
+                    <Badge variant="secondary" className="mb-1.5">{sourceLabels[doc.type]}{isAuto ? ' · auto' : ''}</Badge>
+                    <strong className="block break-words text-sm">{doc.name}</strong>
+                    <p className={cn('mt-1 break-words text-xs font-medium', statusColor)}>
+                      {quality.label} · {quality.words} woorden
+                    </p>
+                    <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">{summarize(doc.content, 120)}</p>
+                  </article>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
       </aside>
     </main>
   )
