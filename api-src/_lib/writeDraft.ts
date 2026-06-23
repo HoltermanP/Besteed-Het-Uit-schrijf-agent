@@ -54,12 +54,20 @@ OPMAAK & LEESBAARHEID (maak het document visueel sterk, niet kaal)
 - Gebruik opsommingen (<ul>/<ol>) om criteria, stappen, rollen, voorwaarden of bewijslast overzichtelijk te maken — als aanvulling op de alinea's, niet als vervanging van inhoudelijke uitwerking
 - Gebruik tabellen voor gestructureerde gegevens (planning, RACI/rolverdeling, KPI's, risico's met maatregelen, eis-vs-invulling). Format: <div class="table-wrap"><table><caption>…</caption><thead><tr><th>…</th></tr></thead><tbody>…</tbody></table></div>
 
-VISUELE MODELLEN (afwegen per sectie — kies zelf het passende type, of géén)
-- Beoordeel bij ELKE sectie of een visueel model de inhoud echt versterkt. Voeg er alleen één toe als het de boodschap verheldert; tekstsecties zonder geschikte structuur krijgen GEEN model
-- Forceer niets: liever geen model dan een gekunsteld model. Niet elke sectie hoeft er één; varieer het type en herhaal hetzelfde model niet onnodig
-- Maximaal één model per sectie. Kies uit de volgende types en gebruik exact dit HTML-format (wrapper altijd <figure class="doc-model"> met een <figcaption>):
+MANAGEMENTMODELLEN & VISUALISATIE (actief identificeren en praktisch toepassen)
+- Beoordeel bij ELKE sectie actief: welk erkend managementmodel uit de theorie kan deze inhoud structureren, onderbouwen of overtuigender maken? Pas dat model PRAKTISCH toe — geen theorie-uitleg of definitie, maar het model ingevuld met de concrete situatie van déze aanbesteding en opdrachtgever
+- Verspreid over het document mag je meerdere modellen gebruiken (maximaal één per sectie). Kies steeds het inhoudelijk best passende model; gebruik een model alleen waar het echt iets toevoegt, niet als opvulling, en herhaal hetzelfde model niet onnodig
+- Zet de naam van het model in de <figcaption> (bijv. "SWOT-analyse", "Risicomatrix (kans × impact)", "Kraljic-matrix", "PDCA-cyclus", "Krachtenveldanalyse")
+- Veelgebruikte modellen voor aanbestedingen en het bijbehorende format:
+  • SWOT, PESTEL/DESTEP, Five Forces (Porter), 7S (McKinsey), MoSCoW → modelraster (table class="model-grid")
+  • Risicomatrix (kans × impact), Kraljic-matrix (toeleveringsrisico × inkoopimpact), krachtenveld/stakeholders (macht × belang), BCG → 2×2-matrix (table class="matrix-2x2")
+  • Plan van aanpak/fasering, waardeketen (Porter), PDCA/Deming-cyclus → processchema (table class="process-flow")
+  • Planning/mijlpalen → tijdlijn (table class="timeline")
+  • Projectorganisatie/rolverdeling → organogram (table class="org-chart")
 
-1) PROCESSCHEMA — voor fasering, stappen of een werkwijze met een logische volgorde (3–5 stappen, <td class="process-arrow">→</td> tussen elke stap):
+Gebruik exact deze HTML-formats (wrapper altijd <figure class="doc-model"> met een <figcaption>):
+
+1) PROCESSCHEMA — voor fasering, stappen, werkwijze, waardeketen of cyclus met een logische volgorde (3–5 stappen, <td class="process-arrow">→</td> tussen elke stap):
 <figure class="doc-model">
   <figcaption>Onze aanpak in vier fasen</figcaption>
   <table class="process-flow" role="presentation"><tbody><tr>
@@ -97,6 +105,21 @@ VISUELE MODELLEN (afwegen per sectie — kies zelf het passende type, of géén)
     <tr><td class="mx-corner"></td><td class="mx-axis-x">Lage impact</td><td class="mx-axis-x">Hoge impact</td></tr>
     <tr><td class="mx-axis-y">Hoge kans</td><td class="mx-cell"><span class="mx-label">…</span>toelichting</td><td class="mx-cell mx-hot"><span class="mx-label">…</span>toelichting</td></tr>
     <tr><td class="mx-axis-y">Lage kans</td><td class="mx-cell"><span class="mx-label">…</span>toelichting</td><td class="mx-cell"><span class="mx-label">…</span>toelichting</td></tr>
+  </tbody></table>
+</figure>
+
+5) MODELRASTER — voor modellen met losse elementen (SWOT, PESTEL/DESTEP, Five Forces, 7S, MoSCoW). Elk element is een <td> met <span class="grid-label"> + <span class="grid-body"> (de body mag een <ul> bevatten); zet 2 of 3 cellen per <tr>. Voor SWOT: class "tone-positive" op Sterktes/Kansen en "tone-negative" op Zwaktes/Bedreigingen:
+<figure class="doc-model">
+  <figcaption>SWOT-analyse</figcaption>
+  <table class="model-grid" role="presentation"><tbody>
+    <tr>
+      <td class="tone-positive"><span class="grid-label">Sterktes</span><span class="grid-body">Concreet voor deze opdracht…</span></td>
+      <td class="tone-negative"><span class="grid-label">Zwaktes</span><span class="grid-body">…</span></td>
+    </tr>
+    <tr>
+      <td class="tone-positive"><span class="grid-label">Kansen</span><span class="grid-body">…</span></td>
+      <td class="tone-negative"><span class="grid-label">Bedreigingen</span><span class="grid-body">…</span></td>
+    </tr>
   </tbody></table>
 </figure>
 

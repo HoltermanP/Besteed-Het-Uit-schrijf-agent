@@ -321,12 +321,20 @@ OPMAAK & LEESBAARHEID (maak het document visueel sterk, niet kaal)
 - Gebruik opsommingen (<ul>/<ol>) om criteria, stappen, rollen, voorwaarden of bewijslast overzichtelijk te maken \u2014 als aanvulling op de alinea's, niet als vervanging van inhoudelijke uitwerking
 - Gebruik tabellen voor gestructureerde gegevens (planning, RACI/rolverdeling, KPI's, risico's met maatregelen, eis-vs-invulling). Format: <div class="table-wrap"><table><caption>\u2026</caption><thead><tr><th>\u2026</th></tr></thead><tbody>\u2026</tbody></table></div>
 
-VISUELE MODELLEN (afwegen per sectie \u2014 kies zelf het passende type, of g\xE9\xE9n)
-- Beoordeel bij ELKE sectie of een visueel model de inhoud echt versterkt. Voeg er alleen \xE9\xE9n toe als het de boodschap verheldert; tekstsecties zonder geschikte structuur krijgen GEEN model
-- Forceer niets: liever geen model dan een gekunsteld model. Niet elke sectie hoeft er \xE9\xE9n; varieer het type en herhaal hetzelfde model niet onnodig
-- Maximaal \xE9\xE9n model per sectie. Kies uit de volgende types en gebruik exact dit HTML-format (wrapper altijd <figure class="doc-model"> met een <figcaption>):
+MANAGEMENTMODELLEN & VISUALISATIE (actief identificeren en praktisch toepassen)
+- Beoordeel bij ELKE sectie actief: welk erkend managementmodel uit de theorie kan deze inhoud structureren, onderbouwen of overtuigender maken? Pas dat model PRAKTISCH toe \u2014 geen theorie-uitleg of definitie, maar het model ingevuld met de concrete situatie van d\xE9ze aanbesteding en opdrachtgever
+- Verspreid over het document mag je meerdere modellen gebruiken (maximaal \xE9\xE9n per sectie). Kies steeds het inhoudelijk best passende model; gebruik een model alleen waar het echt iets toevoegt, niet als opvulling, en herhaal hetzelfde model niet onnodig
+- Zet de naam van het model in de <figcaption> (bijv. "SWOT-analyse", "Risicomatrix (kans \xD7 impact)", "Kraljic-matrix", "PDCA-cyclus", "Krachtenveldanalyse")
+- Veelgebruikte modellen voor aanbestedingen en het bijbehorende format:
+  \u2022 SWOT, PESTEL/DESTEP, Five Forces (Porter), 7S (McKinsey), MoSCoW \u2192 modelraster (table class="model-grid")
+  \u2022 Risicomatrix (kans \xD7 impact), Kraljic-matrix (toeleveringsrisico \xD7 inkoopimpact), krachtenveld/stakeholders (macht \xD7 belang), BCG \u2192 2\xD72-matrix (table class="matrix-2x2")
+  \u2022 Plan van aanpak/fasering, waardeketen (Porter), PDCA/Deming-cyclus \u2192 processchema (table class="process-flow")
+  \u2022 Planning/mijlpalen \u2192 tijdlijn (table class="timeline")
+  \u2022 Projectorganisatie/rolverdeling \u2192 organogram (table class="org-chart")
 
-1) PROCESSCHEMA \u2014 voor fasering, stappen of een werkwijze met een logische volgorde (3\u20135 stappen, <td class="process-arrow">\u2192</td> tussen elke stap):
+Gebruik exact deze HTML-formats (wrapper altijd <figure class="doc-model"> met een <figcaption>):
+
+1) PROCESSCHEMA \u2014 voor fasering, stappen, werkwijze, waardeketen of cyclus met een logische volgorde (3\u20135 stappen, <td class="process-arrow">\u2192</td> tussen elke stap):
 <figure class="doc-model">
   <figcaption>Onze aanpak in vier fasen</figcaption>
   <table class="process-flow" role="presentation"><tbody><tr>
@@ -364,6 +372,21 @@ VISUELE MODELLEN (afwegen per sectie \u2014 kies zelf het passende type, of g\xE
     <tr><td class="mx-corner"></td><td class="mx-axis-x">Lage impact</td><td class="mx-axis-x">Hoge impact</td></tr>
     <tr><td class="mx-axis-y">Hoge kans</td><td class="mx-cell"><span class="mx-label">\u2026</span>toelichting</td><td class="mx-cell mx-hot"><span class="mx-label">\u2026</span>toelichting</td></tr>
     <tr><td class="mx-axis-y">Lage kans</td><td class="mx-cell"><span class="mx-label">\u2026</span>toelichting</td><td class="mx-cell"><span class="mx-label">\u2026</span>toelichting</td></tr>
+  </tbody></table>
+</figure>
+
+5) MODELRASTER \u2014 voor modellen met losse elementen (SWOT, PESTEL/DESTEP, Five Forces, 7S, MoSCoW). Elk element is een <td> met <span class="grid-label"> + <span class="grid-body"> (de body mag een <ul> bevatten); zet 2 of 3 cellen per <tr>. Voor SWOT: class "tone-positive" op Sterktes/Kansen en "tone-negative" op Zwaktes/Bedreigingen:
+<figure class="doc-model">
+  <figcaption>SWOT-analyse</figcaption>
+  <table class="model-grid" role="presentation"><tbody>
+    <tr>
+      <td class="tone-positive"><span class="grid-label">Sterktes</span><span class="grid-body">Concreet voor deze opdracht\u2026</span></td>
+      <td class="tone-negative"><span class="grid-label">Zwaktes</span><span class="grid-body">\u2026</span></td>
+    </tr>
+    <tr>
+      <td class="tone-positive"><span class="grid-label">Kansen</span><span class="grid-body">\u2026</span></td>
+      <td class="tone-negative"><span class="grid-label">Bedreigingen</span><span class="grid-body">\u2026</span></td>
+    </tr>
   </tbody></table>
 </figure>
 

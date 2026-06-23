@@ -498,6 +498,59 @@
   background: #fff8f2;
 }
 
+/* --- 5. Modelraster (kaarten) — voor managementmodellen met losse elementen:
+   SWOT, PESTEL/DESTEP, Five Forces, 7S, MoSCoW … (2 of 3 kaarten per rij) --- */
+.proposal-doc table.model-grid {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 8px;
+  table-layout: fixed;
+}
+
+.proposal-doc table.model-grid td {
+  padding: 12px 14px;
+  border: 1px solid #cfe0dd;
+  border-top: 3px solid #164f4a;
+  border-radius: 10px;
+  background: #f8fbfb;
+  vertical-align: top;
+}
+
+.proposal-doc table.model-grid td .grid-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #164f4a;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.proposal-doc table.model-grid td .grid-body {
+  display: block;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.proposal-doc table.model-grid td .grid-body ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.proposal-doc table.model-grid td .grid-body li {
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+/* Accentvarianten, o.a. voor SWOT-kwadranten */
+.proposal-doc table.model-grid td.tone-positive {
+  border-top-color: #2f8f6b;
+}
+
+.proposal-doc table.model-grid td.tone-negative {
+  border-top-color: #b3541e;
+}
+
 @media (max-width: 720px) {
   .proposal-doc .doc-meta {
     grid-template-columns: 1fr;
