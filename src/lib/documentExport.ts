@@ -106,6 +106,13 @@ function inlineComputedStyles(doc: Document, win: Window) {
       if (value) parts.push(`${prop}: ${value}`)
     }
 
+    // Block/inline-block expliciet meegeven zodat o.a. de model-spans (titel/detail)
+    // in Word stapelen. Grid/flex bewust NIET (Word kan daar niet mee overweg).
+    const display = cs.getPropertyValue('display')
+    if (display === 'block' || display === 'inline-block') {
+      parts.push(`display: ${display}`)
+    }
+
     const background = cs.getPropertyValue('background-color')
     if (!isTransparent(background)) {
       parts.push(`background-color: ${background}`)
@@ -151,22 +158,31 @@ function inlineComputedStyles(doc: Document, win: Window) {
   })
 }
 
-/** Converteer de doc-meta (CSS grid — door Word genegeerd) naar een tabelrij. */
+/** Converteer de doc-meta (CSS grid — door Word genegeerd) naar een compacte
+ *  label/waarde-tabel (één rij per veld). Bewust geen .doc-meta-class, zodat het
+ *  niet de gebokste grid-opmaak overneemt. */
 function convertDocMetaToTable(doc: Document) {
   doc.querySelectorAll<HTMLElement>('dl.doc-meta').forEach((dl) => {
     const items = Array.from(dl.children).filter((child) => child.tagName.toLowerCase() === 'div')
     if (!items.length) return
     const table = doc.createElement('table')
-    table.className = 'doc-meta'
     table.setAttribute('width', '100%')
-    const row = doc.createElement('tr')
+    table.style.cssText = 'width: 100%; border-collapse: collapse; margin: 0 0 20px;'
     items.forEach((item) => {
-      const cell = doc.createElement('td')
-      cell.setAttribute('valign', 'top')
-      cell.innerHTML = item.innerHTML
-      row.appendChild(cell)
+      const row = doc.createElement('tr')
+      const labelCell = doc.createElement('td')
+      labelCell.setAttribute('width', '32%')
+      labelCell.style.cssText =
+        'padding: 6px 10px; border-bottom: 1px solid #d9e0df; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: #475569; vertical-align: top;'
+      labelCell.textContent = item.querySelector('dt')?.textContent ?? ''
+      const valueCell = doc.createElement('td')
+      valueCell.style.cssText =
+        'padding: 6px 10px; border-bottom: 1px solid #d9e0df; font-size: 14px; font-weight: 600; color: #164f4a; vertical-align: top;'
+      valueCell.textContent = item.querySelector('dd')?.textContent ?? ''
+      row.appendChild(labelCell)
+      row.appendChild(valueCell)
+      table.appendChild(row)
     })
-    table.appendChild(row)
     dl.replaceWith(table)
   })
 }
