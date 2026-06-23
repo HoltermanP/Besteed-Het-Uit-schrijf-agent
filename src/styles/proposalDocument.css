@@ -139,9 +139,25 @@
   padding-left: 22px;
 }
 
+.proposal-doc ul {
+  list-style: disc;
+}
+
+/* Gekleurde markers op scherm en in de PDF; Word negeert ::marker en valt
+   netjes terug op de standaard opsommingstekens. */
+.proposal-doc ul li::marker {
+  color: #b3541e;
+}
+
+.proposal-doc ol li::marker {
+  color: #164f4a;
+  font-weight: 700;
+}
+
 .proposal-doc li {
   margin-bottom: 8px;
   font-size: 15px;
+  padding-left: 4px;
 }
 
 .proposal-doc li strong {
@@ -217,6 +233,271 @@
   color: #b3541e;
 }
 
+/* Visuele modellen — allemaal tabel-gebaseerd zodat ze overal werken: op
+   scherm, in de PDF (html2canvas) én in de Word-export. Kaartopmaak (afgeronde
+   hoeken, badges, lijnen) degradeert in Word netjes naar bloktekst met randen.
+   Gedeelde wrapper <figure class="doc-model"> met een type-specifieke <table>. */
+.proposal-doc .doc-model {
+  margin: 22px 0 8px;
+  page-break-inside: avoid;
+}
+
+.proposal-doc .doc-model figcaption {
+  margin: 0 0 12px;
+  color: #164f4a;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* --- 1. Processchema (fasen met pijlen) --- */
+
+.proposal-doc table.process-flow {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 8px 0;
+  table-layout: fixed;
+}
+
+.proposal-doc table.process-flow td {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  vertical-align: middle;
+}
+
+.proposal-doc td.process-step {
+  padding: 14px 14px 16px;
+  border: 1px solid #cfe0dd;
+  border-top: 3px solid #164f4a;
+  border-radius: 10px;
+  background: #f8fbfb;
+  text-align: left;
+}
+
+.proposal-doc td.process-step .step-no {
+  display: inline-block;
+  width: 26px;
+  height: 26px;
+  margin-bottom: 8px;
+  border-radius: 999px;
+  background: #164f4a;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 26px;
+  text-align: center;
+}
+
+.proposal-doc td.process-step .step-title {
+  display: block;
+  margin-bottom: 4px;
+  color: #172033;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.proposal-doc td.process-step .step-detail {
+  display: block;
+  color: #475569;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.proposal-doc td.process-arrow {
+  width: 24px;
+  color: #b3541e;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* --- 2. Tijdlijn / planning (verticaal, mijlpalen) --- */
+.proposal-doc table.timeline {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.proposal-doc table.timeline td {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  vertical-align: top;
+}
+
+.proposal-doc table.timeline td.tl-when {
+  width: 120px;
+  padding: 2px 14px 18px 0;
+  color: #164f4a;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.proposal-doc table.timeline td.tl-marker {
+  width: 22px;
+  padding: 0;
+  border-left: 2px solid #cfe0dd;
+  text-align: center;
+}
+
+.proposal-doc table.timeline td.tl-marker .tl-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-left: -7px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: #b3541e;
+}
+
+.proposal-doc table.timeline tr:last-child td.tl-marker {
+  border-left-color: transparent;
+}
+
+.proposal-doc table.timeline td.tl-what {
+  padding: 0 0 18px 14px;
+}
+
+.proposal-doc table.timeline .tl-title {
+  display: block;
+  margin-bottom: 2px;
+  color: #172033;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.proposal-doc table.timeline .tl-detail {
+  display: block;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* --- 3. Organogram / teamstructuur (twee niveaus) --- */
+.proposal-doc table.org-chart {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.proposal-doc table.org-chart > tbody > tr > td {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: center;
+}
+
+.proposal-doc table.org-chart td.org-top {
+  padding-bottom: 14px;
+}
+
+.proposal-doc .org-box {
+  display: inline-block;
+  min-width: 180px;
+  padding: 10px 16px;
+  border: 1px solid #cfe0dd;
+  border-top: 3px solid #164f4a;
+  border-radius: 10px;
+  background: #f8fbfb;
+}
+
+.proposal-doc td.org-top .org-box {
+  border-top-color: #b3541e;
+  background: #fff8f2;
+}
+
+.proposal-doc .org-box .org-role {
+  display: block;
+  color: #164f4a;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.proposal-doc .org-box .org-name {
+  display: block;
+  margin-top: 2px;
+  color: #172033;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.proposal-doc table.org-reports {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 10px 0;
+  border-top: 2px solid #cfe0dd;
+  padding-top: 14px;
+  table-layout: fixed;
+}
+
+.proposal-doc table.org-reports td {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: center;
+  vertical-align: top;
+}
+
+/* --- 4. Kwadrant / 2×2-matrix (bijv. kans × impact) --- */
+.proposal-doc table.matrix-2x2 {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 6px;
+  table-layout: fixed;
+}
+
+.proposal-doc table.matrix-2x2 td {
+  padding: 12px;
+  border: 1px solid #d9e0df;
+  border-radius: 8px;
+  background: #f8fbfb;
+  font-size: 13px;
+  vertical-align: top;
+}
+
+.proposal-doc table.matrix-2x2 td.mx-corner {
+  border: 0;
+  background: transparent;
+}
+
+.proposal-doc table.matrix-2x2 td.mx-axis-x,
+.proposal-doc table.matrix-2x2 td.mx-axis-y {
+  border: 0;
+  background: transparent;
+  color: #164f4a;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.proposal-doc table.matrix-2x2 td.mx-axis-x {
+  width: auto;
+}
+
+.proposal-doc table.matrix-2x2 td.mx-axis-y {
+  width: 90px;
+}
+
+.proposal-doc table.matrix-2x2 td.mx-cell .mx-label {
+  display: block;
+  margin-bottom: 3px;
+  color: #172033;
+  font-weight: 700;
+}
+
+.proposal-doc table.matrix-2x2 td.mx-hot {
+  border-color: #f0d3bc;
+  background: #fff8f2;
+}
+
 @media (max-width: 720px) {
   .proposal-doc .doc-meta {
     grid-template-columns: 1fr;
@@ -224,6 +505,23 @@
 
   .proposal-doc h1 {
     font-size: 28px;
+  }
+
+  .proposal-doc table.process-flow,
+  .proposal-doc table.process-flow tbody,
+  .proposal-doc table.process-flow tr,
+  .proposal-doc table.process-flow td {
+    display: block;
+    width: auto;
+  }
+
+  .proposal-doc td.process-step {
+    margin-bottom: 8px;
+  }
+
+  .proposal-doc td.process-arrow {
+    margin: 0 0 8px;
+    transform: rotate(90deg);
   }
 }
 

@@ -178,6 +178,18 @@ export function buildHtmlDraft(
     <h2>${sectionOffset + 2}. Onderscheidende aanpak</h2>
     <p class="section-subtitle">Hoe wij scoren op subcriteria en onderscheidend zijn</p>
     <p>Onze organisatie werkt met een vaste tenderregie: analyse van de leidraad, bewijslast, concept, review en finale aanscherping. Daarmee ontstaat een inschrijving die expliciet scoort op de gevraagde subcriteria en tegelijk herkenbaar blijft in onze bedrijfsstijl.</p>
+    <figure class="doc-model">
+      <figcaption>Onze tenderregie in vier fasen</figcaption>
+      <table class="process-flow" role="presentation"><tbody><tr>
+        <td class="process-step"><span class="step-no">1</span><span class="step-title">Analyse</span><span class="step-detail">Leidraad, eisen en beoordelingscriteria in kaart</span></td>
+        <td class="process-arrow">→</td>
+        <td class="process-step"><span class="step-no">2</span><span class="step-title">Bewijslast</span><span class="step-detail">Feiten en referenties verzamelen per claim</span></td>
+        <td class="process-arrow">→</td>
+        <td class="process-step"><span class="step-no">3</span><span class="step-title">Concept & review</span><span class="step-detail">Schrijven, toetsen aan eisen en aanscherpen</span></td>
+        <td class="process-arrow">→</td>
+        <td class="process-step"><span class="step-no">4</span><span class="step-title">Finale</span><span class="step-detail">Exportklaar, binnen vorm- en volume-eisen</span></td>
+      </tr></tbody></table>
+    </figure>
     <ul>
       <li><strong>Plan van aanpak:</strong> heldere fasering, eigenaarschap per resultaat en zichtbare kwaliteitsborging.</li>
       <li><strong>Team:</strong> senior expertise, vaste reviewers en expliciete escalatielijnen.</li>

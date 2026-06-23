@@ -317,10 +317,60 @@ VOLUME (cruciaal)
 - Dit is een volwaardig inschrijfstuk voor een aanbesteding, geen managementsamenvatting of bullet-only tekst
 - Geen opvulling of herhaling; wel volledige uitwerking van alle eisen
 
+OPMAAK & LEESBAARHEID (maak het document visueel sterk, niet kaal)
+- Gebruik opsommingen (<ul>/<ol>) om criteria, stappen, rollen, voorwaarden of bewijslast overzichtelijk te maken \u2014 als aanvulling op de alinea's, niet als vervanging van inhoudelijke uitwerking
+- Gebruik tabellen voor gestructureerde gegevens (planning, RACI/rolverdeling, KPI's, risico's met maatregelen, eis-vs-invulling). Format: <div class="table-wrap"><table><caption>\u2026</caption><thead><tr><th>\u2026</th></tr></thead><tbody>\u2026</tbody></table></div>
+
+VISUELE MODELLEN (afwegen per sectie \u2014 kies zelf het passende type, of g\xE9\xE9n)
+- Beoordeel bij ELKE sectie of een visueel model de inhoud echt versterkt. Voeg er alleen \xE9\xE9n toe als het de boodschap verheldert; tekstsecties zonder geschikte structuur krijgen GEEN model
+- Forceer niets: liever geen model dan een gekunsteld model. Niet elke sectie hoeft er \xE9\xE9n; varieer het type en herhaal hetzelfde model niet onnodig
+- Maximaal \xE9\xE9n model per sectie. Kies uit de volgende types en gebruik exact dit HTML-format (wrapper altijd <figure class="doc-model"> met een <figcaption>):
+
+1) PROCESSCHEMA \u2014 voor fasering, stappen of een werkwijze met een logische volgorde (3\u20135 stappen, <td class="process-arrow">\u2192</td> tussen elke stap):
+<figure class="doc-model">
+  <figcaption>Onze aanpak in vier fasen</figcaption>
+  <table class="process-flow" role="presentation"><tbody><tr>
+    <td class="process-step"><span class="step-no">1</span><span class="step-title">Fasetitel</span><span class="step-detail">Concrete activiteit en resultaat</span></td>
+    <td class="process-arrow">\u2192</td>
+    <td class="process-step"><span class="step-no">2</span><span class="step-title">\u2026</span><span class="step-detail">\u2026</span></td>
+  </tr></tbody></table>
+</figure>
+
+2) TIJDLIJN \u2014 voor planning of mijlpalen met perioden/data (\xE9\xE9n <tr> per mijlpaal):
+<figure class="doc-model">
+  <figcaption>Planning op hoofdlijnen</figcaption>
+  <table class="timeline" role="presentation"><tbody>
+    <tr><td class="tl-when">Week 1\u20132</td><td class="tl-marker"><span class="tl-dot"></span></td><td class="tl-what"><span class="tl-title">Mijlpaal</span><span class="tl-detail">Wat er gebeurt en wordt opgeleverd</span></td></tr>
+    <tr><td class="tl-when">Week 3\u20136</td><td class="tl-marker"><span class="tl-dot"></span></td><td class="tl-what"><span class="tl-title">\u2026</span><span class="tl-detail">\u2026</span></td></tr>
+  </tbody></table>
+</figure>
+
+3) ORGANOGRAM \u2014 voor team-/rolstructuur (\xE9\xE9n hoofdrol boven, 2\u20134 rollen eronder):
+<figure class="doc-model">
+  <figcaption>Projectorganisatie</figcaption>
+  <table class="org-chart" role="presentation"><tbody>
+    <tr><td class="org-top"><span class="org-box"><span class="org-role">Eindverantwoordelijk</span><span class="org-name">Rol / functie</span></span></td></tr>
+    <tr><td><table class="org-reports" role="presentation"><tbody><tr>
+      <td><span class="org-box"><span class="org-role">Rol</span><span class="org-name">Functie</span></span></td>
+      <td><span class="org-box"><span class="org-role">Rol</span><span class="org-name">Functie</span></span></td>
+    </tr></tbody></table></td></tr>
+  </tbody></table>
+</figure>
+
+4) KWADRANT / 2\xD72-MATRIX \u2014 voor positionering langs twee assen (bijv. risico's kans \xD7 impact). Markeer het kritieke kwadrant met class="mx-cell mx-hot":
+<figure class="doc-model">
+  <figcaption>Risico's naar kans en impact</figcaption>
+  <table class="matrix-2x2" role="presentation"><tbody>
+    <tr><td class="mx-corner"></td><td class="mx-axis-x">Lage impact</td><td class="mx-axis-x">Hoge impact</td></tr>
+    <tr><td class="mx-axis-y">Hoge kans</td><td class="mx-cell"><span class="mx-label">\u2026</span>toelichting</td><td class="mx-cell mx-hot"><span class="mx-label">\u2026</span>toelichting</td></tr>
+    <tr><td class="mx-axis-y">Lage kans</td><td class="mx-cell"><span class="mx-label">\u2026</span>toelichting</td><td class="mx-cell"><span class="mx-label">\u2026</span>toelichting</td></tr>
+  </tbody></table>
+</figure>
+
 OUTPUT (alleen HTML, geen markdown)
 - E\xE9n <article class="proposal-doc">\u2026</article>
 - <header class="doc-header"> met kicker (Brons/Zilver/Goud versie), <h1>, metadata (<dl class="doc-meta">), <p class="lead">
-- Per gevraagd stuk/onderwerp: <section class="doc-section"> met <h2>, <p class="section-subtitle">, inhoud (<p>, <ul>, <table> alleen waar passend)
+- Per gevraagd stuk/onderwerp: <section class="doc-section"> met <h2>, <p class="section-subtitle">, inhoud (<p>, <ul>/<ol>, <table>, en waar het de inhoud versterkt \xE9\xE9n <figure class="doc-model">)
 - Geen meta-sectie over schrijfkwaliteit, stijlbibliotheek of werkwijze van het schrijven
 - Geen tekst buiten het HTML-artikel`;
 var DOC_CHAR_LIMITS = {
