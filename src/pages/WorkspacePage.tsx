@@ -48,7 +48,8 @@ import type { TenderAnalysis } from '../types/tenderAnalysis'
 import { exportPdfFromHtml, exportWordDocument } from '../lib/documentExport'
 import { isNeonConfigured, isWriterConfigured, migrateLegacyNeonUrl } from '../lib/apiConfig'
 import { generateDraftViaApi, fetchWriterStatus, isNoAiConfigError, type WriterStatus } from '../lib/writeDraftApi'
-import { isCompanyConfigured, mergeDocumentsWithCompanyConfig } from '../lib/companyConfig'
+import { getCompanyConfig, isCompanyConfigured, mergeDocumentsWithCompanyConfig } from '../lib/companyConfig'
+import { computeOpportunityScore, type OpportunityLevel } from '../lib/opportunityScore'
 import { fetchStyleDocuments } from '../lib/styleDocumentsApi'
 import { mergeDocumentsWithStyleDocuments } from '../lib/styleDocumentMerge'
 import type { StyleDocument } from '../types/styleDocument'
@@ -135,6 +136,13 @@ const sourceLabels: Record<SourceType, string> = {
   company: 'Bedrijfsinfo',
   rules: 'Schrijfregels',
   training: 'Schrijfstijl',
+}
+
+const opportunityLevelLabel: Record<OpportunityLevel, string> = {
+  laag: 'Lage kans',
+  matig: 'Matige kans',
+  kansrijk: 'Kansrijk',
+  sterk: 'Sterke kans',
 }
 
 const initialProject: TenderProject = {
@@ -410,6 +418,11 @@ export default function WorkspacePage() {
     [documents, selectedSourceId],
   )
 
+  const opportunity = useMemo(
+    () => computeOpportunityScore(getCompanyConfig(), analysis, effectiveDocuments),
+    [analysis, effectiveDocuments],
+  )
+
   const stats = useMemo(() => {
     const words = countWords(draft)
     const wordTarget = analysis?.targetWordCount
@@ -419,12 +432,14 @@ export default function WorkspacePage() {
       chars: countCharacters(draft),
       sources: effectiveDocuments.length,
       unresolved: comments.filter((comment) => !comment.resolved).length,
-      score: Math.min(100, 45 + keywordScore(draft, ['kwaliteit', 'risico', 'bewijs', 'duurzaamheid', 'implementatie']) * 9),
+      score: opportunity.score,
       wordTarget,
       charTarget,
       leidraad: analysis?.leidraadFound ?? false,
     }
-  }, [analysis, comments, draft, effectiveDocuments.length])
+  }, [analysis, comments, draft, effectiveDocuments.length, opportunity.score])
+
+  const [showScoreDetails, setShowScoreDetails] = useState(false)
 
   const runAnalysis = async () => {
     const baseline = analyzeTenderDocuments(effectiveDocuments, project.buyer)
@@ -1200,11 +1215,27 @@ export default function WorkspacePage() {
         </nav>
 
         <section className="mb-[14px] grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="min-w-0 rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-900/50 dark:bg-blue-950/40">
-            <span className="block text-[22px] font-extrabold text-blue-700 dark:text-blue-300">{stats.score}%</span>
-            <p className="mt-1 text-xs text-muted-foreground">Kansscore</p>
+          <button
+            type="button"
+            onClick={() => setShowScoreDetails((v) => !v)}
+            aria-expanded={showScoreDetails}
+            className="min-w-0 rounded-md border border-blue-200 bg-blue-50 p-3 text-left transition hover:border-blue-300 hover:bg-blue-100/60 dark:border-blue-900/50 dark:bg-blue-950/40 dark:hover:bg-blue-900/40"
+          >
+            <span className="flex items-baseline gap-2">
+              <span className="block text-[22px] font-extrabold text-blue-700 dark:text-blue-300">{stats.score}%</span>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-blue-600/80 dark:text-blue-300/80">
+                {opportunityLevelLabel[opportunity.level]}
+              </span>
+            </span>
+            <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+              Kansscore
+              <ChevronRight
+                size={13}
+                className={cn('transition-transform', showScoreDetails && 'rotate-90')}
+              />
+            </p>
             <Progress value={stats.score} className="mt-2" />
-          </div>
+          </button>
           <div className="min-w-0 rounded-md border border-violet-200 bg-violet-50 p-3 dark:border-violet-900/50 dark:bg-violet-950/40">
             <span className="block text-[22px] font-extrabold text-violet-700 dark:text-violet-300">
               {stats.words}{stats.wordTarget ? `/${stats.wordTarget}` : ''}
@@ -1228,6 +1259,50 @@ export default function WorkspacePage() {
             <p className="mt-1 text-xs text-muted-foreground">Bronnen</p>
           </div>
         </section>
+
+        {showScoreDetails ? (
+          <section className="mb-[14px] rounded-md border bg-card p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h3 className="text-sm font-bold">
+                Kansscore-opbouw — {stats.score}% ({opportunityLevelLabel[opportunity.level]})
+              </h3>
+              <span className="text-xs text-muted-foreground">
+                Match profiel × uitvraag, referenties, harde eisen en concurrentie
+              </span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {opportunity.factors.map((factor) => (
+                <div key={factor.key} className="rounded-md border bg-muted/40 p-3">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-sm font-semibold">{factor.label}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {factor.score}% · weegt {Math.round(factor.weight * 100)}%
+                    </span>
+                  </div>
+                  <Progress value={factor.score} className="mt-2" />
+                  <p className="mt-2 text-xs font-medium text-foreground">{factor.summary}</p>
+                  {factor.signals.length ? (
+                    <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                      {factor.signals.map((signal, i) => (
+                        <li key={i}>{signal}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            {opportunity.caveats.length ? (
+              <ul className="mt-3 space-y-1 text-xs text-amber-700 dark:text-amber-400">
+                {opportunity.caveats.map((caveat, i) => (
+                  <li key={i} className="flex items-start gap-1.5">
+                    <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                    {caveat}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
+        ) : null}
 
         <div className="overflow-hidden rounded-md border bg-card">
           <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-b bg-muted px-3 py-[10px] text-sm text-muted-foreground">
