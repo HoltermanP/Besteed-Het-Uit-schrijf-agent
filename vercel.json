@@ -19,6 +19,9 @@
     "api/review-draft.js": {
       "maxDuration": 120
     },
+    "api/rewrite-fragment.js": {
+      "maxDuration": 120
+    },
     "api/style-documents.js": {
       "maxDuration": 30,
       "includeFiles": "node_modules/.prisma/client/**"

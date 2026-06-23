@@ -34,6 +34,7 @@ import {
   Sparkles,
   Trash2,
   Upload,
+  Wand2,
   XCircle,
 } from 'lucide-react'
 import { buildHtmlDraft } from '../lib/buildDraft'
@@ -48,6 +49,7 @@ import type { TenderAnalysis } from '../types/tenderAnalysis'
 import { exportPdfFromHtml, exportWordDocument } from '../lib/documentExport'
 import { isNeonConfigured, isWriterConfigured, migrateLegacyNeonUrl } from '../lib/apiConfig'
 import { generateDraftViaApi, fetchWriterStatus, isNoAiConfigError, type WriterStatus } from '../lib/writeDraftApi'
+import { rewriteFragmentViaApi } from '../lib/rewriteFragmentApi'
 import { getCompanyConfig, isCompanyConfigured, mergeDocumentsWithCompanyConfig } from '../lib/companyConfig'
 import { computeOpportunityScore, type OpportunityLevel } from '../lib/opportunityScore'
 import { fetchStyleDocuments } from '../lib/styleDocumentsApi'
@@ -198,6 +200,12 @@ const stagePrompts: Record<Stage, string> = {
 
 const makeId = () => Math.random().toString(36).slice(2, 10)
 
+/** Label voor een opmerking zonder gekoppelde tekstselectie. */
+const GENERAL_COMMENT_FRAGMENT = 'Algemene opmerking'
+
+/** Normaliseer witruimte zodat een selectie betrouwbaar in de DOM-tekst te vinden is. */
+const normalizeForMatch = (text: string) => text.replace(/\s+/g, ' ').trim()
+
 // Oudere, opgeslagen analyses (localStorage) missen mogelijk nieuwere array-velden zoals
 // submissionRequirements. Zonder deze normalisatie crasht een `.length`/.map` in de render.
 function normalizeStoredAnalysis(analysis: TenderAnalysis | null): TenderAnalysis | null {
@@ -342,6 +350,7 @@ export default function WorkspacePage() {
   })()
   const [syncStatus, setSyncStatus] = useState('Lokaal opgeslagen')
   const [generating, setGenerating] = useState(false)
+  const [rewritingId, setRewritingId] = useState<string | null>(null)
   const [uploadNotice, setUploadNotice] = useState<{ tone: 'ok' | 'warning' | 'error'; message: string } | null>(null)
   const [showAllSources, setShowAllSources] = useState(false)
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
@@ -774,6 +783,84 @@ export default function WorkspacePage() {
     }
   }
 
+  // Zoek het kleinste onderdeel (sectie of header) waarvan de tekst het fragment
+  // bevat, zodat de gerichte herschrijving precies dat deel kan vervangen.
+  const findSectionForFragment = (fragment: string): HTMLElement | null => {
+    const editor = editorRef.current
+    if (!editor) return null
+    const needle = normalizeForMatch(fragment)
+    if (!needle) return null
+    const candidates = Array.from(
+      editor.querySelectorAll<HTMLElement>('section.doc-section, header.doc-header'),
+    )
+    let best: HTMLElement | null = null
+    for (const el of candidates) {
+      if (normalizeForMatch(el.textContent ?? '').includes(needle)) {
+        if (!best || (el.textContent?.length ?? 0) < (best.textContent?.length ?? 0)) {
+          best = el
+        }
+      }
+    }
+    return best
+  }
+
+  // Verwerk één opmerking gericht: de AI herschrijft alleen het betreffende
+  // onderdeel (zin/alinea, of de hele paragraaf/sectie als de opmerking dat vraagt).
+  const applyTargetedRewrite = async (comment: ReviewComment) => {
+    if (generating || rewritingId) return
+    if (!comment.note.trim()) {
+      setSyncStatus('Deze opmerking heeft geen instructie om te verwerken.')
+      return
+    }
+    if (!comment.fragment.trim() || comment.fragment === GENERAL_COMMENT_FRAGMENT) {
+      setSyncStatus('Deze opmerking is niet aan een tekstselectie gekoppeld — gebruik "Verwerk opmerkingen" voor het hele document.')
+      return
+    }
+
+    const target = findSectionForFragment(comment.fragment)
+    if (!target) {
+      setSyncStatus('Kon het bijbehorende tekstdeel niet terugvinden. Selecteer het fragment opnieuw of gebruik "Verwerk opmerkingen".')
+      return
+    }
+
+    setRewritingId(comment.id)
+    setSyncStatus('Schrijfagent herschrijft het betreffende onderdeel…')
+
+    try {
+      const result = analysis ?? (await runAnalysis())
+      const rewrite = await rewriteFragmentViaApi({
+        stage,
+        project,
+        fragment: comment.fragment,
+        note: comment.note,
+        sectionHtml: target.outerHTML,
+        documents: effectiveDocuments,
+        analysis: result,
+      })
+
+      const template = document.createElement('template')
+      template.innerHTML = rewrite.html.trim()
+      const replacement = template.content.firstElementChild
+      if (!replacement) throw new Error('Het herschreven onderdeel was leeg.')
+      target.replaceWith(replacement)
+
+      const editor = editorRef.current
+      if (editor) updateEditorHtml(editor.innerHTML)
+      setComments((current) => current.map((item) => (item.id === comment.id ? { ...item, resolved: true } : item)))
+      setFindings(reviewDraft(editorRef.current?.innerHTML ?? draft, effectiveDocuments, result))
+      setSyncStatus(`Onderdeel herschreven met ${rewrite.provider} (${rewrite.model})`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Herschrijven mislukt.'
+      setSyncStatus(
+        isNoAiConfigError(message)
+          ? 'Geen AI geconfigureerd — stel de schrijfagent in via API-beheer om opmerkingen gericht te verwerken.'
+          : message,
+      )
+    } finally {
+      setRewritingId(null)
+    }
+  }
+
   const syncDraftFromEditor = () => {
     const editor = editorRef.current
     if (editor) setDraft(editor.innerHTML)
@@ -789,7 +876,7 @@ export default function WorkspacePage() {
     setComments((current) => [
       {
         id: makeId(),
-        fragment: selectedFragment || 'Algemene opmerking',
+        fragment: selectedFragment || GENERAL_COMMENT_FRAGMENT,
         note: commentText.trim(),
         resolved: false,
       },
@@ -1470,14 +1557,26 @@ export default function WorkspacePage() {
                 <article key={comment.id} className={cn('rounded-md border bg-card p-[10px]', comment.resolved && 'opacity-60')}>
                   <strong className="block break-words text-sm">{comment.fragment}</strong>
                   <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">{comment.note}</p>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="mt-2"
-                    onClick={() => setComments((current) => current.map((item) => item.id === comment.id ? { ...item, resolved: !item.resolved } : item))}
-                  >
-                    <Check size={14} /> {comment.resolved ? 'Heropen' : 'Afvinken'}
-                  </Button>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {!comment.resolved && comment.fragment !== GENERAL_COMMENT_FRAGMENT ? (
+                      <Button
+                        size="sm"
+                        onClick={() => void applyTargetedRewrite(comment)}
+                        disabled={generating || rewritingId !== null}
+                        title="Laat de schrijfagent dit onderdeel gericht herschrijven op basis van deze opmerking"
+                      >
+                        {rewritingId === comment.id ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                        {rewritingId === comment.id ? 'Herschrijven…' : 'Verwerk'}
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setComments((current) => current.map((item) => item.id === comment.id ? { ...item, resolved: !item.resolved } : item))}
+                    >
+                      <Check size={14} /> {comment.resolved ? 'Heropen' : 'Afvinken'}
+                    </Button>
+                  </div>
                 </article>
               ))}
             </div>

@@ -12,6 +12,7 @@ import { handleStyleDocumentsRequest } from './api-src/_lib/styleDocuments'
 import { handleTenderDocumentsRequest } from './api-src/_lib/tenderDocuments'
 import { handleWriteDraftRequest } from './api-src/_lib/writeDraft'
 import { handleReviewDraftRequest } from './api-src/_lib/reviewDraft'
+import { handleRewriteFragmentRequest } from './api-src/_lib/rewriteFragment'
 import { getWriterStatusPayload } from './api-src/_lib/writerStatus'
 import type { AnalyzeIntentRequest } from './src/types/analyzeIntent'
 import type { AnalyzeTenderRequest } from './src/types/analyzeTender'
@@ -23,6 +24,7 @@ const jsonApiRoutes: Record<string, (body: unknown) => Promise<Response>> = {
   '/api/company-enrich': handleCompanyEnrichRequest,
   '/api/write-draft': handleWriteDraftRequest,
   '/api/review-draft': (body) => handleReviewDraftRequest(body as ReviewDraftRequest),
+  '/api/rewrite-fragment': handleRewriteFragmentRequest,
 }
 
 async function readNodeBody(req: IncomingMessage): Promise<Buffer | undefined> {
