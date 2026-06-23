@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "prisma generate && node scripts/build-api.mjs && tsc -b && vite build",
+    "build": "prisma generate && npm run migrate:deploy:safe && node scripts/build-api.mjs && tsc -b && vite build",
+    "migrate:deploy:safe": "node -e \"if(process.env.DATABASE_URL){require('child_process').execSync('prisma migrate deploy',{stdio:'inherit'})}else{console.log('Geen DATABASE_URL: migraties overgeslagen')}\"",
     "postinstall": "prisma generate",
     "migrate:deploy": "prisma migrate deploy",
     "db:push": "prisma db push",
