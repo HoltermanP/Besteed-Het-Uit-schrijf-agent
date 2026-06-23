@@ -30,8 +30,8 @@ export default function AdminRoute({ children }: Props) {
 
   if (!ready) {
     return (
-      <main className="admin-shell">
-        <p className="status">Beveiliging controleren...</p>
+      <main className="min-h-screen bg-background p-6">
+        <p className="text-sm text-muted-foreground">Beveiliging controleren...</p>
       </main>
     )
   }

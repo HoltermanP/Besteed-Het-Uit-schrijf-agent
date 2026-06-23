@@ -36,8 +36,15 @@ import {
   type SourceProfile,
   type StyleDocument,
 } from '../types/styleDocument'
-import '../Admin.css'
-import '../Rules.css'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
+import { ModeToggle } from '@/components/mode-toggle'
+import { cn } from '@/lib/utils'
 
 /** UI-laag boven op de gedeelde sectie-metadata: icoon, accent en placeholders per sectie. */
 type SectionUi = KaderSectionMeta & {
@@ -46,6 +53,36 @@ type SectionUi = KaderSectionMeta & {
   editorPlaceholder: string
   uploadTitle: string
   uploadHint: string
+}
+
+/** Per-sectie accentkleur — de enige niet-semantische kleuren, om de vier secties te onderscheiden. */
+type AccentClasses = {
+  border: string
+  icon: string
+  iconBg: string
+}
+
+const ACCENTS: Record<string, AccentClasses> = {
+  richtlijnen: {
+    border: 'border-l-teal-500',
+    icon: 'text-teal-600 dark:text-teal-400',
+    iconBg: 'bg-teal-500/10',
+  },
+  schrijfstijl: {
+    border: 'border-l-indigo-500',
+    icon: 'text-indigo-600 dark:text-indigo-400',
+    iconBg: 'bg-indigo-500/10',
+  },
+  kwaliteit: {
+    border: 'border-l-amber-500',
+    icon: 'text-amber-600 dark:text-amber-400',
+    iconBg: 'bg-amber-500/10',
+  },
+  aanbesteding: {
+    border: 'border-l-violet-500',
+    icon: 'text-violet-600 dark:text-violet-400',
+    iconBg: 'bg-violet-500/10',
+  },
 }
 
 const SECTION_UI: SectionUi[] = kaderSections.map((meta) => {
@@ -116,34 +153,39 @@ export default function RulesPage() {
     setDocuments((current) => current.filter((item) => item.id !== id))
 
   return (
-    <main className="admin-shell rules-shell">
-      <header className="admin-topbar">
-        <div className="brand">
-          <div className="brand-mark"><PenLine size={20} /></div>
-          <div>
-            <strong>Schrijfkader</strong>
-            <span>Besteed Het Uit</span>
+    <main className="min-h-screen bg-background p-4 text-foreground sm:p-6">
+      <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <PenLine size={18} />
+          </div>
+          <div className="min-w-0 leading-tight">
+            <div className="truncate font-semibold">Schrijfkader</div>
+            <div className="truncate text-sm text-muted-foreground">Besteed Het Uit</div>
           </div>
         </div>
-        <div className="admin-topbar-actions">
-          <Link className="secondary admin-link" to="/">
-            <ArrowLeft size={16} /> Terug naar werkplek
-          </Link>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button asChild variant="outline">
+            <Link to="/">
+              <ArrowLeft size={16} /> <span className="sr-only sm:not-sr-only">Terug naar werkplek</span>
+            </Link>
+          </Button>
+          <ModeToggle />
         </div>
       </header>
 
-      <div className="kader-intro">
-        <h1>Schrijfregels, schrijfwijze &amp; kwaliteit</h1>
-        <p>
+      <div className="mx-auto mb-5 max-w-[1040px]">
+        <h1 className="mb-1.5 text-2xl font-semibold">Schrijfregels, schrijfwijze &amp; kwaliteit</h1>
+        <p className="max-w-[720px] text-sm text-muted-foreground">
           Eén kader in vier secties. Schrijf per sectie regels of upload een bron en laat AI er de
           relevante regels uit opstellen. De vierde sectie distilleert eerdere aanbestedingen en
           achtergrond tot een profiel. Alles wat hier staat wordt automatisch meegenomen als input
           voor nieuwe aanbestedingen.
         </p>
-        {loadError ? <p className="status rules-status">{loadError}</p> : null}
+        {loadError ? <p className="mt-2 text-sm text-destructive">{loadError}</p> : null}
       </div>
 
-      <div className="kader-sections">
+      <div className="mx-auto flex max-w-[1040px] flex-col gap-5">
         {SECTION_UI.map((section) => (
           <RuleSection
             key={section.key}
@@ -183,6 +225,7 @@ function RuleSection({ section, loading, documents, onUpsert, onRemove }: RuleSe
   const [status, setStatus] = useState('')
   const editorRef = useRef<HTMLDivElement>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
+  const accent = ACCENTS[section.accent]
 
   const resetEditor = () => {
     setName('')
@@ -290,120 +333,137 @@ function RuleSection({ section, loading, documents, onUpsert, onRemove }: RuleSe
   }
 
   return (
-    <section className={`admin-card kader-section kader-section--${section.accent}`}>
-      <div className="kader-section-head">
-        <div className="kader-section-icon">{section.icon}</div>
-        <div className="kader-section-title">
-          <h2>{section.title}</h2>
-          <p>{section.tagline}</p>
-        </div>
-        <span className="kader-section-count">{documents.length}</span>
-      </div>
-
-      <div className="kader-section-body">
-        <div className="kader-editor" ref={editorRef}>
-          <div className="kader-block-head">
-            <Plus size={16} />
-            <span>{editingId ? 'Regel bewerken' : 'Regel schrijven'}</span>
+    <Card className={cn('border-l-4', accent.border)} data-testid={`kader-section-${section.key}`}>
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <div className={cn('flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg', accent.iconBg, accent.icon)}>
+            {section.icon}
           </div>
-          <label>
-            Naam
-            <input
-              ref={nameInputRef}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Bijv. Verboden formuleringen"
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-semibold">{section.title}</h2>
+            <p className="text-sm text-muted-foreground">{section.tagline}</p>
+          </div>
+          <Badge variant="secondary">{documents.length}</Badge>
+        </div>
+      </CardHeader>
+
+      <CardContent>
+        <div className="grid gap-5 md:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+          <div ref={editorRef} className="space-y-3">
+            <div className={cn('flex items-center gap-2 text-sm font-semibold uppercase tracking-wide', accent.icon)}>
+              <Plus size={16} />
+              <span>{editingId ? 'Regel bewerken' : 'Regel schrijven'}</span>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor={`name-${section.key}`}>Naam</Label>
+              <Input
+                id={`name-${section.key}`}
+                ref={nameInputRef}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Bijv. Verboden formuleringen"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor={`content-${section.key}`}>Inhoud</Label>
+              <Textarea
+                id={`content-${section.key}`}
+                value={content}
+                onChange={(event) => setContent(event.target.value)}
+                placeholder={section.editorPlaceholder}
+                rows={8}
+                className="min-h-40 resize-y"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" disabled={saving} onClick={() => void handleSave()}>
+                {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                {saving ? 'Opslaan…' : editingId ? 'Wijzigingen opslaan' : 'Regel opslaan'}
+              </Button>
+              {editingId ? (
+                <Button type="button" variant="outline" onClick={resetEditor}>
+                  Annuleren
+                </Button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex flex-col">
+            <div className={cn('mb-2.5 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide', accent.icon)}>
+              <Upload size={16} />
+              <span>Bron uploaden &amp; AI</span>
+            </div>
+            <FileUploadZone
+              accept={acceptedStyleExtensions}
+              loading={uploading}
+              title={section.uploadTitle}
+              hint={section.uploadHint}
+              formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 12 MB per bestand"
+              onFiles={handleUpload}
             />
-          </label>
-          <label>
-            Inhoud
-            <textarea
-              className="rules-editor"
-              value={content}
-              onChange={(event) => setContent(event.target.value)}
-              placeholder={section.editorPlaceholder}
-              rows={8}
-            />
-          </label>
-          <div className="rules-actions">
-            <button type="button" className="primary" disabled={saving} onClick={() => void handleSave()}>
-              {saving ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
-              {saving ? 'Opslaan…' : editingId ? 'Wijzigingen opslaan' : 'Regel opslaan'}
-            </button>
-            {editingId ? (
-              <button type="button" className="secondary" onClick={resetEditor}>
-                Annuleren
-              </button>
-            ) : null}
           </div>
         </div>
 
-        <div className="kader-upload">
-          <div className="kader-block-head">
-            <Upload size={16} />
-            <span>Bron uploaden &amp; AI</span>
-          </div>
-          <FileUploadZone
-            accept={acceptedStyleExtensions}
-            loading={uploading}
-            title={section.uploadTitle}
-            hint={section.uploadHint}
-            formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 12 MB per bestand"
-            onFiles={handleUpload}
-          />
-        </div>
-      </div>
+        <Separator className="my-5" />
 
-      <div className="kader-list-wrap">
-        {loading ? (
-          <p className="status">Laden…</p>
-        ) : documents.length ? (
-          <ul className="config-file-list rules-list kader-list">
-            {documents.map((doc) => {
-              const distilling = distillingId === doc.id
-              const sourceUpload = !isTextRule(doc)
-              return (
-                <li key={doc.id} className={editingId === doc.id ? 'rules-list-active' : undefined}>
-                  <div className="kader-list-info">
-                    <strong>
-                      {sourceUpload ? <FileText size={14} className="kader-list-kind" /> : null}
-                      {doc.name}
-                    </strong>
-                    <span>
-                      {sourceUpload ? 'Geüploade bron' : 'Geschreven regel'} · {doc.fileName} ·{' '}
-                      {doc.content.length.toLocaleString('nl-NL')} tekens
-                    </span>
-                  </div>
-                  <div className="rules-list-actions">
-                    {sourceUpload ? (
-                      <button
-                        type="button"
-                        className="secondary tiny"
-                        disabled={distilling}
-                        onClick={() => void handleDistill(doc)}
-                      >
-                        {distilling ? <Loader2 size={14} className="spin" /> : <Sparkles size={14} />}
-                        {distilling ? 'Bezig…' : 'Stel regels op'}
-                      </button>
-                    ) : (
-                      <button type="button" className="secondary tiny" onClick={() => handleEdit(doc)}>
-                        <FileText size={14} /> Bewerk
-                      </button>
+        <div>
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Laden…</p>
+          ) : documents.length ? (
+            <ul className="space-y-2">
+              {documents.map((doc) => {
+                const distilling = distillingId === doc.id
+                const sourceUpload = !isTextRule(doc)
+                return (
+                  <li
+                    key={doc.id}
+                    className={cn(
+                      'flex items-start justify-between gap-3 rounded-md border p-3',
+                      editingId === doc.id && cn(accent.border, 'border-l-4 bg-accent'),
                     )}
-                    <button type="button" className="secondary tiny" onClick={() => void handleDelete(doc.id)}>
-                      <Trash2 size={14} /> Verwijder
-                    </button>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        ) : (
-          <p className="status">Nog niets in deze sectie.</p>
-        )}
-        {status ? <p className="status rules-status">{status}</p> : null}
-      </div>
-    </section>
+                  >
+                    <div className="min-w-0">
+                      <strong className="flex items-center gap-1.5 break-words">
+                        {sourceUpload ? <FileText size={14} className={cn('flex-shrink-0', accent.icon)} /> : null}
+                        {doc.name}
+                      </strong>
+                      <span className="text-sm text-muted-foreground break-words">
+                        {sourceUpload ? 'Geüploade bron' : 'Geschreven regel'} · {doc.fileName} ·{' '}
+                        {doc.content.length.toLocaleString('nl-NL')} tekens
+                      </span>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-1.5">
+                      {sourceUpload ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={distilling}
+                          onClick={() => void handleDistill(doc)}
+                        >
+                          {distilling ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                          {distilling ? 'Bezig…' : 'Stel regels op'}
+                        </Button>
+                      ) : (
+                        <Button type="button" variant="outline" size="sm" onClick={() => handleEdit(doc)}>
+                          <FileText size={14} /> Bewerk
+                        </Button>
+                      )}
+                      <Button type="button" variant="outline" size="sm" onClick={() => void handleDelete(doc.id)}>
+                        <Trash2 size={14} /> Verwijder
+                      </Button>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">Nog niets in deze sectie.</p>
+          )}
+          {status ? <p className="mt-2.5 text-sm text-muted-foreground">{status}</p> : null}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -418,6 +478,7 @@ function BackgroundSection({ loading, documents, onUpsert, onRemove }: Backgroun
   const [uploading, setUploading] = useState(false)
   const [analyzingIds, setAnalyzingIds] = useState<string[]>([])
   const [status, setStatus] = useState('')
+  const accent = ACCENTS.aanbesteding
 
   const runAnalysis = async (id: string) => {
     setAnalyzingIds((current) => [...current, id])
@@ -481,105 +542,118 @@ function BackgroundSection({ loading, documents, onUpsert, onRemove }: Backgroun
   }
 
   return (
-    <section className="admin-card kader-section kader-section--aanbesteding">
-      <div className="kader-section-head">
-        <div className="kader-section-icon"><Archive size={20} /></div>
-        <div className="kader-section-title">
-          <h2>Eerdere aanbestedingen &amp; achtergrond</h2>
-          <p>Bronnen die AI distilleert tot stijl, kennis, ervaringen en achtergrond</p>
+    <Card className={cn('border-l-4', accent.border)}>
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <div className={cn('flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg', accent.iconBg, accent.icon)}>
+            <Archive size={20} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-semibold">Eerdere aanbestedingen &amp; achtergrond</h2>
+            <p className="text-sm text-muted-foreground">
+              Bronnen die AI distilleert tot stijl, kennis, ervaringen en achtergrond
+            </p>
+          </div>
+          <Badge variant="secondary">{documents.length}</Badge>
         </div>
-        <span className="kader-section-count">{documents.length}</span>
-      </div>
+      </CardHeader>
 
-      <div className="kader-upload">
-        <div className="kader-block-head">
-          <Upload size={16} />
-          <span>Bron uploaden &amp; AI-analyse</span>
+      <CardContent>
+        <div className="flex flex-col">
+          <div className={cn('mb-2.5 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide', accent.icon)}>
+            <Upload size={16} />
+            <span>Bron uploaden &amp; AI-analyse</span>
+          </div>
+          <FileUploadZone
+            accept={acceptedStyleExtensions}
+            loading={uploading}
+            title="Sleep eerdere aanbestedingen of achtergrondstukken hierheen"
+            hint="Worden na upload automatisch door AI geanalyseerd tot een bruikbaar profiel"
+            formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 12 MB per bestand"
+            onFiles={handleUpload}
+          />
         </div>
-        <FileUploadZone
-          accept={acceptedStyleExtensions}
-          loading={uploading}
-          title="Sleep eerdere aanbestedingen of achtergrondstukken hierheen"
-          hint="Worden na upload automatisch door AI geanalyseerd tot een bruikbaar profiel"
-          formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 12 MB per bestand"
-          onFiles={handleUpload}
-        />
-      </div>
 
-      <div className="kader-list-wrap">
-        {loading ? (
-          <p className="status">Laden…</p>
-        ) : documents.length ? (
-          <ul className="config-file-list rules-list kader-list">
-            {documents.map((doc) => {
-              const analyzing = analyzingIds.includes(doc.id)
-              return (
-                <li key={doc.id}>
-                  <div className="kader-list-info">
-                    <strong>
-                      <FileText size={14} className="kader-list-kind" />
-                      {doc.name}
-                    </strong>
-                    <span>
-                      {doc.fileName} · {doc.content.length.toLocaleString('nl-NL')} tekens
-                      {doc.analysis ? (
-                        <span className="kader-badge ok"> · geanalyseerd</span>
-                      ) : (
-                        <span className="kader-badge"> · niet geanalyseerd</span>
-                      )}
-                    </span>
-                    {doc.analysis ? <SourceProfileView profile={doc.analysis} /> : null}
-                  </div>
-                  <div className="rules-list-actions">
-                    <button
-                      type="button"
-                      className="secondary tiny"
-                      disabled={analyzing}
-                      onClick={() => void handleAnalyze(doc.id)}
-                    >
-                      {analyzing ? (
-                        <Loader2 size={14} className="spin" />
-                      ) : doc.analysis ? (
-                        <RefreshCw size={14} />
-                      ) : (
-                        <Sparkles size={14} />
-                      )}
-                      {analyzing ? 'Analyseren…' : doc.analysis ? 'Heranalyseer' : 'Analyseer'}
-                    </button>
-                    <button type="button" className="secondary tiny" onClick={() => void handleDelete(doc.id)}>
-                      <Trash2 size={14} /> Verwijder
-                    </button>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        ) : (
-          <p className="status">Nog niets in deze sectie.</p>
-        )}
-        {status ? <p className="status rules-status">{status}</p> : null}
-      </div>
-    </section>
+        <Separator className="my-5" />
+
+        <div>
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Laden…</p>
+          ) : documents.length ? (
+            <ul className="space-y-2">
+              {documents.map((doc) => {
+                const analyzing = analyzingIds.includes(doc.id)
+                return (
+                  <li key={doc.id} className="flex items-start justify-between gap-3 rounded-md border p-3">
+                    <div className="min-w-0">
+                      <strong className="flex items-center gap-1.5 break-words">
+                        <FileText size={14} className={cn('flex-shrink-0', accent.icon)} />
+                        {doc.name}
+                      </strong>
+                      <span className="text-sm text-muted-foreground break-words">
+                        {doc.fileName} · {doc.content.length.toLocaleString('nl-NL')} tekens{' '}
+                        {doc.analysis ? (
+                          <Badge variant="secondary" className="align-middle">geanalyseerd</Badge>
+                        ) : (
+                          <Badge variant="outline" className="align-middle">niet geanalyseerd</Badge>
+                        )}
+                      </span>
+                      {doc.analysis ? <SourceProfileView profile={doc.analysis} accentClass={accent.icon} /> : null}
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-1.5">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={analyzing}
+                        onClick={() => void handleAnalyze(doc.id)}
+                      >
+                        {analyzing ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : doc.analysis ? (
+                          <RefreshCw size={14} />
+                        ) : (
+                          <Sparkles size={14} />
+                        )}
+                        {analyzing ? 'Analyseren…' : doc.analysis ? 'Heranalyseer' : 'Analyseer'}
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => void handleDelete(doc.id)}>
+                        <Trash2 size={14} /> Verwijder
+                      </Button>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">Nog niets in deze sectie.</p>
+          )}
+          {status ? <p className="mt-2.5 text-sm text-muted-foreground">{status}</p> : null}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
-function SourceProfileView({ profile }: { profile: SourceProfile }) {
+function SourceProfileView({ profile, accentClass }: { profile: SourceProfile; accentClass: string }) {
   const sections = (Object.keys(sourceProfileLabels) as Array<keyof SourceProfile>)
     .map((key) => ({ key, label: sourceProfileLabels[key], value: profile[key]?.trim() }))
     .filter((section) => Boolean(section.value))
 
   if (!sections.length) {
-    return <p className="kader-profile-empty">AI vond geen bruikbare inhoud om te distilleren.</p>
+    return <p className="mt-2 text-sm text-muted-foreground">AI vond geen bruikbare inhoud om te distilleren.</p>
   }
 
   return (
-    <details className="kader-profile">
-      <summary>AI-profiel ({sections.length} {sections.length === 1 ? 'aspect' : 'aspecten'})</summary>
-      <dl>
+    <details className="mt-2.5 text-sm">
+      <summary className={cn('cursor-pointer select-none font-semibold', accentClass)}>
+        AI-profiel ({sections.length} {sections.length === 1 ? 'aspect' : 'aspecten'})
+      </summary>
+      <dl className="mt-2.5 grid gap-2.5">
         {sections.map((section) => (
           <div key={section.key}>
-            <dt>{section.label}</dt>
-            <dd>{section.value}</dd>
+            <dt className="mb-0.5 font-semibold text-foreground">{section.label}</dt>
+            <dd className="m-0 whitespace-pre-wrap leading-relaxed text-muted-foreground">{section.value}</dd>
           </div>
         ))}
       </dl>

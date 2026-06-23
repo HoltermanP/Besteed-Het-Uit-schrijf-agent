@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import path from 'node:path'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { handleAnalyzeIntentRequest } from './api-src/_lib/analyzeIntent'
 import { handleAnalyzeTenderRequest } from './api-src/_lib/analyzeTender'
 import { handleCompanyEnrichRequest } from './api-src/_lib/companyEnrich'
@@ -135,7 +137,12 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '')
 
   return {
-    plugins: [react(), serverDevApi(env)],
+    plugins: [react(), tailwindcss(), serverDevApi(env)],
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, './src'),
+      },
+    },
     envDir: '.',
     server: {
       proxy: {

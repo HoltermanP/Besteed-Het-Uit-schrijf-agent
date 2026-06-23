@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
+  ArrowRight,
   BookmarkCheck,
   CheckCircle2,
   ChevronDown,
@@ -11,6 +12,7 @@ import {
   ExternalLink,
   FileText,
   Filter,
+  Library,
   LoaderCircle,
   RefreshCw,
   Search,
@@ -31,7 +33,14 @@ import {
   syncPendingTendersToNeon,
 } from '../lib/tenderDatabase'
 import type { TenderDocument, TenderListItem } from '../types/tenderNed'
-import '../TenderBrowser.css'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
+import { ModeToggle } from '@/components/mode-toggle'
+import { cn } from '@/lib/utils'
 
 type DocListState = TenderDocument[] | 'loading' | 'error'
 
@@ -48,6 +57,7 @@ function formatDate(value: string): string {
 }
 
 export default function TenderBrowserPage() {
+  const navigate = useNavigate()
   const [items, setItems] = useState<TenderListItem[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [page, setPage] = useState(0)
@@ -217,6 +227,18 @@ export default function TenderBrowserPage() {
     }
   }
 
+  // Eén klik: alle documenten downloaden én meteen het dossier openen in de werkplek.
+  const downloadAndOpen = async (item: TenderListItem) => {
+    try {
+      setStatus(`Alle documenten van "${item.aanbestedingNaam}" downloaden…`)
+      await saveTender(item.publicatieId)
+      refreshSaved()
+      navigate(`/?open=${encodeURIComponent(item.publicatieId)}`)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Downloaden mislukt.')
+    }
+  }
+
   const syncNeon = async () => {
     const result = await syncPendingTendersToNeon()
     refreshSaved()
@@ -240,113 +262,135 @@ export default function TenderBrowserPage() {
   }
 
   return (
-    <main className="tender-browser">
-      <header className="tender-topbar">
-        <div>
-          <Link className="secondary tender-link" to="/">
-            <ArrowLeft size={16} /> Terug naar werkplek
-          </Link>
-          <h1>TenderNed catalogus</h1>
-          <p>
-            Bron:{' '}
-            <a href="https://data.overheid.nl/dataset/aankondigingen-van-overheidsopdrachten---tenderned" target="_blank" rel="noreferrer">
-              Aankondigingen van overheidsopdrachten (TenderNed)
-            </a>
-            {' '}via de publieke TNS-webservice.
-          </p>
+    <main className="min-h-screen bg-background p-4 text-foreground sm:p-6">
+      <Link
+        className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        to="/"
+      >
+        <ArrowLeft size={16} /> <span className="sr-only sm:not-sr-only">Terug naar werkplek</span>
+      </Link>
+      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <Library size={18} />
+          </div>
+          <div className="min-w-0 leading-tight">
+            <h1 className="truncate font-semibold">TenderNed catalogus</h1>
+            <div className="truncate text-sm text-muted-foreground">Publieke TNS-webservice</div>
+          </div>
         </div>
-        <div className="tender-actions">
-          <button className="secondary" onClick={() => loadPage(0)} disabled={loading}>
-            <RefreshCw size={16} /> Ververs lijst
-          </button>
-          <button className="secondary" onClick={syncNeon}>
-            <Database size={16} /> Sync Neon ({savedCount})
-          </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="outline" onClick={() => loadPage(0)} disabled={loading}>
+            <RefreshCw size={16} /> <span className="sr-only sm:not-sr-only">Ververs lijst</span>
+          </Button>
+          <Button variant="outline" onClick={syncNeon}>
+            <Database size={16} /> <span className="sr-only sm:not-sr-only">Sync Neon</span> ({savedCount})
+          </Button>
+          <ModeToggle />
         </div>
       </header>
+      <p className="mb-4 text-sm text-muted-foreground">
+        Bron:{' '}
+        <a
+          className="underline underline-offset-2 hover:text-foreground"
+          href="https://data.overheid.nl/dataset/aankondigingen-van-overheidsopdrachten---tenderned"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Aankondigingen van overheidsopdrachten (TenderNed)
+        </a>
+        {' '}via de publieke TNS-webservice.
+      </p>
 
-      <section className="tender-filters panel">
-        <div className="panel-heading">
-          <Filter size={17} />
-          <h2>Zoeken &amp; voorselectie</h2>
-        </div>
-        <div className="filter-grid">
-          <label>
-            CPV-code (prefix)
-            <input
-              placeholder="bijv. 45210000"
-              value={cpvPrefix}
-              onChange={(event) => setCpvPrefix(event.target.value)}
-              onKeyDown={(event) => event.key === 'Enter' && runFilteredSearch()}
-            />
-          </label>
-          <label>
-            Zoekterm
-            <input
-              placeholder="Titel, opdrachtgever, omschrijving"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => event.key === 'Enter' && runFilteredSearch()}
-            />
-          </label>
-          <label className="admin-toggle">
-            <input type="checkbox" checked={onlyOpen} onChange={(event) => setOnlyOpen(event.target.checked)} />
-            Alleen openstaande inschrijvingen
-          </label>
-        </div>
-        <div className="filter-actions">
-          <button className="primary" onClick={runFilteredSearch} disabled={loading}>
-            {loading ? <LoaderCircle size={16} className="spin" /> : <Search size={16} />}
-            Zoek in catalogus
-          </button>
-          <button className="secondary" onClick={() => loadPage(page)} disabled={loading}>
-            Toon pagina {page + 1}
-          </button>
-        </div>
-        {cpvOptions.length > 0 ? (
-          <div className="cpv-chips">
-            {cpvOptions.slice(0, 12).map((cpv) => (
-              <button key={cpv.code} className="cpv-chip" onClick={() => setCpvPrefix(cpv.code.slice(0, 8))}>
-                {cpv.code} — {cpv.omschrijving}
-              </button>
-            ))}
+      <Card className="mb-3.5">
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Filter size={17} />
+            <h2 className="text-lg font-semibold">Zoeken &amp; voorselectie</h2>
           </div>
-        ) : null}
-        <p className="status">{status}{scannedPages ? ` (${scannedPages} pagina('s) gescand)` : ''}</p>
-      </section>
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+            <div className="space-y-2">
+              <Label htmlFor="cpv-prefix">CPV-code (prefix)</Label>
+              <Input
+                id="cpv-prefix"
+                placeholder="bijv. 45210000"
+                value={cpvPrefix}
+                onChange={(event) => setCpvPrefix(event.target.value)}
+                onKeyDown={(event) => event.key === 'Enter' && runFilteredSearch()}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="query">Zoekterm</Label>
+              <Input
+                id="query"
+                placeholder="Titel, opdrachtgever, omschrijving"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => event.key === 'Enter' && runFilteredSearch()}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm md:pb-2.5">
+              <Checkbox
+                checked={onlyOpen}
+                onCheckedChange={(checked) => setOnlyOpen(checked === true)}
+              />
+              Alleen openstaande inschrijvingen
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={runFilteredSearch} disabled={loading}>
+              {loading ? <LoaderCircle size={16} className="animate-spin" /> : <Search size={16} />}
+              Zoek in catalogus
+            </Button>
+            <Button variant="outline" onClick={() => loadPage(page)} disabled={loading}>
+              Toon pagina {page + 1}
+            </Button>
+          </div>
+          {cpvOptions.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {cpvOptions.slice(0, 12).map((cpv) => (
+                <button
+                  key={cpv.code}
+                  className="max-w-full break-words rounded-full border bg-muted px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent"
+                  onClick={() => setCpvPrefix(cpv.code.slice(0, 8))}
+                >
+                  {cpv.code} — {cpv.omschrijving}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <p className="text-sm text-muted-foreground">{status}{scannedPages ? ` (${scannedPages} pagina('s) gescand)` : ''}</p>
+        </CardContent>
+      </Card>
 
-      <section className="tender-toolbar">
-        <div className="tender-toolbar-info">
-          <label className="select-all">
-            <input
-              type="checkbox"
-              checked={allVisibleSelected}
-              ref={(el) => {
-                if (el) el.indeterminate = selected.size > 0 && !allVisibleSelected
-              }}
-              onChange={toggleSelectAll}
+      <section className="sticky top-0 z-[5] mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-4">
+          <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold">
+            <Checkbox
+              checked={allVisibleSelected ? true : selected.size > 0 ? 'indeterminate' : false}
+              onCheckedChange={toggleSelectAll}
               disabled={!visibleItems.length}
             />
             Selecteer alles
           </label>
-          <span className="tender-count">
+          <span className="text-sm text-muted-foreground">
             <strong>{selected.size}</strong> geselecteerd · <strong>{visibleItems.length}</strong> zichtbaar
           </span>
         </div>
-        <div className="tender-toolbar-actions">
+        <div className="flex flex-wrap gap-2">
           {selected.size > 0 ? (
-            <button className="ghost" onClick={() => setSelected(new Set())} disabled={loading}>
+            <Button variant="ghost" onClick={() => setSelected(new Set())} disabled={loading}>
               <X size={15} /> Wis selectie
-            </button>
+            </Button>
           ) : null}
-          <button className="primary" onClick={downloadSelected} disabled={!selected.size || loading}>
-            {loading ? <LoaderCircle size={16} className="spin" /> : <Download size={16} />}
+          <Button onClick={downloadSelected} disabled={!selected.size || loading}>
+            {loading ? <LoaderCircle size={16} className="animate-spin" /> : <Download size={16} />}
             Download {selected.size > 0 ? `${selected.size} ` : ''}naar database
-          </button>
+          </Button>
         </div>
       </section>
 
-      <section className="tender-list">
+      <section className="grid gap-2.5">
         {visibleItems.map((item) => {
           const isSelected = selected.has(item.publicatieId)
           const isBusy = busyIds.has(item.publicatieId)
@@ -355,106 +399,154 @@ export default function TenderBrowserPage() {
           const docState = docLists[item.publicatieId]
           const isOpen = item.aantalDagenTotSluitingsDatum >= 0
           return (
-            <article
+            <Card
               key={item.publicatieId}
-              className={isSelected ? 'tender-card selected' : 'tender-card'}
+              className={cn(
+                'cursor-pointer flex-row items-start gap-3 p-3.5 transition-colors hover:border-ring',
+                isSelected && 'border-primary bg-accent ring-2 ring-ring/30',
+              )}
               onClick={(event) => {
-                if ((event.target as HTMLElement).closest('a, button, input')) return
+                if ((event.target as HTMLElement).closest('a, button, input') ||
+                  (event.target as HTMLElement).closest('[role="checkbox"]')) return
                 toggleSelect(item.publicatieId)
               }}
             >
-              <label className="tender-select" onClick={(event) => event.stopPropagation()}>
-                <input
-                  type="checkbox"
+              <label
+                className="flex cursor-pointer items-start pt-0.5"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <Checkbox
                   checked={isSelected}
-                  onChange={() => toggleSelect(item.publicatieId)}
+                  onCheckedChange={() => toggleSelect(item.publicatieId)}
                 />
               </label>
-              <div className="tender-body">
-                <div className="tender-head">
-                  <strong>{item.aanbestedingNaam}</strong>
-                  <span className={`tender-status ${isOpen ? 'open' : 'closed'}`}>
+              <div className="min-w-0 flex-1">
+                <div className="flex justify-between gap-2.5">
+                  <strong className="min-w-0 break-words">{item.aanbestedingNaam}</strong>
+                  <Badge
+                    variant={isOpen ? 'default' : 'secondary'}
+                    className="shrink-0 whitespace-nowrap rounded-full"
+                  >
                     {isOpen ? `${item.aantalDagenTotSluitingsDatum} dagen` : 'Gesloten'}
-                  </span>
+                  </Badge>
                 </div>
-                <p className="tender-meta">
+                <p className="mt-1.5 flex flex-wrap items-center gap-x-1 break-words text-sm text-muted-foreground">
                   {item.opdrachtgeverNaam} · TN-{item.kenmerk} · sluit {formatDate(item.sluitingsDatum)}
-                  {isSaved ? <span className="saved-pill"><CheckCircle2 size={13} /> opgeslagen</span> : null}
+                  {isSaved ? (
+                    <Badge variant="outline" className="ml-2 gap-1 rounded-full text-xs font-normal">
+                      <CheckCircle2 size={13} /> opgeslagen
+                    </Badge>
+                  ) : null}
                 </p>
-                <p className="tender-desc">{item.opdrachtBeschrijving.slice(0, 220)}{item.opdrachtBeschrijving.length > 220 ? '...' : ''}</p>
+                <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{item.opdrachtBeschrijving.slice(0, 220)}{item.opdrachtBeschrijving.length > 220 ? '...' : ''}</p>
                 {item.cpvCodes?.length ? (
-                  <div className="cpv-row">
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
                     {item.cpvCodes.slice(0, 4).map((cpv) => (
-                      <span key={cpv.code} className={cpv.isHoofdOpdracht ? 'cpv-main' : ''}>
+                      <Badge
+                        key={cpv.code}
+                        variant={cpv.isHoofdOpdracht ? 'default' : 'secondary'}
+                        className="break-all rounded-full font-normal"
+                      >
                         {cpv.code}
-                      </span>
+                      </Badge>
                     ))}
                   </div>
                 ) : (
-                  <button className="secondary tiny" disabled={isBusy} onClick={() => loadCpv(item.publicatieId)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    disabled={isBusy}
+                    onClick={() => loadCpv(item.publicatieId)}
+                  >
                     CPV laden
-                  </button>
+                  </Button>
                 )}
 
-                <div className="tender-card-actions">
-                  <button className="ghost tiny" onClick={() => toggleExpand(item.publicatieId)}>
+                <div className="mt-3 flex items-center gap-2.5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => toggleExpand(item.publicatieId)}
+                  >
                     {isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                     <FileText size={14} /> Documenten
-                  </button>
+                  </Button>
                   {item.link ? (
-                    <a className="tender-ext-link" href={item.link} target="_blank" rel="noreferrer">
+                    <a
+                      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
+                      href={item.link}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       <ExternalLink size={13} /> TenderNed
                     </a>
                   ) : null}
                 </div>
 
                 {isExpanded ? (
-                  <div className="tender-docs">
+                  <div className="mt-2.5 rounded-lg border bg-muted/40 p-3">
                     {docState === 'loading' ? (
-                      <p className="tender-docs-status"><LoaderCircle size={14} className="spin" /> Documenten laden...</p>
+                      <p className="m-0 flex items-center gap-1.5 text-xs text-muted-foreground"><LoaderCircle size={14} className="animate-spin" /> Documenten laden...</p>
                     ) : docState === 'error' ? (
-                      <p className="tender-docs-status error">Documentenlijst kon niet worden geladen.</p>
+                      <p className="m-0 flex items-center gap-1.5 text-xs text-destructive">Documentenlijst kon niet worden geladen.</p>
                     ) : docState && docState.length ? (
                       <>
-                        <p className="tender-docs-status">{docState.length} document(en) — worden allemaal gedownload bij opslaan.</p>
-                        <ul>
+                        <p className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">{docState.length} document(en) — worden allemaal gedownload bij opslaan.</p>
+                        <ul className="grid list-none gap-1 p-0">
                           {docState.map((doc) => (
-                            <li key={doc.documentId}>
-                              <span className="doc-type">{doc.type}</span>
-                              <span className="doc-name" title={doc.documentNaam}>{doc.documentNaam}</span>
-                              <span className="doc-size">{formatBytes(doc.grootte)}</span>
+                            <li
+                              key={doc.documentId}
+                              className="grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-2 border-t py-1 text-xs first:border-t-0"
+                            >
+                              <span className="shrink-0 rounded bg-muted px-0 py-0.5 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{doc.type}</span>
+                              <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title={doc.documentNaam}>{doc.documentNaam}</span>
+                              <span className="shrink-0 tabular-nums text-muted-foreground">{formatBytes(doc.grootte)}</span>
                             </li>
                           ))}
                         </ul>
                       </>
                     ) : (
-                      <p className="tender-docs-status">Geen losse documenten bij deze publicatie.</p>
+                      <p className="m-0 flex items-center gap-1.5 text-xs text-muted-foreground">Geen losse documenten bij deze publicatie.</p>
                     )}
                   </div>
                 ) : null}
               </div>
-              <button
-                className="icon-button"
-                title="Alle documenten downloaden en opslaan"
-                disabled={isBusy}
-                onClick={() => saveSingle(item)}
-              >
-                {isBusy ? <LoaderCircle size={18} className="spin" /> : <BookmarkCheck size={18} />}
-              </button>
-            </article>
+              <div className="flex shrink-0 flex-col items-stretch gap-1.5" onClick={(event) => event.stopPropagation()}>
+                <Button
+                  size="sm"
+                  title="Alle documenten downloaden en meteen openen in de werkplek"
+                  disabled={isBusy}
+                  onClick={() => downloadAndOpen(item)}
+                >
+                  {isBusy ? <LoaderCircle size={16} className="animate-spin" /> : <ArrowRight size={16} />}
+                  Download &amp; open
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  title="Alleen downloaden naar database (later openen)"
+                  disabled={isBusy}
+                  onClick={() => saveSingle(item)}
+                >
+                  {isSaved ? <CheckCircle2 size={15} /> : <BookmarkCheck size={15} />}
+                  {isSaved ? 'Opgeslagen' : 'Alleen opslaan'}
+                </Button>
+              </div>
+            </Card>
           )
         })}
-        {!visibleItems.length && !loading ? <p className="status">Geen resultaten. Pas CPV-filter aan of laad een pagina.</p> : null}
+        {!visibleItems.length && !loading ? <p className="text-sm text-muted-foreground">Geen resultaten. Pas CPV-filter aan of laad een pagina.</p> : null}
       </section>
 
-      <footer className="tender-pagination">
-        <button className="secondary" disabled={page <= 0 || loading} onClick={() => loadPage(page - 1)}>
+      <footer className="mt-4 flex items-center justify-center gap-3.5">
+        <Button variant="outline" disabled={page <= 0 || loading} onClick={() => loadPage(page - 1)}>
           Vorige
-        </button>
-        <span>{totalElements ? `${totalElements.toLocaleString('nl-NL')} totaal · ` : ''}Pagina {page + 1} / {totalPages.toLocaleString('nl-NL') || '?'}</span>
-        <button className="secondary" disabled={page >= totalPages - 1 || loading} onClick={() => loadPage(page + 1)}>
+        </Button>
+        <span className="text-sm text-muted-foreground">{totalElements ? `${totalElements.toLocaleString('nl-NL')} totaal · ` : ''}Pagina {page + 1} / {totalPages.toLocaleString('nl-NL') || '?'}</span>
+        <Button variant="outline" disabled={page >= totalPages - 1 || loading} onClick={() => loadPage(page + 1)}>
           Volgende
-        </button>
+        </Button>
       </footer>
     </main>
   )

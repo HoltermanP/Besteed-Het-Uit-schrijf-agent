@@ -8,28 +8,28 @@ test.beforeEach(async ({ page }) => {
   })
 })
 
-test('schrijfstijlpagina laadt en toont upload', async ({ page }) => {
+// De losse Stijlbibliotheek-pagina bestaat niet meer: /schrijfstijl is samengevoegd
+// in het Schrijfkader op /schrijfregels en moet daarheen redirecten.
+test('schrijfstijl redirect naar het schrijfkader', async ({ page }) => {
   await page.goto('/schrijfstijl')
-  await expect(page.getByRole('heading', { name: 'Stijlbibliotheek' })).toBeVisible()
-  await expect(page.getByText('PDF, Word, PowerPoint, Excel, txt, md, csv')).toBeVisible()
-})
-
-test('navigatie vanuit werkplek naar schrijfstijl', async ({ page }) => {
-  await page.goto('/')
-  await page.getByRole('link', { name: 'Schrijfstijl & kwaliteit' }).click()
-  await expect(page).toHaveURL(/\/schrijfstijl/)
-})
-
-test('upload stijldocument slaat tekst op in bibliotheek', async ({ page }) => {
-  await page.goto('/schrijfstijl')
-  await page.getByPlaceholder('Bijv. HU Schrijfwijzer 2025').fill('Schrijfwijzer')
-  await page.setInputFiles('input[type="file"]', {
-    name: 'schrijfwijzer.txt',
-    mimeType: 'text/plain',
-    buffer: Buffer.from('Schrijf concreet, toetsbaar en zonder promotionele taal.'),
-  })
-
+  await expect(page).toHaveURL(/\/schrijfregels/)
   await expect(
-    page.locator('.style-guide-list li').filter({ hasText: 'Schrijfwijzer' }).first(),
+    page.getByRole('heading', { name: 'Schrijfregels, schrijfwijze & kwaliteit' }),
+  ).toBeVisible()
+})
+
+test('schrijfkader toont de vier secties', async ({ page }) => {
+  await page.goto('/schrijfregels')
+  await expect(
+    page.getByTestId('kader-section-richtlijnen').getByRole('heading', { name: 'Schrijfregels' }),
+  ).toBeVisible()
+  await expect(
+    page.getByTestId('kader-section-schrijfstijl').getByRole('heading', { name: 'Schrijfwijze' }),
+  ).toBeVisible()
+  await expect(
+    page.getByTestId('kader-section-kwaliteit').getByRole('heading', { name: 'Kwaliteit' }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Eerdere aanbestedingen & achtergrond' }),
   ).toBeVisible()
 })

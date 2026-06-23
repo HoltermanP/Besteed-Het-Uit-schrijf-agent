@@ -16,6 +16,6 @@ test('TenderNed catalogus laadt publicaties', async ({ page }) => {
 
 test('navigatie vanuit werkplek naar catalogus', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('link', { name: /CPV-catalogus/ }).click()
+  await page.getByRole('link', { name: /Zoek .* download aanbestedingen/ }).click()
   await expect(page).toHaveURL(/\/aanbestedingen/)
 })

@@ -1,3 +1,33 @@
+/* De editor is een wit "papier"-vel, zodat de donkere documenttekst altijd maximaal
+   contrast houdt — ook in donkere modus — en exact overeenkomt met de PDF/Word-export. */
+.document-editor {
+  background: #ffffff;
+  color: #172033;
+  border: 1px solid #d4dcdb;
+  border-radius: 12px;
+  padding: 44px 48px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.08);
+  min-height: 60vh;
+}
+
+.document-editor:focus,
+.document-editor:focus-visible {
+  outline: none;
+  border-color: #164f4a;
+  box-shadow: 0 0 0 3px rgba(22, 79, 74, 0.18), 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.document-editor .generation-placeholder {
+  color: #5b6878;
+  font-style: italic;
+}
+
+@media (max-width: 720px) {
+  .document-editor {
+    padding: 24px 20px;
+  }
+}
+
 .proposal-doc {
   max-width: 860px;
   margin: 0 auto;
@@ -27,7 +57,7 @@
 
 .proposal-doc .doc-subtitle {
   margin: 0 0 8px;
-  color: #64748b;
+  color: #475569;
   font-size: 14px;
   font-weight: 600;
 }
@@ -56,7 +86,7 @@
 
 .proposal-doc .doc-meta dt {
   margin: 0 0 4px;
-  color: #64748b;
+  color: #475569;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -93,7 +123,7 @@
 
 .proposal-doc .section-subtitle {
   margin: 0 0 14px;
-  color: #64748b;
+  color: #475569;
   font-size: 13px;
   font-style: italic;
 }

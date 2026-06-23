@@ -8,35 +8,53 @@ test.beforeEach(async ({ page }) => {
   })
 })
 
-test('schrijfregelspagina laadt en toont formulier', async ({ page }) => {
+test('schrijfkaderpagina laadt en toont sectie met editor', async ({ page }) => {
   await page.goto('/schrijfregels')
-  await expect(page.getByRole('heading', { name: 'Schrijfregel aanmaken' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Regeldocument uploaden' })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Schrijfregels, schrijfwijze & kwaliteit' }),
+  ).toBeVisible()
+
+  const section = page.getByTestId('kader-section-richtlijnen')
+  await expect(section.getByRole('heading', { name: 'Schrijfregels' })).toBeVisible()
+  await expect(section.getByText('Regel schrijven')).toBeVisible()
+  await expect(section.getByText('Bron uploaden & AI')).toBeVisible()
 })
 
-test('navigatie vanuit werkplek naar schrijfregels', async ({ page }) => {
+test('navigatie vanuit werkplek naar schrijfkader', async ({ page }) => {
   await page.goto('/')
-  await page.locator('.config-nav-link', { hasText: 'Schrijfregels' }).click()
+  await page.getByRole('navigation').getByRole('link', { name: 'Schrijfkader' }).click()
   await expect(page).toHaveURL(/\/schrijfregels/)
 })
 
-test('schrijfregel aanmaken en opslaan', async ({ page }) => {
+test('schrijfregel aanmaken en opslaan', async ({ page }, testInfo) => {
+  // Unieke naam: beide browserprojecten delen één dev-server (in-memory store).
+  // Zonder uniek label matcht de assertie meerdere identieke items (strict-mode).
+  const ruleName = `Verboden woorden ${testInfo.project.name}-${Date.now()}`
   await page.goto('/schrijfregels')
-  await page.getByPlaceholder('Bijv. Verboden formuleringen').fill('Verboden woorden')
-  await page.locator('.rules-editor').fill('Gebruik geen superlatieven zonder bewijs.')
-  await page.getByRole('button', { name: 'Schrijfregel opslaan' }).click()
+  const section = page.getByTestId('kader-section-richtlijnen')
 
-  await expect(page.locator('.rules-list li').first()).toContainText('Verboden woorden')
-  await expect(page.getByText('Schrijfregel opgeslagen.')).toBeVisible()
+  await section.getByPlaceholder('Bijv. Verboden formuleringen').fill(ruleName)
+  await section
+    .getByLabel('Inhoud')
+    .fill('Gebruik geen superlatieven zonder bewijs.')
+  await section.getByRole('button', { name: 'Regel opslaan' }).click()
+
+  await expect(section.getByText('Regel opgeslagen.')).toBeVisible()
+  await expect(section.getByRole('listitem').filter({ hasText: ruleName })).toBeVisible()
 })
 
-test('regeldocument uploaden', async ({ page }) => {
+test('regeldocument uploaden', async ({ page }, testInfo) => {
+  const fileName = `kwaliteitsstandaard-${testInfo.project.name}-${Date.now()}.txt`
   await page.goto('/schrijfregels')
-  await page.setInputFiles('input[type="file"]', {
-    name: 'kwaliteitsstandaard.txt',
+  const section = page.getByTestId('kader-section-richtlijnen')
+
+  await section.locator('input[type="file"]').setInputFiles({
+    name: fileName,
     mimeType: 'text/plain',
     buffer: Buffer.from('Elke uitspraak moet toetsbaar zijn aan een bewijsstuk.'),
   })
 
-  await expect(page.locator('.rules-list').getByText('kwaliteitsstandaard.txt').first()).toBeVisible()
+  await expect(
+    section.getByRole('listitem').filter({ hasText: fileName }),
+  ).toBeVisible()
 })
