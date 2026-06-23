@@ -11,15 +11,18 @@ import { handleExtractTextRequest } from './api-src/_lib/extractText'
 import { handleStyleDocumentsRequest } from './api-src/_lib/styleDocuments'
 import { handleTenderDocumentsRequest } from './api-src/_lib/tenderDocuments'
 import { handleWriteDraftRequest } from './api-src/_lib/writeDraft'
+import { handleReviewDraftRequest } from './api-src/_lib/reviewDraft'
 import { getWriterStatusPayload } from './api-src/_lib/writerStatus'
 import type { AnalyzeIntentRequest } from './src/types/analyzeIntent'
 import type { AnalyzeTenderRequest } from './src/types/analyzeTender'
+import type { ReviewDraftRequest } from './src/types/reviewDraft'
 
 const jsonApiRoutes: Record<string, (body: unknown) => Promise<Response>> = {
   '/api/analyze-intent': (body) => handleAnalyzeIntentRequest(body as AnalyzeIntentRequest),
   '/api/analyze-tender': (body) => handleAnalyzeTenderRequest(body as AnalyzeTenderRequest),
   '/api/company-enrich': handleCompanyEnrichRequest,
   '/api/write-draft': handleWriteDraftRequest,
+  '/api/review-draft': (body) => handleReviewDraftRequest(body as ReviewDraftRequest),
 }
 
 async function readNodeBody(req: IncomingMessage): Promise<Buffer | undefined> {
