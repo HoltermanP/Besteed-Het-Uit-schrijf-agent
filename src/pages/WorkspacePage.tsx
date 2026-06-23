@@ -622,7 +622,7 @@ export default function WorkspacePage() {
       title: tender.aanbestedingNaam,
       buyer: tender.opdrachtgeverNaam,
       tendernedId: `TN-${tender.kenmerk}`,
-      deadline: tender.sluitingsDatum.slice(0, 10),
+      deadline: tender.sluitingsDatum?.slice(0, 10) ?? '',
     }
     return {
       project,
