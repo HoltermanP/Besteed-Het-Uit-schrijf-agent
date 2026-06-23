@@ -60,9 +60,143 @@ export function buildWordDocument(html: string, title: string) {
 </html>`
 }
 
-export function exportWordDocument(html: string, title: string, filename: string) {
-  const wordHtml = buildWordDocument(html, title)
-  const doc = new Blob([wordHtml], { type: 'application/msword;charset=utf-8' })
+/** Tekststijlen die Word betrouwbaar uit inline-styles overneemt (font-family bewust niet:
+ *  laten we vallen op de Word-basistypografie uit buildWordDocument). */
+const WORD_TEXT_PROPS = [
+  'color',
+  'font-size',
+  'font-weight',
+  'font-style',
+  'line-height',
+  'text-align',
+  'text-transform',
+  'letter-spacing',
+  'vertical-align',
+  'white-space',
+]
+
+const BOX_SIDES = ['top', 'right', 'bottom', 'left'] as const
+
+function isTransparent(color: string): boolean {
+  return !color || color === 'transparent' || color === 'rgba(0, 0, 0, 0)'
+}
+
+function rgbToHex(rgb: string): string {
+  const parts = rgb.match(/\d+/g)
+  if (!parts || parts.length < 3) return ''
+  const [r, g, b] = parts.slice(0, 3).map((n) => Math.max(0, Math.min(255, parseInt(n, 10))))
+  return `#${[r, g, b].map((n) => n.toString(16).padStart(2, '0')).join('')}`
+}
+
+/** Zet de berekende stijlen van elk element om naar inline-styles + table-attributen,
+ *  zodat Word de opmaak overneemt (Word negeert grotendeels class-CSS in <style>). */
+function inlineComputedStyles(doc: Document, win: Window) {
+  doc.querySelectorAll<HTMLElement>('.proposal-doc, .proposal-doc *').forEach((el) => {
+    const cs = win.getComputedStyle(el)
+    const tag = el.tagName.toLowerCase()
+    const parts: string[] = []
+
+    for (const prop of WORD_TEXT_PROPS) {
+      const value = cs.getPropertyValue(prop)
+      if (value) parts.push(`${prop}: ${value}`)
+    }
+
+    const background = cs.getPropertyValue('background-color')
+    if (!isTransparent(background)) {
+      parts.push(`background-color: ${background}`)
+      if (tag === 'th' || tag === 'td') {
+        const hex = rgbToHex(background)
+        if (hex) el.setAttribute('bgcolor', hex)
+      }
+    }
+
+    for (const box of ['padding', 'margin'] as const) {
+      for (const side of BOX_SIDES) {
+        const value = cs.getPropertyValue(`${box}-${side}`)
+        if (value && value !== '0px') parts.push(`${box}-${side}: ${value}`)
+      }
+    }
+
+    for (const side of BOX_SIDES) {
+      const width = cs.getPropertyValue(`border-${side}-width`)
+      const style = cs.getPropertyValue(`border-${side}-style`)
+      const color = cs.getPropertyValue(`border-${side}-color`)
+      if (style && style !== 'none' && parseFloat(width) > 0) {
+        parts.push(`border-${side}: ${width} ${style} ${color}`)
+      }
+    }
+
+    const radius = cs.getPropertyValue('border-radius')
+    if (radius && radius !== '0px') parts.push(`border-radius: ${radius}`)
+
+    if (tag === 'table' || tag === 'td' || tag === 'th') {
+      const width = cs.getPropertyValue('width')
+      if (width && width !== 'auto') parts.push(`width: ${width}`)
+      if (tag === 'table') parts.push('border-collapse: collapse')
+    }
+
+    el.setAttribute('style', parts.join('; '))
+  })
+}
+
+/** Converteer de doc-meta (CSS grid — door Word genegeerd) naar een tabelrij. */
+function convertDocMetaToTable(doc: Document) {
+  doc.querySelectorAll<HTMLElement>('dl.doc-meta').forEach((dl) => {
+    const items = Array.from(dl.children).filter((child) => child.tagName.toLowerCase() === 'div')
+    if (!items.length) return
+    const table = doc.createElement('table')
+    table.className = 'doc-meta'
+    table.setAttribute('width', '100%')
+    const row = doc.createElement('tr')
+    items.forEach((item) => {
+      const cell = doc.createElement('td')
+      cell.setAttribute('valign', 'top')
+      cell.innerHTML = item.innerHTML
+      row.appendChild(cell)
+    })
+    table.appendChild(row)
+    dl.replaceWith(table)
+  })
+}
+
+/** Bouwt Word-klare HTML: rendert in een iframe, neemt berekende stijlen inline over. */
+async function buildWordExport(html: string, title: string): Promise<string> {
+  const iframe = document.createElement('iframe')
+  iframe.setAttribute('aria-hidden', 'true')
+  iframe.style.position = 'fixed'
+  iframe.style.left = '-10000px'
+  iframe.style.top = '0'
+  iframe.style.width = `${RENDER_WIDTH_PX}px`
+  iframe.style.height = '1000px'
+  iframe.style.border = '0'
+  document.body.appendChild(iframe)
+
+  try {
+    const doc = iframe.contentDocument
+    const win = iframe.contentWindow
+    if (!doc || !win) return buildWordDocument(html, title)
+
+    doc.open()
+    doc.write(buildStandaloneDocument(html, title))
+    doc.close()
+
+    if (doc.fonts?.ready) await doc.fonts.ready
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    convertDocMetaToTable(doc)
+    inlineComputedStyles(doc, win)
+
+    const root = doc.querySelector('.proposal-doc')
+    return buildWordDocument(root ? root.outerHTML : doc.body.innerHTML, title)
+  } finally {
+    document.body.removeChild(iframe)
+  }
+}
+
+export async function exportWordDocument(html: string, title: string, filename: string) {
+  const wordHtml = await buildWordExport(html, title)
+  // De BOM helpt Word de UTF-8-codering correct te herkennen.
+  const doc = new Blob(['﻿', wordHtml], { type: 'application/msword;charset=utf-8' })
   saveAs(doc, filename)
 }
 

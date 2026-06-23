@@ -1164,12 +1164,13 @@ export default function WorkspacePage() {
     }
   }
 
-  const exportWord = () => {
+  const exportWord = async () => {
     syncDraftFromEditor()
     const html = getExportHtml()
     const filename = `${project.title.toLowerCase().replace(/\s+/g, '-')}-${stage}.doc`
+    setSyncStatus('Word genereren…')
     try {
-      exportWordDocument(html, project.title, filename)
+      await exportWordDocument(html, project.title, filename)
       setSyncStatus('Word-document gedownload.')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Word-export mislukt.'
@@ -1571,7 +1572,7 @@ export default function WorkspacePage() {
             <Button variant="outline" onClick={exportPdf} disabled={exportingPdf}>
               <FileDown size={17} /> {exportingPdf ? 'PDF...' : 'PDF'}
             </Button>
-            <Button variant="outline" onClick={exportWord}>
+            <Button variant="outline" onClick={() => void exportWord()}>
               <FileDown size={17} /> Word
             </Button>
             <Button disabled={generating} onClick={() => void analyzeAndGenerate(stage)}>
