@@ -22,6 +22,39 @@
   font-style: italic;
 }
 
+/* Word-achtige opmerking-markering in de editor. Wordt vóór export verwijderd,
+   dus deze opmaak is alleen voor het scherm. */
+.comment-mark {
+  background: #fff3bf;
+  box-shadow: inset 0 -2px 0 #f2c94c;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.comment-mark[data-status='verwerkt'] {
+  background: #e6efff;
+  box-shadow: inset 0 -2px 0 #6aa0ff;
+}
+
+.comment-mark[data-status='akkoord'] {
+  background: transparent;
+  box-shadow: none;
+}
+
+.comment-mark-flash {
+  animation: comment-mark-flash 1.2s ease;
+}
+
+@keyframes comment-mark-flash {
+  0%,
+  100% {
+    background: #fff3bf;
+  }
+  35% {
+    background: #ffd83d;
+  }
+}
+
 @media (max-width: 720px) {
   .document-editor {
     padding: 24px 20px;

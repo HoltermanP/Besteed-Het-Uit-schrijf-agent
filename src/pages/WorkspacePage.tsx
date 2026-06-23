@@ -33,6 +33,7 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
+  Undo2,
   Upload,
   Wand2,
   XCircle,
@@ -50,6 +51,7 @@ import { exportPdfFromHtml, exportWordDocument } from '../lib/documentExport'
 import { isNeonConfigured, isWriterConfigured, migrateLegacyNeonUrl } from '../lib/apiConfig'
 import { generateDraftViaApi, fetchWriterStatus, isNoAiConfigError, type WriterStatus } from '../lib/writeDraftApi'
 import { rewriteFragmentViaApi } from '../lib/rewriteFragmentApi'
+import { reviewDraftViaApi } from '../lib/reviewDraftApi'
 import { getCompanyConfig, isCompanyConfigured, mergeDocumentsWithCompanyConfig } from '../lib/companyConfig'
 import { computeOpportunityScore, type OpportunityLevel } from '../lib/opportunityScore'
 import { fetchStyleDocuments } from '../lib/styleDocumentsApi'
@@ -90,11 +92,15 @@ type SourceDocument = {
   importedAt: string
 }
 
+type CommentStatus = 'open' | 'verwerkt' | 'akkoord'
+
 type ReviewComment = {
   id: string
   fragment: string
   note: string
-  resolved: boolean
+  status: CommentStatus
+  /** Oorspronkelijke sectie-HTML vóór een gerichte herschrijving, voor terugdraaien. */
+  previousSectionHtml?: string
 }
 
 type ReviewFinding = {
@@ -145,6 +151,12 @@ const opportunityLevelLabel: Record<OpportunityLevel, string> = {
   matig: 'Matige kans',
   kansrijk: 'Kansrijk',
   sterk: 'Sterke kans',
+}
+
+const commentStatusMeta: Record<CommentStatus, { label: string; className: string }> = {
+  open: { label: 'Open', className: 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300' },
+  verwerkt: { label: 'Verwerkt', className: 'bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300' },
+  akkoord: { label: 'Akkoord', className: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300' },
 }
 
 const initialProject: TenderProject = {
@@ -206,6 +218,53 @@ const GENERAL_COMMENT_FRAGMENT = 'Algemene opmerking'
 /** Normaliseer witruimte zodat een selectie betrouwbaar in de DOM-tekst te vinden is. */
 const normalizeForMatch = (text: string) => text.replace(/\s+/g, ' ').trim()
 
+/** Migreer opgeslagen opmerkingen (incl. oude `resolved`-boolean) naar het statusmodel. */
+function normalizeComment(raw: unknown): ReviewComment {
+  const item = (raw ?? {}) as Record<string, unknown>
+  const legacyResolved = item.resolved === true
+  const status: CommentStatus =
+    item.status === 'open' || item.status === 'verwerkt' || item.status === 'akkoord'
+      ? item.status
+      : legacyResolved
+        ? 'akkoord'
+        : 'open'
+  return {
+    id: typeof item.id === 'string' ? item.id : makeId(),
+    fragment: typeof item.fragment === 'string' ? item.fragment : GENERAL_COMMENT_FRAGMENT,
+    note: typeof item.note === 'string' ? item.note : '',
+    status,
+    previousSectionHtml: typeof item.previousSectionHtml === 'string' ? item.previousSectionHtml : undefined,
+  }
+}
+
+function normalizeComments(list: unknown): ReviewComment[] {
+  return Array.isArray(list) ? list.map(normalizeComment) : []
+}
+
+/** Mapping naar het oudere {fragment, note, resolved}-formaat dat de API's en buildHtmlDraft verwachten. */
+function toLegacyComments(comments: ReviewComment[]) {
+  return comments.map((comment) => ({
+    fragment: comment.fragment,
+    note: comment.note,
+    resolved: comment.status !== 'open',
+  }))
+}
+
+/** Verwijder editor-only annotaties (markeringen, herschrijf-ankers) uit HTML vóór export/AI. */
+function stripCommentMarks(html: string): string {
+  if (typeof document === 'undefined') return html
+  const template = document.createElement('template')
+  template.innerHTML = html
+  template.content.querySelectorAll('.comment-mark').forEach((mark) => {
+    const parent = mark.parentNode
+    if (!parent) return
+    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark)
+    parent.removeChild(mark)
+  })
+  template.content.querySelectorAll('[data-rewrite-of]').forEach((el) => el.removeAttribute('data-rewrite-of'))
+  return template.innerHTML
+}
+
 // Oudere, opgeslagen analyses (localStorage) missen mogelijk nieuwere array-velden zoals
 // submissionRequirements. Zonder deze normalisatie crasht een `.length`/.map` in de render.
 function normalizeStoredAnalysis(analysis: TenderAnalysis | null): TenderAnalysis | null {
@@ -234,11 +293,11 @@ function loadInitialState() {
     localStorage.setItem('bid-agent-project', JSON.stringify(project))
   }
   const documents = loadStored('bid-agent-documents', seedDocuments)
-  const comments = loadStored<ReviewComment[]>('bid-agent-comments', [])
+  const comments = normalizeComments(loadStored<unknown>('bid-agent-comments', []))
   const stage = loadStored<Stage>('bid-agent-stage', 'brons')
   const storedDraft = localStorage.getItem('bid-agent-draft')
   const storedAnalysis = normalizeStoredAnalysis(loadStored<TenderAnalysis | null>('bid-agent-analysis', null))
-  const draft = storedDraft ?? buildHtmlDraft(stage, project, documents, comments, storedAnalysis)
+  const draft = storedDraft ?? buildHtmlDraft(stage, project, documents, toLegacyComments(comments), storedAnalysis)
   return { project, documents, comments, stage, draft, analysis: storedAnalysis }
 }
 
@@ -324,7 +383,6 @@ export default function WorkspacePage() {
   const [activeType, setActiveType] = useState<SourceType>('tender')
   const [manualText, setManualText] = useState('')
   const [manualName, setManualName] = useState('')
-  const [selectedFragment, setSelectedFragment] = useState('')
   const [commentText, setCommentText] = useState('')
   const [tendernedQuery, setTendernedQuery] = useState('TN-2026-00421')
   const [activeTenderId, setActiveTenderId] = useState(() => getActiveDossierId())
@@ -351,6 +409,11 @@ export default function WorkspacePage() {
   const [syncStatus, setSyncStatus] = useState('Lokaal opgeslagen')
   const [generating, setGenerating] = useState(false)
   const [rewritingId, setRewritingId] = useState<string | null>(null)
+  const [reviewing, setReviewing] = useState(false)
+  const [commentPopover, setCommentPopover] = useState<{ top: number; left: number; fragment: string } | null>(null)
+  const [popoverNote, setPopoverNote] = useState('')
+  const savedRangeRef = useRef<Range | null>(null)
+  const popoverRef = useRef<HTMLDivElement | null>(null)
   const [uploadNotice, setUploadNotice] = useState<{ tone: 'ok' | 'warning' | 'error'; message: string } | null>(null)
   const [showAllSources, setShowAllSources] = useState(false)
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
@@ -440,7 +503,7 @@ export default function WorkspacePage() {
       words,
       chars: countCharacters(draft),
       sources: effectiveDocuments.length,
-      unresolved: comments.filter((comment) => !comment.resolved).length,
+      unresolved: comments.filter((comment) => comment.status === 'open').length,
       score: opportunity.score,
       wordTarget,
       charTarget,
@@ -506,7 +569,7 @@ export default function WorkspacePage() {
       const message = error instanceof Error ? error.message : 'Genereren mislukt.'
       if (isNoAiConfigError(message)) {
         setSyncStatus('Geen AI geconfigureerd — lokaal concept wordt gebouwd…')
-        const nextDraft = buildHtmlDraft(targetStage, project, effectiveDocuments, comments, result)
+        const nextDraft = buildHtmlDraft(targetStage, project, effectiveDocuments, toLegacyComments(comments), result)
         await revealDraftProgressively(nextDraft, updateEditorHtml)
         setFindings(reviewDraft(nextDraft, effectiveDocuments, result))
         setSyncStatus(isNeonConfigured() ? 'Analyse, concept en Neon-sync gereed' : 'Analyse en concept lokaal opgeslagen')
@@ -673,7 +736,7 @@ export default function WorkspacePage() {
   const applyDossier = (snapshot: DossierSnapshot) => {
     setProject(snapshot.project)
     setDocuments(snapshot.documents)
-    setComments(snapshot.comments)
+    setComments(normalizeComments(snapshot.comments))
     setStage(snapshot.stage)
     setAnalysis(snapshot.analysis)
     setFindings([])
@@ -735,7 +798,7 @@ export default function WorkspacePage() {
   }
 
   const applyAiRewrite = async () => {
-    const openComments = comments.filter((comment) => !comment.resolved)
+    const openComments = comments.filter((comment) => comment.status === 'open')
     if (!openComments.length) {
       setSyncStatus('Geen open opmerkingen om te verwerken.')
       return
@@ -751,16 +814,16 @@ export default function WorkspacePage() {
           stage: 'zilver',
           project,
           documents: effectiveDocuments,
-          comments,
+          comments: toLegacyComments(comments),
           analysis: result,
-          currentDraft: draft,
+          currentDraft: stripCommentMarks(draft),
         },
         (accumulated) => {
           updateEditorHtml(accumulated || draft)
         },
       )
       updateEditorHtml(aiResult.html)
-      setComments((current) => current.map((comment) => ({ ...comment, resolved: true })))
+      setComments((current) => current.map((comment) => (comment.status === 'open' ? { ...comment, status: 'akkoord' } : comment)))
       setFindings(reviewDraft(aiResult.html, effectiveDocuments, result))
       setSyncStatus(`Opmerkingen verwerkt met ${aiResult.provider} (${aiResult.model})`)
     } catch (error) {
@@ -772,7 +835,7 @@ export default function WorkspacePage() {
         const reviewBlock = `<section><h2>AI-verwerking review</h2>${additions}</section>`
         const next = draft.replace('</article>', `${reviewBlock}</article>`)
         updateEditorHtml(next)
-        setComments((current) => current.map((comment) => ({ ...comment, resolved: true })))
+        setComments((current) => current.map((comment) => (comment.status === 'open' ? { ...comment, status: 'akkoord' } : comment)))
         setFindings(reviewDraft(next, effectiveDocuments, result))
         setSyncStatus('Opmerkingen lokaal verwerkt (geen AI geconfigureerd)')
         return
@@ -826,6 +889,9 @@ export default function WorkspacePage() {
     setRewritingId(comment.id)
     setSyncStatus('Schrijfagent herschrijft het betreffende onderdeel…')
 
+    // Bewaar de oorspronkelijke sectie zodat de wijziging teruggedraaid kan worden.
+    const previousSectionHtml = target.outerHTML
+
     try {
       const result = analysis ?? (await runAnalysis())
       const rewrite = await rewriteFragmentViaApi({
@@ -833,7 +899,7 @@ export default function WorkspacePage() {
         project,
         fragment: comment.fragment,
         note: comment.note,
-        sectionHtml: target.outerHTML,
+        sectionHtml: stripCommentMarks(previousSectionHtml),
         documents: effectiveDocuments,
         analysis: result,
       })
@@ -842,13 +908,19 @@ export default function WorkspacePage() {
       template.innerHTML = rewrite.html.trim()
       const replacement = template.content.firstElementChild
       if (!replacement) throw new Error('Het herschreven onderdeel was leeg.')
+      // Anker zodat we het herschreven onderdeel later kunnen terugdraaien of accorderen.
+      replacement.setAttribute('data-rewrite-of', comment.id)
       target.replaceWith(replacement)
 
       const editor = editorRef.current
       if (editor) updateEditorHtml(editor.innerHTML)
-      setComments((current) => current.map((item) => (item.id === comment.id ? { ...item, resolved: true } : item)))
+      setComments((current) =>
+        current.map((item) =>
+          item.id === comment.id ? { ...item, status: 'verwerkt', previousSectionHtml } : item,
+        ),
+      )
       setFindings(reviewDraft(editorRef.current?.innerHTML ?? draft, effectiveDocuments, result))
-      setSyncStatus(`Onderdeel herschreven met ${rewrite.provider} (${rewrite.model})`)
+      setSyncStatus(`Onderdeel herschreven met ${rewrite.provider} (${rewrite.model}) — beoordeel: akkoord of terugdraaien`)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Herschrijven mislukt.'
       setSyncStatus(
@@ -866,31 +938,200 @@ export default function WorkspacePage() {
     if (editor) setDraft(editor.innerHTML)
   }
 
+  // Toon bij een tekstselectie in de editor een zwevende "Opmerking"-knop bij de selectie
+  // (Word-achtig). De selectie wordt bewaard zodat we de markering later kunnen plaatsen.
   const captureSelection = () => {
-    const selection = window.getSelection()?.toString().trim()
-    if (selection) setSelectedFragment(selection)
+    const selection = window.getSelection()
+    const text = selection?.toString() ?? ''
+    const trimmed = text.trim()
+    const editor = editorRef.current
+    if (!selection || selection.rangeCount === 0 || !trimmed || !editor) {
+      setCommentPopover(null)
+      return
+    }
+    const range = selection.getRangeAt(0)
+    if (!editor.contains(range.commonAncestorContainer)) {
+      setCommentPopover(null)
+      return
+    }
+    savedRangeRef.current = range.cloneRange()
+    const rect = range.getBoundingClientRect()
+    setCommentPopover({ top: rect.top, left: rect.left + rect.width / 2, fragment: trimmed })
+    setPopoverNote('')
   }
 
-  const addComment = () => {
+  // Markeer de huidige status visueel op de markering in het document.
+  const setMarkStatus = (commentId: string, status: CommentStatus) => {
+    editorRef.current
+      ?.querySelectorAll<HTMLElement>(`.comment-mark[data-comment-id="${commentId}"]`)
+      .forEach((mark) => {
+        mark.dataset.status = status
+      })
+  }
+
+  const unwrapMarks = (commentId: string) => {
+    editorRef.current
+      ?.querySelectorAll<HTMLElement>(`.comment-mark[data-comment-id="${commentId}"]`)
+      .forEach((mark) => {
+        const parent = mark.parentNode
+        if (!parent) return
+        while (mark.firstChild) parent.insertBefore(mark.firstChild, mark)
+        parent.removeChild(mark)
+      })
+  }
+
+  // Plaats een opmerking via de zwevende knop: markeer de selectie en koppel de opmerking.
+  const placeAnchoredComment = () => {
+    const note = popoverNote.trim()
+    const popover = commentPopover
+    if (!note || !popover) return
+    const id = makeId()
+    const range = savedRangeRef.current
+    if (range) {
+      try {
+        const span = document.createElement('span')
+        span.className = 'comment-mark'
+        span.dataset.commentId = id
+        span.dataset.status = 'open'
+        span.appendChild(range.extractContents())
+        range.insertNode(span)
+        const editor = editorRef.current
+        if (editor) updateEditorHtml(editor.innerHTML)
+      } catch {
+        // Selectie kon niet worden gemarkeerd (bijv. over blokgrenzen) — opmerking blijft tekstgebaseerd.
+      }
+    }
+    setComments((current) => [{ id, fragment: popover.fragment, note, status: 'open' }, ...current])
+    setCommentPopover(null)
+    setPopoverNote('')
+    savedRangeRef.current = null
+    window.getSelection()?.removeAllRanges()
+  }
+
+  // Algemene opmerking zonder tekstselectie (via de zijbalk).
+  const addGeneralComment = () => {
     if (!commentText.trim()) return
     setComments((current) => [
-      {
-        id: makeId(),
-        fragment: selectedFragment || GENERAL_COMMENT_FRAGMENT,
-        note: commentText.trim(),
-        resolved: false,
-      },
+      { id: makeId(), fragment: GENERAL_COMMENT_FRAGMENT, note: commentText.trim(), status: 'open' },
       ...current,
     ])
     setCommentText('')
-    setSelectedFragment('')
   }
 
-  const getExportHtml = () => editorRef.current?.innerHTML ?? draft
+  // Spring naar de gemarkeerde tekst in het document en laat 'm even oplichten.
+  const focusComment = (commentId: string) => {
+    const mark = editorRef.current?.querySelector<HTMLElement>(`.comment-mark[data-comment-id="${commentId}"]`)
+    if (!mark) return
+    mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    mark.classList.add('comment-mark-flash')
+    window.setTimeout(() => mark.classList.remove('comment-mark-flash'), 1200)
+  }
+
+  // Akkoord met een verwerkte herschrijving: maak het anker/markering schoon en zet op 'akkoord'.
+  const approveComment = (comment: ReviewComment) => {
+    const editor = editorRef.current
+    editor?.querySelector(`[data-rewrite-of="${comment.id}"]`)?.removeAttribute('data-rewrite-of')
+    unwrapMarks(comment.id)
+    if (editor) updateEditorHtml(editor.innerHTML)
+    setComments((current) =>
+      current.map((item) => (item.id === comment.id ? { ...item, status: 'akkoord', previousSectionHtml: undefined } : item)),
+    )
+    setSyncStatus('Wijziging akkoord bevonden.')
+  }
+
+  // Draai een verwerkte herschrijving terug naar de oorspronkelijke tekst.
+  const revertComment = (comment: ReviewComment) => {
+    const editor = editorRef.current
+    const el = editor?.querySelector(`[data-rewrite-of="${comment.id}"]`)
+    if (!el || !comment.previousSectionHtml) {
+      setSyncStatus('Kon de herschrijving niet terugdraaien — het onderdeel is niet meer te vinden.')
+      return
+    }
+    const template = document.createElement('template')
+    template.innerHTML = comment.previousSectionHtml.trim()
+    const original = template.content.firstElementChild
+    if (!original) {
+      setSyncStatus('Kon de oorspronkelijke tekst niet herstellen.')
+      return
+    }
+    el.replaceWith(original)
+    setMarkStatus(comment.id, 'open')
+    if (editor) updateEditorHtml(editor.innerHTML)
+    setComments((current) =>
+      current.map((item) => (item.id === comment.id ? { ...item, status: 'open', previousSectionHtml: undefined } : item)),
+    )
+    setFindings(reviewDraft(editor?.innerHTML ?? draft, effectiveDocuments, analysis))
+    setSyncStatus('Herschrijving teruggedraaid.')
+  }
+
+  // Handmatig akkoord/heropenen zonder AI-herschrijving.
+  const setCommentResolved = (comment: ReviewComment, resolved: boolean) => {
+    const nextStatus: CommentStatus = resolved ? 'akkoord' : 'open'
+    if (resolved) unwrapMarks(comment.id)
+    else setMarkStatus(comment.id, 'open')
+    const editor = editorRef.current
+    if (editor) updateEditorHtml(editor.innerHTML)
+    setComments((current) =>
+      current.map((item) => (item.id === comment.id ? { ...item, status: nextStatus } : item)),
+    )
+  }
+
+  // Wire de AI-reviewagent: heuristische baseline + AI-aanvulling.
+  const runAiReview = async () => {
+    if (reviewing) return
+    setReviewing(true)
+    setSyncStatus('AI-review wordt uitgevoerd…')
+    const html = editorRef.current?.innerHTML ?? draft
+    try {
+      const result = analysis ?? (await runAnalysis())
+      const baselineFindings = reviewDraft(html, effectiveDocuments, result)
+      const baseline = baselineFindings.map(({ priority, title, detail }) => ({ priority, title, detail }))
+      const ai = await reviewDraftViaApi({
+        stage,
+        project,
+        draft: stripCommentMarks(html),
+        documents: effectiveDocuments,
+        comments: toLegacyComments(comments),
+        analysis: result,
+        baseline,
+      })
+      if (ai && ai.findings.length) {
+        setFindings(ai.findings.map((finding) => ({ id: makeId(), ...finding })))
+        setSyncStatus(
+          ai.enriched
+            ? `AI-review uitgevoerd met ${ai.provider} (${ai.model})`
+            : 'Review uitgevoerd (heuristisch — AI gaf geen extra punten)',
+        )
+      } else {
+        setFindings(baselineFindings)
+        setSyncStatus('AI-review niet beschikbaar — heuristische review getoond')
+      }
+    } catch {
+      setFindings(reviewDraft(html, effectiveDocuments, analysis))
+      setSyncStatus('AI-review mislukt — heuristische review getoond')
+    } finally {
+      setReviewing(false)
+    }
+  }
+
+  // Sluit de zwevende opmerking-popover bij een klik buiten de popover en editor.
+  useEffect(() => {
+    if (!commentPopover) return
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (popoverRef.current?.contains(target) || editorRef.current?.contains(target)) return
+      setCommentPopover(null)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    return () => document.removeEventListener('mousedown', onPointerDown)
+  }, [commentPopover])
+
+  // Markeringen en herschrijf-ankers zijn editor-only; verwijder ze uit de export.
+  const getExportHtml = () => stripCommentMarks(editorRef.current?.innerHTML ?? draft)
 
   const exportPdf = async () => {
     syncDraftFromEditor()
-    const html = editorRef.current?.innerHTML ?? draft
+    const html = getExportHtml()
     const filename = `${project.title.toLowerCase().replace(/\s+/g, '-')}-${stage}.pdf`
     setExportingPdf(true)
     try {
@@ -909,6 +1150,50 @@ export default function WorkspacePage() {
 
   return (
     <main className="grid min-h-screen grid-cols-1 bg-background text-foreground xl:grid-cols-[340px_minmax(0,1fr)_350px]">
+      {commentPopover ? (
+        <div
+          ref={popoverRef}
+          style={{
+            position: 'fixed',
+            top: commentPopover.top,
+            left: commentPopover.left,
+            transform: 'translate(-50%, calc(-100% - 10px))',
+            zIndex: 60,
+          }}
+          className="w-72 rounded-lg border bg-popover p-3 text-popover-foreground shadow-lg"
+        >
+          <p className="mb-2 line-clamp-2 text-xs italic text-muted-foreground">“{commentPopover.fragment}”</p>
+          <Textarea
+            autoFocus
+            value={popoverNote}
+            onChange={(event) => setPopoverNote(event.target.value)}
+            placeholder="Opmerking of wijzigingsinstructie..."
+            className="min-h-[64px] text-sm"
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                event.preventDefault()
+                placeAnchoredComment()
+              }
+            }}
+          />
+          <div className="mt-2 flex justify-end gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setCommentPopover(null)
+                setPopoverNote('')
+                savedRangeRef.current = null
+              }}
+            >
+              Annuleren
+            </Button>
+            <Button size="sm" onClick={placeAnchoredComment} disabled={!popoverNote.trim()}>
+              <MessageSquarePlus size={14} /> Plaatsen
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <aside className="h-auto min-w-0 overflow-auto border-b bg-muted/30 p-4 sm:p-[18px] xl:h-screen xl:border-b-0 xl:border-r">
         <div className="mb-[18px] flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-[10px]">
@@ -1541,44 +1826,80 @@ export default function WorkspacePage() {
               <MessageSquarePlus size={17} />
               <h2 className="text-sm font-semibold">Menselijke review</h2>
             </div>
-            <p className="flex min-h-9 items-center gap-2 rounded-md border bg-muted p-2 text-xs leading-snug text-muted-foreground">
-              <Highlighter size={15} /> {selectedFragment || 'Selecteer tekst in het concept'}
+            <p className="flex items-center gap-2 rounded-md border bg-muted p-2 text-xs leading-snug text-muted-foreground">
+              <Highlighter size={15} className="shrink-0" /> Selecteer tekst in het concept; er verschijnt een knop om een opmerking te plaatsen.
             </p>
-            <Textarea
-              placeholder="Plaats opmerking of wijzigingsinstructie..."
-              value={commentText}
-              onChange={(event) => setCommentText(event.target.value)}
-            />
-            <Button className="w-full" onClick={addComment}>
-              <MessageSquarePlus size={16} /> Opmerking plaatsen
-            </Button>
+            <details>
+              <summary className="cursor-pointer text-xs text-muted-foreground">Of plaats een algemene opmerking</summary>
+              <div className="mt-2 space-y-2">
+                <Textarea
+                  placeholder="Algemene opmerking (zonder tekstselectie)..."
+                  value={commentText}
+                  onChange={(event) => setCommentText(event.target.value)}
+                />
+                <Button className="w-full" variant="secondary" onClick={addGeneralComment} disabled={!commentText.trim()}>
+                  <MessageSquarePlus size={16} /> Algemene opmerking plaatsen
+                </Button>
+              </div>
+            </details>
             <div className="grid gap-[9px]">
-              {comments.map((comment) => (
-                <article key={comment.id} className={cn('rounded-md border bg-card p-[10px]', comment.resolved && 'opacity-60')}>
-                  <strong className="block break-words text-sm">{comment.fragment}</strong>
-                  <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">{comment.note}</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {!comment.resolved && comment.fragment !== GENERAL_COMMENT_FRAGMENT ? (
-                      <Button
-                        size="sm"
-                        onClick={() => void applyTargetedRewrite(comment)}
-                        disabled={generating || rewritingId !== null}
-                        title="Laat de schrijfagent dit onderdeel gericht herschrijven op basis van deze opmerking"
+              {comments.map((comment) => {
+                const anchored = comment.fragment !== GENERAL_COMMENT_FRAGMENT
+                const statusMeta = commentStatusMeta[comment.status]
+                return (
+                  <article key={comment.id} className={cn('rounded-md border bg-card p-[10px]', comment.status === 'akkoord' && 'opacity-60')}>
+                    <div className="flex items-start justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => focusComment(comment.id)}
+                        className={cn('min-w-0 flex-1 break-words text-left text-sm font-semibold', anchored && 'cursor-pointer hover:underline')}
+                        title={anchored ? 'Ga naar de gemarkeerde tekst' : undefined}
                       >
-                        {rewritingId === comment.id ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
-                        {rewritingId === comment.id ? 'Herschrijven…' : 'Verwerk'}
-                      </Button>
-                    ) : null}
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setComments((current) => current.map((item) => item.id === comment.id ? { ...item, resolved: !item.resolved } : item))}
-                    >
-                      <Check size={14} /> {comment.resolved ? 'Heropen' : 'Afvinken'}
-                    </Button>
-                  </div>
-                </article>
-              ))}
+                        {comment.fragment}
+                      </button>
+                      <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide', statusMeta.className)}>
+                        {statusMeta.label}
+                      </span>
+                    </div>
+                    <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">{comment.note}</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {comment.status === 'open' ? (
+                        <>
+                          {anchored ? (
+                            <Button
+                              size="sm"
+                              onClick={() => void applyTargetedRewrite(comment)}
+                              disabled={generating || rewritingId !== null}
+                              title="Laat de schrijfagent dit onderdeel gericht herschrijven op basis van deze opmerking"
+                            >
+                              {rewritingId === comment.id ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                              {rewritingId === comment.id ? 'Herschrijven…' : 'Verwerk'}
+                            </Button>
+                          ) : null}
+                          <Button variant="secondary" size="sm" onClick={() => setCommentResolved(comment, true)}>
+                            <Check size={14} /> Afvinken
+                          </Button>
+                        </>
+                      ) : null}
+                      {comment.status === 'verwerkt' ? (
+                        <>
+                          <Button size="sm" onClick={() => approveComment(comment)}>
+                            <Check size={14} /> Akkoord
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => revertComment(comment)}>
+                            <Undo2 size={14} /> Terugdraaien
+                          </Button>
+                        </>
+                      ) : null}
+                      {comment.status === 'akkoord' ? (
+                        <Button variant="secondary" size="sm" onClick={() => setCommentResolved(comment, false)}>
+                          <Undo2 size={14} /> Heropen
+                        </Button>
+                      ) : null}
+                    </div>
+                  </article>
+                )
+              })}
             </div>
           </CardContent>
         </Card>
@@ -1589,8 +1910,9 @@ export default function WorkspacePage() {
               <Brain size={17} />
               <h2 className="text-sm font-semibold">AI-review agent</h2>
             </div>
-            <Button variant="outline" className="w-full" onClick={() => setFindings(reviewDraft(draft, effectiveDocuments, analysis))}>
-              <Search size={16} /> Review uitvoeren
+            <Button variant="outline" className="w-full" onClick={() => void runAiReview()} disabled={reviewing}>
+              {reviewing ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+              {reviewing ? 'Review uitvoeren…' : 'Review uitvoeren'}
             </Button>
             <div className="grid gap-[9px]">
               {findings.map((finding) => (
