@@ -53,7 +53,12 @@ export function buildWordDocument(html: string, title: string) {
       font-family: 'Segoe UI', Calibri, Arial, sans-serif;
     }
     /* Volle paginabreedte in Word i.p.v. de scherm-/editorcentrering. */
-    .proposal-doc { max-width: none; margin: 0; }
+    .proposal-doc { max-width: none; margin: 0; width: 100%; }
+    .proposal-doc table { width: 100%; table-layout: auto; }
+    /* Laat secties over pagina's breken; houd alleen tabellen/modellen bijeen. */
+    .proposal-doc .doc-section { page-break-inside: auto; }
+    .proposal-doc .table-wrap,
+    .proposal-doc .doc-model { page-break-inside: avoid; }
   </style>
 </head>
 <body>${html}</body>
@@ -129,10 +134,17 @@ function inlineComputedStyles(doc: Document, win: Window) {
     const radius = cs.getPropertyValue('border-radius')
     if (radius && radius !== '0px') parts.push(`border-radius: ${radius}`)
 
-    if (tag === 'table' || tag === 'td' || tag === 'th') {
-      const width = cs.getPropertyValue('width')
-      if (width && width !== 'auto') parts.push(`width: ${width}`)
-      if (tag === 'table') parts.push('border-collapse: collapse')
+    // Relatieve breedtes i.p.v. de berekende pixels: een A4 in Word is smaller dan
+    // de render-breedte, dus vaste px-breedtes liepen buiten de pagina. Geen vaste
+    // celbreedtes zodat Word de kolommen zelf over de paginabreedte verdeelt.
+    if (tag === 'table') {
+      parts.push('width: 100%', 'border-collapse: collapse', 'table-layout: auto')
+    }
+    if (el.classList.contains('proposal-doc')) {
+      parts.push('max-width: none', 'width: 100%')
+    }
+    if (tag === 'img') {
+      parts.push('max-width: 100%', 'height: auto')
     }
 
     el.setAttribute('style', parts.join('; '))
