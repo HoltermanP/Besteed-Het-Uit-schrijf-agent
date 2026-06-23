@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -45,6 +45,7 @@ import { analyzeTenderViaApi } from '../lib/analyzeTenderApi'
 import { assessSourceContent } from '../lib/sourceQuality'
 import { readFileContent } from '../lib/extractTextApi'
 import FileUploadZone from '../components/FileUploadZone'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog'
 import { acceptedStyleExtensions } from '../types/styleDocument'
 import type { TenderAnalysis } from '../types/tenderAnalysis'
 import { exportPdfFromHtml, exportWordDocument } from '../lib/documentExport'
@@ -414,6 +415,7 @@ export default function WorkspacePage() {
   const [popoverNote, setPopoverNote] = useState('')
   const savedRangeRef = useRef<Range | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
+  const commentsListRef = useRef<HTMLDivElement | null>(null)
   const [uploadNotice, setUploadNotice] = useState<{ tone: 'ok' | 'warning' | 'error'; message: string } | null>(null)
   const [showAllSources, setShowAllSources] = useState(false)
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
@@ -1025,6 +1027,22 @@ export default function WorkspacePage() {
     mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
     mark.classList.add('comment-mark-flash')
     window.setTimeout(() => mark.classList.remove('comment-mark-flash'), 1200)
+  }
+
+  // Scroll naar de bijbehorende opmerkingskaart in de rechterzijbalk en laat 'm oplichten.
+  const scrollToCommentCard = (commentId: string) => {
+    const card = commentsListRef.current?.querySelector<HTMLElement>(`[data-comment-card="${commentId}"]`)
+    if (!card) return
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    card.classList.add('comment-card-flash')
+    window.setTimeout(() => card.classList.remove('comment-card-flash'), 1200)
+  }
+
+  // Klik op een markering in de tekst → scroll naar het comment in de zijbalk.
+  const handleEditorClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const mark = (event.target as HTMLElement)?.closest?.('.comment-mark') as HTMLElement | null
+    const commentId = mark?.dataset.commentId
+    if (commentId) scrollToCommentCard(commentId)
   }
 
   // Akkoord met een verwerkte herschrijving: maak het anker/markering schoon en zet op 'akkoord'.
@@ -1676,6 +1694,211 @@ export default function WorkspacePage() {
           </section>
         ) : null}
 
+        <div className="mb-[14px] flex flex-wrap gap-2">
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm">
+                <ScanSearch size={16} /> Leidraadanalyse
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-h-[85vh] gap-3 overflow-auto sm:max-w-xl">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-primary">
+                  <ScanSearch size={18} /> Leidraadanalyse
+                </DialogTitle>
+              </DialogHeader>
+              <Button variant="outline" className="w-full" onClick={() => void runAnalysis()}>
+                <Search size={16} /> Analyseer dossier
+              </Button>
+              {analysis ? (
+                <div className="space-y-3">
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {analysis.aiAnalyzed ? (
+                      <Badge className="mr-1 align-middle">AI-analyse{analysis.analysisModel ? ` · ${analysis.analysisModel}` : ''}</Badge>
+                    ) : (
+                      <Badge variant="secondary" className="mr-1 align-middle">Heuristisch</Badge>
+                    )}{' '}
+                    {analysis.summary}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Badge variant="secondary">{analysis.contentRequirements.length} vragen/onderwerpen</Badge>
+                    <Badge variant="secondary">{analysis.documentRequirements.length} documenten</Badge>
+                    <Badge variant="secondary">{analysis.submissionRequirements.length} inschrijvingseisen</Badge>
+                    <Badge variant="secondary">{analysis.wordLimits.length} limieten</Badge>
+                  </div>
+                  {analysis.underlyingIntent ? (
+                    <div className="space-y-2 rounded-md border bg-accent/40 p-3">
+                      <h3 className="text-sm font-semibold text-primary">Vraag achter de vraag</h3>
+                      <p className="text-xs leading-relaxed text-foreground">
+                        <strong>Expliciet gevraagd:</strong> {analysis.underlyingIntent.explicitQuestion}
+                      </p>
+                      <p className="text-xs font-semibold leading-relaxed text-primary">{analysis.underlyingIntent.questionBehindQuestion}</p>
+                      <p className="text-xs leading-relaxed text-foreground">
+                        <strong>Onderliggende behoefte:</strong> {analysis.underlyingIntent.underlyingNeed}
+                      </p>
+                      {analysis.underlyingIntent.buyerPriorities.length > 0 ? (
+                        <>
+                          <h4 className="text-xs font-semibold text-primary">Prioriteiten opdrachtgever</h4>
+                          <ul className="list-disc pl-[18px] text-xs leading-relaxed text-muted-foreground">
+                            {analysis.underlyingIntent.buyerPriorities.map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </>
+                      ) : null}
+                      <details className="mt-1">
+                        <summary className="cursor-pointer text-xs font-semibold text-primary">Intern teambrief (niet indienen)</summary>
+                        <pre className="mt-2 whitespace-pre-wrap rounded-md border border-dashed bg-card p-[10px] text-xs leading-relaxed font-sans text-muted-foreground">
+                          {analysis.underlyingIntent.teamBrief}
+                        </pre>
+                      </details>
+                    </div>
+                  ) : null}
+                  {analysis.leidraadSource ? (
+                    <p className="text-xs text-muted-foreground"><strong>Leidraad:</strong> {analysis.leidraadSource}</p>
+                  ) : null}
+                  <h3 className="text-sm font-semibold text-primary">Schrijfstijl (inschrijver × opdrachtgever)</h3>
+                  <p className="text-xs leading-relaxed text-muted-foreground">{analysis.styleProfile.blendedGuidance}</p>
+                  <ul className="list-disc pl-[18px] text-xs leading-relaxed text-muted-foreground">
+                    {analysis.styleProfile.companySignals.map((signal) => (
+                      <li key={signal}><strong>Inschrijver:</strong> {signal}</li>
+                    ))}
+                    {analysis.styleProfile.buyerSignals.map((signal) => (
+                      <li key={signal}><strong>Opdrachtgever:</strong> {signal}</li>
+                    ))}
+                  </ul>
+                  {analysis.wordLimits.length > 0 ? (
+                    <>
+                      <h3 className="text-sm font-semibold text-primary">Formele eisen</h3>
+                      <ul className="list-disc pl-[18px] text-xs leading-relaxed text-muted-foreground">
+                        {analysis.wordLimits.map((limit) => (
+                          <li key={`${limit.label}-${limit.max}`}>
+                            {limit.section ?? limit.label}:{' '}
+                            {limit.max ? `max. ${limit.max} ${limit.unit}` : limit.min ? `min. ${limit.min} ${limit.unit}` : limit.unit}
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : null}
+                  {analysis.documentRequirements.length > 0 ? (
+                    <>
+                      <h3 className="text-sm font-semibold text-primary">Verplichte documenten</h3>
+                      <ul className="list-disc pl-[18px] text-xs leading-relaxed text-muted-foreground">
+                        {analysis.documentRequirements.map((req) => (
+                          <li key={req.name}>{req.name}{req.mandatory ? ' (verplicht)' : ''}</li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : null}
+                  {analysis.submissionRequirements.length > 0 ? (
+                    <>
+                      <h3 className="text-sm font-semibold text-primary">Specifieke eisen aan de inschrijving</h3>
+                      <ul className="list-none space-y-1 text-xs leading-relaxed text-muted-foreground">
+                        {analysis.submissionRequirements.map((req, index) => (
+                          <li key={`${req.category}-${index}`} className={req.mandatory ? 'text-foreground' : ''}>
+                            <Badge variant="outline" className="mr-1 align-middle text-[10px] uppercase">{req.category}</Badge> {req.requirement}
+                            {req.mandatory ? <span className="font-semibold text-destructive"> verplicht</span> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : null}
+                  {analysis.gaps.length > 0 ? (
+                    <>
+                      <h3 className="text-sm font-semibold text-primary">Gaps</h3>
+                      <ul className="list-disc pl-[18px] text-xs leading-relaxed text-destructive">
+                        {analysis.gaps.map((gap) => (
+                          <li key={gap}>{gap}</li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">Analyseer de leidraad en aanbestedingsstukken voor woordlimieten, onderwerpen, documenten en schrijfstijl.</p>
+              )}
+            </DialogContent>
+          </Dialog>
+
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Brain size={16} /> AI-review
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-h-[85vh] gap-3 overflow-auto sm:max-w-xl">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-primary">
+                  <Brain size={18} /> AI-review agent
+                </DialogTitle>
+              </DialogHeader>
+              <Button variant="outline" className="w-full" onClick={() => void runAiReview()} disabled={reviewing}>
+                {reviewing ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+                {reviewing ? 'Review uitvoeren…' : 'Review uitvoeren'}
+              </Button>
+              <div className="grid gap-[9px]">
+                {findings.map((finding) => (
+                  <article
+                    key={finding.id}
+                    data-testid="review-finding"
+                    className={cn(
+                      'rounded-md border bg-card p-[10px]',
+                      finding.priority === 'kritiek' && 'border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/40',
+                      finding.priority === 'hoog' && 'border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40',
+                      finding.priority === 'normaal' && 'border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40',
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="shrink-0">
+                        {finding.priority === 'kritiek' ? <Flag size={15} /> : finding.priority === 'hoog' ? <ShieldCheck size={15} /> : <BadgeCheck size={15} />}
+                      </span>
+                      <strong className="min-w-0 break-words text-sm">{finding.title}</strong>
+                    </div>
+                    <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">{finding.detail}</p>
+                  </article>
+                ))}
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Building2 size={16} /> Bronmatrix
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-h-[85vh] gap-3 overflow-auto sm:max-w-xl">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-primary">
+                  <Building2 size={18} /> Bronmatrix
+                </DialogTitle>
+              </DialogHeader>
+              <div className="grid gap-[9px]">
+                {effectiveDocuments.map((doc, index) => {
+                  const quality = assessSourceContent(doc.content)
+                  const isAuto = !documents.some((item) => item.name === doc.name && item.type === doc.type)
+                  const statusColor =
+                    quality.quality === 'ok'
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : quality.quality === 'warning'
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-red-600 dark:text-red-400'
+                  return (
+                    <article key={`${doc.type}-${doc.name}-${index}`} className="rounded-md border bg-card p-[10px]">
+                      <Badge variant="secondary" className="mb-1.5">{sourceLabels[doc.type]}{isAuto ? ' · auto' : ''}</Badge>
+                      <strong className="block break-words text-sm">{doc.name}</strong>
+                      <p className={cn('mt-1 break-words text-xs font-medium', statusColor)}>
+                        {quality.label} · {quality.words} woorden
+                      </p>
+                      <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">{summarize(doc.content, 120)}</p>
+                    </article>
+                  )
+                })}
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+
         <div className="overflow-hidden rounded-md border bg-card">
           <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-b bg-muted px-3 py-[10px] text-sm text-muted-foreground">
             <div className="flex min-w-0 items-center gap-2">
@@ -1694,6 +1917,7 @@ export default function WorkspacePage() {
             suppressContentEditableWarning
             onMouseUp={captureSelection}
             onKeyUp={captureSelection}
+            onClick={handleEditorClick}
             onInput={syncDraftFromEditor}
             onBlur={syncDraftFromEditor}
           />
@@ -1701,125 +1925,6 @@ export default function WorkspacePage() {
       </section>
 
       <aside className="h-auto min-w-0 space-y-[14px] overflow-auto border-t bg-muted/30 p-4 sm:p-[18px] xl:h-screen xl:border-l xl:border-t-0">
-        <Card>
-          <CardContent className="space-y-3">
-            <div className="flex items-center gap-2 text-primary">
-              <ScanSearch size={17} />
-              <h2 className="text-sm font-semibold">Leidraadanalyse</h2>
-            </div>
-            <Button variant="outline" className="w-full" onClick={() => void runAnalysis()}>
-              <Search size={16} /> Analyseer dossier
-            </Button>
-            {analysis ? (
-              <div className="space-y-3">
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  {analysis.aiAnalyzed ? (
-                    <Badge className="mr-1 align-middle">AI-analyse{analysis.analysisModel ? ` · ${analysis.analysisModel}` : ''}</Badge>
-                  ) : (
-                    <Badge variant="secondary" className="mr-1 align-middle">Heuristisch</Badge>
-                  )}{' '}
-                  {analysis.summary}
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  <Badge variant="secondary">{analysis.contentRequirements.length} vragen/onderwerpen</Badge>
-                  <Badge variant="secondary">{analysis.documentRequirements.length} documenten</Badge>
-                  <Badge variant="secondary">{analysis.submissionRequirements.length} inschrijvingseisen</Badge>
-                  <Badge variant="secondary">{analysis.wordLimits.length} limieten</Badge>
-                </div>
-                {analysis.underlyingIntent ? (
-                  <div className="space-y-2 rounded-md border bg-accent/40 p-3">
-                    <h3 className="text-sm font-semibold text-primary">Vraag achter de vraag</h3>
-                    <p className="text-xs leading-relaxed text-foreground">
-                      <strong>Expliciet gevraagd:</strong> {analysis.underlyingIntent.explicitQuestion}
-                    </p>
-                    <p className="text-xs font-semibold leading-relaxed text-primary">{analysis.underlyingIntent.questionBehindQuestion}</p>
-                    <p className="text-xs leading-relaxed text-foreground">
-                      <strong>Onderliggende behoefte:</strong> {analysis.underlyingIntent.underlyingNeed}
-                    </p>
-                    {analysis.underlyingIntent.buyerPriorities.length > 0 ? (
-                      <>
-                        <h4 className="text-xs font-semibold text-primary">Prioriteiten opdrachtgever</h4>
-                        <ul className="list-disc pl-[18px] text-xs leading-relaxed text-muted-foreground">
-                          {analysis.underlyingIntent.buyerPriorities.map((item) => (
-                            <li key={item}>{item}</li>
-                          ))}
-                        </ul>
-                      </>
-                    ) : null}
-                    <details className="mt-1">
-                      <summary className="cursor-pointer text-xs font-semibold text-primary">Intern teambrief (niet indienen)</summary>
-                      <pre className="mt-2 whitespace-pre-wrap rounded-md border border-dashed bg-card p-[10px] text-xs leading-relaxed font-sans text-muted-foreground">
-                        {analysis.underlyingIntent.teamBrief}
-                      </pre>
-                    </details>
-                  </div>
-                ) : null}
-                {analysis.leidraadSource ? (
-                  <p className="text-xs text-muted-foreground"><strong>Leidraad:</strong> {analysis.leidraadSource}</p>
-                ) : null}
-                <h3 className="text-sm font-semibold text-primary">Schrijfstijl (inschrijver × opdrachtgever)</h3>
-                <p className="text-xs leading-relaxed text-muted-foreground">{analysis.styleProfile.blendedGuidance}</p>
-                <ul className="list-disc pl-[18px] text-xs leading-relaxed text-muted-foreground">
-                  {analysis.styleProfile.companySignals.map((signal) => (
-                    <li key={signal}><strong>Inschrijver:</strong> {signal}</li>
-                  ))}
-                  {analysis.styleProfile.buyerSignals.map((signal) => (
-                    <li key={signal}><strong>Opdrachtgever:</strong> {signal}</li>
-                  ))}
-                </ul>
-                {analysis.wordLimits.length > 0 ? (
-                  <>
-                    <h3 className="text-sm font-semibold text-primary">Formele eisen</h3>
-                    <ul className="list-disc pl-[18px] text-xs leading-relaxed text-muted-foreground">
-                      {analysis.wordLimits.map((limit) => (
-                        <li key={`${limit.label}-${limit.max}`}>
-                          {limit.section ?? limit.label}:{' '}
-                          {limit.max ? `max. ${limit.max} ${limit.unit}` : limit.min ? `min. ${limit.min} ${limit.unit}` : limit.unit}
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                ) : null}
-                {analysis.documentRequirements.length > 0 ? (
-                  <>
-                    <h3 className="text-sm font-semibold text-primary">Verplichte documenten</h3>
-                    <ul className="list-disc pl-[18px] text-xs leading-relaxed text-muted-foreground">
-                      {analysis.documentRequirements.map((req) => (
-                        <li key={req.name}>{req.name}{req.mandatory ? ' (verplicht)' : ''}</li>
-                      ))}
-                    </ul>
-                  </>
-                ) : null}
-                {analysis.submissionRequirements.length > 0 ? (
-                  <>
-                    <h3 className="text-sm font-semibold text-primary">Specifieke eisen aan de inschrijving</h3>
-                    <ul className="list-none space-y-1 text-xs leading-relaxed text-muted-foreground">
-                      {analysis.submissionRequirements.map((req, index) => (
-                        <li key={`${req.category}-${index}`} className={req.mandatory ? 'text-foreground' : ''}>
-                          <Badge variant="outline" className="mr-1 align-middle text-[10px] uppercase">{req.category}</Badge> {req.requirement}
-                          {req.mandatory ? <span className="font-semibold text-destructive"> verplicht</span> : null}
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                ) : null}
-                {analysis.gaps.length > 0 ? (
-                  <>
-                    <h3 className="text-sm font-semibold text-primary">Gaps</h3>
-                    <ul className="list-disc pl-[18px] text-xs leading-relaxed text-destructive">
-                      {analysis.gaps.map((gap) => (
-                        <li key={gap}>{gap}</li>
-                      ))}
-                    </ul>
-                  </>
-                ) : null}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">Analyseer de leidraad en aanbestedingsstukken voor woordlimieten, onderwerpen, documenten en schrijfstijl.</p>
-            )}
-          </CardContent>
-        </Card>
-
         <Card>
           <CardContent className="space-y-3">
             <div className="flex items-center gap-2 text-primary">
@@ -1842,12 +1947,12 @@ export default function WorkspacePage() {
                 </Button>
               </div>
             </details>
-            <div className="grid gap-[9px]">
+            <div ref={commentsListRef} className="grid gap-[9px]">
               {comments.map((comment) => {
                 const anchored = comment.fragment !== GENERAL_COMMENT_FRAGMENT
                 const statusMeta = commentStatusMeta[comment.status]
                 return (
-                  <article key={comment.id} className={cn('rounded-md border bg-card p-[10px]', comment.status === 'akkoord' && 'opacity-60')}>
+                  <article key={comment.id} data-comment-card={comment.id} className={cn('rounded-md border bg-card p-[10px] scroll-mt-4', comment.status === 'akkoord' && 'opacity-60')}>
                     <div className="flex items-start justify-between gap-2">
                       <button
                         type="button"
@@ -1904,71 +2009,6 @@ export default function WorkspacePage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="space-y-3">
-            <div className="flex items-center gap-2 text-primary">
-              <Brain size={17} />
-              <h2 className="text-sm font-semibold">AI-review agent</h2>
-            </div>
-            <Button variant="outline" className="w-full" onClick={() => void runAiReview()} disabled={reviewing}>
-              {reviewing ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-              {reviewing ? 'Review uitvoeren…' : 'Review uitvoeren'}
-            </Button>
-            <div className="grid gap-[9px]">
-              {findings.map((finding) => (
-                <article
-                  key={finding.id}
-                  data-testid="review-finding"
-                  className={cn(
-                    'rounded-md border bg-card p-[10px]',
-                    finding.priority === 'kritiek' && 'border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/40',
-                    finding.priority === 'hoog' && 'border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40',
-                    finding.priority === 'normaal' && 'border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40',
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="shrink-0">
-                      {finding.priority === 'kritiek' ? <Flag size={15} /> : finding.priority === 'hoog' ? <ShieldCheck size={15} /> : <BadgeCheck size={15} />}
-                    </span>
-                    <strong className="min-w-0 break-words text-sm">{finding.title}</strong>
-                  </div>
-                  <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">{finding.detail}</p>
-                </article>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="space-y-3">
-            <div className="flex items-center gap-2 text-primary">
-              <Building2 size={17} />
-              <h2 className="text-sm font-semibold">Bronmatrix</h2>
-            </div>
-            <div className="grid gap-[9px]">
-              {effectiveDocuments.map((doc, index) => {
-                const quality = assessSourceContent(doc.content)
-                const isAuto = !documents.some((item) => item.name === doc.name && item.type === doc.type)
-                const statusColor =
-                  quality.quality === 'ok'
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : quality.quality === 'warning'
-                      ? 'text-amber-600 dark:text-amber-400'
-                      : 'text-red-600 dark:text-red-400'
-                return (
-                  <article key={`${doc.type}-${doc.name}-${index}`} className="rounded-md border bg-card p-[10px]">
-                    <Badge variant="secondary" className="mb-1.5">{sourceLabels[doc.type]}{isAuto ? ' · auto' : ''}</Badge>
-                    <strong className="block break-words text-sm">{doc.name}</strong>
-                    <p className={cn('mt-1 break-words text-xs font-medium', statusColor)}>
-                      {quality.label} · {quality.words} woorden
-                    </p>
-                    <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">{summarize(doc.content, 120)}</p>
-                  </article>
-                )
-              })}
-            </div>
-          </CardContent>
-        </Card>
       </aside>
     </main>
   )
