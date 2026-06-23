@@ -1152,8 +1152,13 @@ export default function WorkspacePage() {
     const html = getExportHtml()
     const filename = `${project.title.toLowerCase().replace(/\s+/g, '-')}-${stage}.pdf`
     setExportingPdf(true)
+    setSyncStatus('PDF genereren…')
     try {
       await exportPdfFromHtml(html, filename)
+      setSyncStatus('PDF gedownload.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'PDF genereren mislukt.'
+      setSyncStatus(`PDF genereren mislukt: ${message}`)
     } finally {
       setExportingPdf(false)
     }
@@ -1163,7 +1168,13 @@ export default function WorkspacePage() {
     syncDraftFromEditor()
     const html = getExportHtml()
     const filename = `${project.title.toLowerCase().replace(/\s+/g, '-')}-${stage}.doc`
-    exportWordDocument(html, project.title, filename)
+    try {
+      exportWordDocument(html, project.title, filename)
+      setSyncStatus('Word-document gedownload.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Word-export mislukt.'
+      setSyncStatus(`Word-export mislukt: ${message}`)
+    }
   }
 
   return (

@@ -7,18 +7,53 @@ const A4_WIDTH_PT = 595.28
 const A4_HEIGHT_PT = 841.89
 const PAGE_MARGIN_PT = 40
 
-export function buildWordDocument(html: string, title: string) {
+/** Breedte (px) van het render-canvas voor de PDF; proposal-doc (max. 860px) centreert hierin. */
+const RENDER_WIDTH_PX = 956
+
+/**
+ * Zelfstandig HTML-document met uitsluitend de proposal-opmaak. Bewust GEEN
+ * Tailwind/thema-CSS (die gebruikt oklch-kleuren waar html2canvas op crasht),
+ * zodat de PDF-render in een geïsoleerde iframe betrouwbaar werkt.
+ */
+export function buildStandaloneDocument(html: string, title: string) {
   return `<!doctype html>
 <html lang="nl">
 <head>
   <meta charset="utf-8">
   <title>${title}</title>
   <style>${proposalDocumentCss}
+    html, body { margin: 0; }
     body {
-      margin: 0;
-      padding: 32px 40px;
+      padding: 40px 48px;
       background: #ffffff;
+      color: #172033;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }
+  </style>
+</head>
+<body>${html}</body>
+</html>`
+}
+
+/** Word-document (.doc als HTML). A4-paginaopmaak en Word-vriendelijke basistypografie. */
+export function buildWordDocument(html: string, title: string) {
+  return `<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <title>${title}</title>
+  <style>
+    @page { size: A4 portrait; margin: 2cm; }
+    ${proposalDocumentCss}
+    html, body { margin: 0; }
+    body {
+      padding: 0;
+      background: #ffffff;
+      color: #172033;
+      font-family: 'Segoe UI', Calibri, Arial, sans-serif;
+    }
+    /* Volle paginabreedte in Word i.p.v. de scherm-/editorcentrering. */
+    .proposal-doc { max-width: none; margin: 0; }
   </style>
 </head>
 <body>${html}</body>
@@ -89,24 +124,41 @@ export async function exportPdfFromElement(source: HTMLElement, filename: string
   pdf.save(filename)
 }
 
+/**
+ * Rendert het concept naar PDF via een geïsoleerde iframe. De iframe bevat een
+ * schoon document met alleen de proposal-CSS, zodat de oklch-thema-kleuren van
+ * de hoofdpagina html2canvas niet laten crashen en de HTML-opmaak behouden blijft.
+ */
 export async function exportPdfFromHtml(html: string, filename: string) {
-  const host = document.createElement('div')
-  host.style.position = 'fixed'
-  host.style.left = '-10000px'
-  host.style.top = '0'
-  host.style.width = '860px'
-  host.style.background = '#ffffff'
-  host.style.padding = '36px 48px'
-  host.innerHTML = html
-
-  const style = document.createElement('style')
-  style.textContent = proposalDocumentCss
-  host.prepend(style)
-  document.body.appendChild(host)
+  const iframe = document.createElement('iframe')
+  iframe.setAttribute('aria-hidden', 'true')
+  iframe.style.position = 'fixed'
+  iframe.style.left = '-10000px'
+  iframe.style.top = '0'
+  iframe.style.width = `${RENDER_WIDTH_PX}px`
+  iframe.style.height = '1000px'
+  iframe.style.border = '0'
+  iframe.style.background = '#ffffff'
+  document.body.appendChild(iframe)
 
   try {
-    await exportPdfFromElement(host, filename)
+    const doc = iframe.contentDocument
+    if (!doc) throw new Error('Kon het PDF-document niet voorbereiden.')
+
+    doc.open()
+    doc.write(buildStandaloneDocument(html, 'PDF-export'))
+    doc.close()
+
+    // Wacht tot fonts en lay-out klaar zijn voor een scherpe render.
+    if (doc.fonts?.ready) {
+      await doc.fonts.ready
+    }
+    await new Promise((resolve) => setTimeout(resolve, 60))
+
+    const body = doc.body
+    iframe.style.height = `${body.scrollHeight + 40}px`
+    await exportPdfFromElement(body, filename)
   } finally {
-    document.body.removeChild(host)
+    document.body.removeChild(iframe)
   }
 }
