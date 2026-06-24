@@ -3,6 +3,7 @@ import path from 'node:path'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import { handleAnalyzeIntentRequest } from './api-src/_lib/analyzeIntent'
 import { handleAnalyzeTenderRequest } from './api-src/_lib/analyzeTender'
 import { handleCompanyEnrichRequest } from './api-src/_lib/companyEnrich'
@@ -142,13 +143,15 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '')
 
   return {
-    plugins: [react(), tailwindcss(), serverDevApi(env)],
-    // De docx-library (en jszip) verwijzen naar de Node-global `global`. esbuild shimt
-    // die in dev, maar de productiebuild niet — daardoor faalde de Word-export in
-    // productie. Map `global` naar `globalThis` zodat het overal werkt.
-    define: {
-      global: 'globalThis',
-    },
+    // De docx-library (en jszip) verwijzen naar Node-globals (global, Buffer, process)
+    // die in de productiebuild ontbreken — daardoor reageerde de Word-export niet in
+    // productie. nodePolyfills levert die globals voor de browser.
+    plugins: [
+      react(),
+      tailwindcss(),
+      nodePolyfills({ globals: { Buffer: true, global: true, process: true } }),
+      serverDevApi(env),
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
