@@ -143,6 +143,12 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), tailwindcss(), serverDevApi(env)],
+    // De docx-library (en jszip) verwijzen naar de Node-global `global`. esbuild shimt
+    // die in dev, maar de productiebuild niet — daardoor faalde de Word-export in
+    // productie. Map `global` naar `globalThis` zodat het overal werkt.
+    define: {
+      global: 'globalThis',
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
