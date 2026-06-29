@@ -22,6 +22,7 @@ import {
   FileText,
   Flag,
   FolderOpen,
+  GitCompareArrows,
   Pencil,
   GraduationCap,
   Highlighter,
@@ -546,16 +547,24 @@ export default function WorkspacePage() {
   // actueel, zodat je het later precies terugvindt waar je gebleven was.
   useEffect(() => {
     if (!activeTenderId) return
-    const snapshot = captureCurrentDossier()
+    const updatedAt = new Date().toISOString()
+    const snapshot: DossierSnapshot = {
+      project,
+      documents,
+      comments,
+      stage,
+      draft: editorRef.current?.innerHTML ?? draft,
+      analysis,
+      updatedAt,
+    }
     saveDossier(activeTenderId, snapshot)
     upsertProject({
       id: activeTenderId,
       title: project.title || 'Naamloos project',
       buyer: project.buyer,
-      updatedAt: snapshot.updatedAt,
+      updatedAt,
       source: activeTenderId.startsWith('prj-') ? 'blank' : 'tender',
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTenderId, project, documents, comments, stage, draft, analysis])
 
   useEffect(() => {
@@ -872,6 +881,7 @@ export default function WorkspacePage() {
     if (activeTenderId) {
       saveDossier(activeTenderId, captureCurrentDossier())
     }
+    const restored = loadDossier<DossierSnapshot>(targetId)
     const snapshot = restored ?? buildFreshDossier(tender)
     applyDossier(snapshot)
     // Direct opslaan + in de projectenlijst zetten, ook als er nog niet in gewerkt is.
@@ -1472,6 +1482,16 @@ export default function WorkspacePage() {
             {lessonsLibrary.length ? (
               <Badge variant="secondary" className="flex-none">{lessonsLibrary.length}</Badge>
             ) : null}
+            <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+          </Link>
+          <Link
+            to="/vergelijken"
+            className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-sm font-semibold shadow-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
+          >
+            <span className="grid size-8 flex-none place-items-center rounded-lg bg-primary/10 text-primary">
+              <GitCompareArrows size={16} />
+            </span>
+            <span className="min-w-0 flex-1">Projecten vergelijken</span>
             <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
           </Link>
         </nav>

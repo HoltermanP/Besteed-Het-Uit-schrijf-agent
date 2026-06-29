@@ -18,10 +18,12 @@ import { getWriterStatusPayload } from './api-src/_lib/writerStatus'
 import { handleLessonsLearnedRequest } from './api-src/_lib/lessonsLearned'
 import { handleEvaluateProjectRequest } from './api-src/_lib/evaluateProject'
 import { handleSelectLessonsRequest } from './api-src/_lib/selectLessons'
+import { handleCompareProjectsRequest } from './api-src/_lib/compareProjects'
 import type { AnalyzeIntentRequest } from './src/types/analyzeIntent'
 import type { AnalyzeTenderRequest } from './src/types/analyzeTender'
 import type { ReviewDraftRequest } from './src/types/reviewDraft'
 import type { EvaluateProjectRequest, SelectLessonsRequest } from './src/types/lessonLearned'
+import type { CompareProjectsRequest } from './src/types/compareProjects'
 
 const jsonApiRoutes: Record<string, (body: unknown) => Promise<Response>> = {
   '/api/analyze-intent': (body) => handleAnalyzeIntentRequest(body as AnalyzeIntentRequest),
@@ -32,6 +34,7 @@ const jsonApiRoutes: Record<string, (body: unknown) => Promise<Response>> = {
   '/api/rewrite-fragment': handleRewriteFragmentRequest,
   '/api/evaluate-project': (body) => handleEvaluateProjectRequest(body as EvaluateProjectRequest),
   '/api/select-lessons': (body) => handleSelectLessonsRequest(body as SelectLessonsRequest),
+  '/api/compare-projects': (body) => handleCompareProjectsRequest(body as CompareProjectsRequest),
 }
 
 async function readNodeBody(req: IncomingMessage): Promise<Buffer | undefined> {

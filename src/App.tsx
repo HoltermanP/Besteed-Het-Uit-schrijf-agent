@@ -3,6 +3,7 @@ import AdminRoute from './components/AdminRoute'
 import ConfigPage from './pages/ConfigPage'
 import RulesPage from './pages/RulesPage'
 import LessonsPage from './pages/LessonsPage'
+import CompareProjectsPage from './pages/CompareProjectsPage'
 import AdminPage from './pages/AdminPage'
 import TenderBrowserPage from './pages/TenderBrowserPage'
 import WorkspacePage from './pages/WorkspacePage'
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/schrijfregels" element={<RulesPage />} />
         <Route path="/schrijfstijl" element={<Navigate to="/schrijfregels" replace />} />
         <Route path="/leerpunten" element={<LessonsPage />} />
+        <Route path="/vergelijken" element={<CompareProjectsPage />} />
         <Route path="/aanbestedingen" element={<TenderBrowserPage />} />
         <Route
           path="/admin"

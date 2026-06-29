@@ -36,6 +36,9 @@
     "api/select-lessons.js": {
       "maxDuration": 90
     },
+    "api/compare-projects.js": {
+      "maxDuration": 120
+    },
     "api/extract-text.js": {
       "maxDuration": 30
     },
