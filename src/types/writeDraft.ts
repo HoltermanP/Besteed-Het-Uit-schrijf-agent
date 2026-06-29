@@ -10,7 +10,7 @@ export type WriteDraftAiConfig = {
 
 export type WriteDraftDocument = {
   name: string
-  type: 'tender' | 'company' | 'rules' | 'training'
+  type: 'tender' | 'company' | 'rules' | 'training' | 'lessons'
   content: string
 }
 

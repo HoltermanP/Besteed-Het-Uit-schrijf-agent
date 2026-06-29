@@ -25,8 +25,9 @@ Schrijf het concrete inschrijfstuk dat de opdrachtgever vraagt — geen generiek
 BRONHIËRARCHIE (streng, van hoog naar laag)
 1. Leidraad / aanbestedingsstukken — gevraagde stukken, onderwerpen, woord- en paginalimieten, beoordelingscriteria
 2. Schrijfregels & kwaliteitsstandaarden — verplichte formulering, kwaliteitsnormen, verboden formuleringen
-3. Bedrijfsinformatie — alleen feitelijke claims over het inschrijvende bedrijf
-4. Schrijfstijl & voorbeeldteksten — toon, zinsbouw, opmaak; geen nieuwe inhoud verzinnen
+3. Lessons learned uit eerdere aanbestedingen — toegepaste leerpunten: pas toe wat aantoonbaar punten opleverde en vermijd wat eerder punten kostte; laat ze de uitwerking sturen, maar nooit de leidraad-eisen overrulen
+4. Bedrijfsinformatie — alleen feitelijke claims over het inschrijvende bedrijf
+5. Schrijfstijl & voorbeeldteksten — toon, zinsbouw, opmaak; geen nieuwe inhoud verzinnen
 
 INHOUDELIJKE REGELS
 - Maak per verplicht onderwerp uit de leidraadanalyse een eigen <section class="doc-section"> met genummerde <h2>
@@ -135,6 +136,7 @@ const DOC_CHAR_LIMITS: Record<WriteDraftDocument['type'], number> = {
   company: 20_000,
   rules: 20_000,
   training: 20_000,
+  lessons: 12_000,
 }
 
 /** Streefdoel en ondergrens t.o.v. leidraad-maximum */
@@ -462,6 +464,9 @@ ${docsByType(request, 'rules') || '- geen'}
 
 Schrijfstijl & voorbeeldteksten (toon/structuur — geen nieuwe inhoud):
 ${docsByType(request, 'training') || '- geen'}
+
+Lessons learned uit eerdere aanbestedingen (toepassen wat werkte, vermijden wat punten kostte; nooit de leidraad-eisen overrulen):
+${docsByType(request, 'lessons') || '- geen'}
 
 Open reviewopmerkingen:
 ${openComments || '- geen'}

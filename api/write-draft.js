@@ -292,8 +292,9 @@ Schrijf het concrete inschrijfstuk dat de opdrachtgever vraagt \u2014 geen gener
 BRONHI\xCBRARCHIE (streng, van hoog naar laag)
 1. Leidraad / aanbestedingsstukken \u2014 gevraagde stukken, onderwerpen, woord- en paginalimieten, beoordelingscriteria
 2. Schrijfregels & kwaliteitsstandaarden \u2014 verplichte formulering, kwaliteitsnormen, verboden formuleringen
-3. Bedrijfsinformatie \u2014 alleen feitelijke claims over het inschrijvende bedrijf
-4. Schrijfstijl & voorbeeldteksten \u2014 toon, zinsbouw, opmaak; geen nieuwe inhoud verzinnen
+3. Lessons learned uit eerdere aanbestedingen \u2014 toegepaste leerpunten: pas toe wat aantoonbaar punten opleverde en vermijd wat eerder punten kostte; laat ze de uitwerking sturen, maar nooit de leidraad-eisen overrulen
+4. Bedrijfsinformatie \u2014 alleen feitelijke claims over het inschrijvende bedrijf
+5. Schrijfstijl & voorbeeldteksten \u2014 toon, zinsbouw, opmaak; geen nieuwe inhoud verzinnen
 
 INHOUDELIJKE REGELS
 - Maak per verplicht onderwerp uit de leidraadanalyse een eigen <section class="doc-section"> met genummerde <h2>
@@ -400,7 +401,8 @@ var DOC_CHAR_LIMITS = {
   tender: 4e4,
   company: 2e4,
   rules: 2e4,
-  training: 2e4
+  training: 2e4,
+  lessons: 12e3
 };
 var VOLUME_TARGET_RATIO = 0.97;
 var VOLUME_FLOOR_RATIO = 0.92;
@@ -648,6 +650,9 @@ ${docsByType(request, "rules") || "- geen"}
 
 Schrijfstijl & voorbeeldteksten (toon/structuur \u2014 geen nieuwe inhoud):
 ${docsByType(request, "training") || "- geen"}
+
+Lessons learned uit eerdere aanbestedingen (toepassen wat werkte, vermijden wat punten kostte; nooit de leidraad-eisen overrulen):
+${docsByType(request, "lessons") || "- geen"}
 
 Open reviewopmerkingen:
 ${openComments || "- geen"}

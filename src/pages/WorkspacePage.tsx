@@ -18,9 +18,12 @@ import {
   Download,
   Eye,
   FileDown,
+  FilePlus2,
   FileText,
   Flag,
   FolderOpen,
+  Pencil,
+  GraduationCap,
   Highlighter,
   Import,
   Loader2,
@@ -58,6 +61,10 @@ import { computeOpportunityScore, type OpportunityLevel } from '../lib/opportuni
 import { fetchStyleDocuments } from '../lib/styleDocumentsApi'
 import { mergeDocumentsWithStyleDocuments } from '../lib/styleDocumentMerge'
 import type { StyleDocument } from '../types/styleDocument'
+import EvaluationDialog from '../components/EvaluationDialog'
+import { fetchLessons, lessonsToPromptContent, selectRelevantLessons } from '../lib/lessonsLearnedApi'
+import type { LessonLearned } from '../types/lessonLearned'
+import type { WriteDraftDocument } from '../types/writeDraft'
 import { getSavedTenders } from '../lib/tenderDatabase'
 import type { SavedTender } from '../types/tenderNed'
 import {
@@ -68,6 +75,14 @@ import {
   saveDossier,
   setActiveDossierId,
 } from '../lib/dossier'
+import {
+  listProjects,
+  makeProjectId,
+  removeProject,
+  renameProject,
+  upsertProject,
+  type ProjectMeta,
+} from '../lib/projects'
 import { loadStored } from '../lib/storage'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -388,6 +403,13 @@ export default function WorkspacePage() {
   const [tendernedQuery, setTendernedQuery] = useState('TN-2026-00421')
   const [activeTenderId, setActiveTenderId] = useState(() => getActiveDossierId())
   const [dossierSearch, setDossierSearch] = useState('')
+  const [projectsVersion, setProjectsVersion] = useState(0)
+  const projects = useMemo<ProjectMeta[]>(
+    () => listProjects(),
+    // Herbereken na elke project-mutatie en bij wisselen van actief project.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [projectsVersion, activeTenderId],
+  )
   const [searchParams, setSearchParams] = useSearchParams()
   const savedTenders = getSavedTenders()
   const filteredSavedTenders = (() => {
@@ -423,6 +445,8 @@ export default function WorkspacePage() {
   const [serverWriter, setServerWriter] = useState<WriterStatus>({ available: false, provider: null, model: null })
   const writerActive = isWriterConfigured() || serverWriter.available
   const [styleDocuments, setStyleDocuments] = useState<StyleDocument[]>([])
+  const [lessonsLibrary, setLessonsLibrary] = useState<LessonLearned[]>([])
+  const [appliedLessons, setAppliedLessons] = useState<LessonLearned[]>([])
   const effectiveDocuments = useMemo(
     () => mergeDocumentsWithStyleDocuments(mergeDocumentsWithCompanyConfig(documents), styleDocuments),
     [documents, styleDocuments],
@@ -441,6 +465,43 @@ export default function WorkspacePage() {
       .then(setStyleDocuments)
       .catch(() => setStyleDocuments([]))
   }, [])
+
+  const loadLessons = () => {
+    void fetchLessons()
+      .then(setLessonsLibrary)
+      .catch(() => setLessonsLibrary([]))
+  }
+
+  useEffect(loadLessons, [])
+
+  // Laat de AI de relevante leerpunten kiezen en lever ze als bron voor de schrijfagent.
+  const gatherLessonDocuments = async (result: TenderAnalysis | null): Promise<WriteDraftDocument[]> => {
+    if (!lessonsLibrary.length) {
+      setAppliedLessons([])
+      return []
+    }
+    setSyncStatus('Relevante leerpunten uit eerdere projecten selecteren…')
+    const tenderSummary = effectiveDocuments
+      .filter((doc) => doc.type === 'tender')
+      .map((doc) => doc.content)
+      .join('\n\n')
+      .slice(0, 6_000)
+    const relevant = await selectRelevantLessons({
+      project: { title: project.title, buyer: project.buyer },
+      analysis: result,
+      tenderSummary,
+      candidates: lessonsLibrary,
+    })
+    setAppliedLessons(relevant)
+    if (!relevant.length) return []
+    return [
+      {
+        name: 'Toegepaste leerpunten uit eerdere aanbestedingen',
+        type: 'lessons',
+        content: lessonsToPromptContent(relevant),
+      },
+    ]
+  }
 
   useEffect(() => {
     if (analysis) {
@@ -467,6 +528,35 @@ export default function WorkspacePage() {
   useEffect(() => {
     localStorage.setItem('bid-agent-draft', draft)
   }, [draft])
+
+  // Zorg dat het huidige werk altijd bij een project hoort, ook de standaard-werkruimte
+  // bij een eerste bezoek — zo verschijnt het in de projectenlijst en kun je het heropenen.
+  useEffect(() => {
+    if (activeTenderId) return
+    const id = makeProjectId()
+    // Eénmalige initialisatie na mount; bewuste setState in effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setActiveTenderId(id)
+    setActiveDossierId(id)
+    setProjectsVersion((v) => v + 1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Bewaar het actieve project continu en houd de projectenlijst (titel/opdrachtgever/tijd)
+  // actueel, zodat je het later precies terugvindt waar je gebleven was.
+  useEffect(() => {
+    if (!activeTenderId) return
+    const snapshot = captureCurrentDossier()
+    saveDossier(activeTenderId, snapshot)
+    upsertProject({
+      id: activeTenderId,
+      title: project.title || 'Naamloos project',
+      buyer: project.buyer,
+      updatedAt: snapshot.updatedAt,
+      source: activeTenderId.startsWith('prj-') ? 'blank' : 'tender',
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTenderId, project, documents, comments, stage, draft, analysis])
 
   useEffect(() => {
     const editor = editorRef.current
@@ -542,15 +632,20 @@ export default function WorkspacePage() {
     setSyncStatus('Leidraad analyseren…')
     const result = await runAnalysis()
     setStage(targetStage)
+    const lessonDocuments = await gatherLessonDocuments(result)
     updateEditorHtml('<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
 
     try {
-      setSyncStatus('Schrijfagent schrijft concept…')
+      setSyncStatus(
+        lessonDocuments.length
+          ? 'Schrijfagent schrijft concept met toegepaste leerpunten…'
+          : 'Schrijfagent schrijft concept…',
+      )
       const aiResult = await generateDraftViaApi(
         {
           stage: targetStage,
           project,
-          documents: effectiveDocuments,
+          documents: [...effectiveDocuments, ...lessonDocuments],
           comments: toLegacyComments(comments),
           analysis: result,
           currentDraft: targetStage === 'brons' ? undefined : stripCommentMarks(draft),
@@ -724,6 +819,25 @@ export default function WorkspacePage() {
     }
   }
 
+  // Lege werkruimte voor een nieuw, blanco project.
+  const buildBlankProject = (): DossierSnapshot => {
+    const project: TenderProject = {
+      title: 'Nieuw project',
+      tendernedId: '',
+      buyer: '',
+      deadline: '',
+    }
+    return {
+      project,
+      documents: [],
+      comments: [],
+      stage: 'brons',
+      draft: buildHtmlDraft('brons', project, [], [], null),
+      analysis: null,
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
   // Momentopname van het dossier dat nu open staat (gebruik de live editor-HTML).
   const captureCurrentDossier = (): DossierSnapshot => ({
     project,
@@ -758,16 +872,103 @@ export default function WorkspacePage() {
     if (activeTenderId) {
       saveDossier(activeTenderId, captureCurrentDossier())
     }
-    const restored = loadDossier<DossierSnapshot>(targetId)
-    applyDossier(restored ?? buildFreshDossier(tender))
+    const snapshot = restored ?? buildFreshDossier(tender)
+    applyDossier(snapshot)
+    // Direct opslaan + in de projectenlijst zetten, ook als er nog niet in gewerkt is.
+    saveDossier(targetId, snapshot)
+    upsertProject({
+      id: targetId,
+      title: snapshot.project.title || 'Naamloos project',
+      buyer: snapshot.project.buyer,
+      updatedAt: snapshot.updatedAt,
+      source: 'tender',
+    })
     setActiveTenderId(targetId)
     setActiveDossierId(targetId)
     setDossierSearch('')
+    setProjectsVersion((v) => v + 1)
     setSyncStatus(
       restored
         ? `Verder met dossier: ${tender.aanbestedingNaam}`
         : `Dossier geopend: ${tender.aanbestedingNaam}`,
     )
+  }
+
+  // Bewaar het project dat nu open staat zodat je het later kunt heropenen.
+  const persistActiveProject = () => {
+    if (!activeTenderId) return
+    saveDossier(activeTenderId, captureCurrentDossier())
+  }
+
+  // Start een nieuw, blanco project (bewaart eerst het huidige).
+  const startNewProject = () => {
+    persistActiveProject()
+    const id = makeProjectId()
+    const snapshot = buildBlankProject()
+    applyDossier(snapshot)
+    saveDossier(id, snapshot)
+    upsertProject({
+      id,
+      title: snapshot.project.title,
+      buyer: snapshot.project.buyer,
+      updatedAt: snapshot.updatedAt,
+      source: 'blank',
+    })
+    setActiveTenderId(id)
+    setActiveDossierId(id)
+    setProjectsVersion((v) => v + 1)
+    setSyncStatus('Nieuw project gestart')
+  }
+
+  // Heropen een eerder opgeslagen project op id (bewaart eerst het huidige).
+  const openProject = (id: string) => {
+    if (id === activeTenderId) return
+    persistActiveProject()
+    const restored = loadDossier<DossierSnapshot>(id)
+    if (!restored) {
+      setSyncStatus('Project niet gevonden')
+      setProjectsVersion((v) => v + 1)
+      return
+    }
+    applyDossier(restored)
+    setActiveTenderId(id)
+    setActiveDossierId(id)
+    setDossierSearch('')
+    setProjectsVersion((v) => v + 1)
+    setSyncStatus(`Project geopend: ${restored.project.title || 'Naamloos project'}`)
+  }
+
+  const handleRenameProject = (meta: ProjectMeta) => {
+    const next = window.prompt('Nieuwe naam voor dit project', meta.title)
+    if (next == null) return
+    renameProject(meta.id, next)
+    if (meta.id === activeTenderId) {
+      setProject((current) => ({ ...current, title: next.trim() || 'Naamloos project' }))
+    }
+    setProjectsVersion((v) => v + 1)
+  }
+
+  const handleDeleteProject = (id: string) => {
+    if (!window.confirm('Dit project verwijderen? Dit kan niet ongedaan worden gemaakt.')) return
+    removeProject(id)
+    if (id === activeTenderId) {
+      // Verwijder je het open project, start dan een vers blanco project.
+      const newId = makeProjectId()
+      const snapshot = buildBlankProject()
+      applyDossier(snapshot)
+      saveDossier(newId, snapshot)
+      upsertProject({
+        id: newId,
+        title: snapshot.project.title,
+        buyer: snapshot.project.buyer,
+        updatedAt: snapshot.updatedAt,
+        source: 'blank',
+      })
+      setActiveTenderId(newId)
+      setActiveDossierId(newId)
+    }
+    setProjectsVersion((v) => v + 1)
+    setSyncStatus('Project verwijderd')
   }
 
   // Open automatisch een aanbesteding die via de catalogus is doorgegeven (/?open=<id>).
@@ -809,13 +1010,14 @@ export default function WorkspacePage() {
     setGenerating(true)
     setSyncStatus('Schrijfagent verwerkt opmerkingen…')
     const result = analysis ?? (await runAnalysis())
+    const lessonDocuments = await gatherLessonDocuments(result)
 
     try {
       const aiResult = await generateDraftViaApi(
         {
           stage: 'zilver',
           project,
-          documents: effectiveDocuments,
+          documents: [...effectiveDocuments, ...lessonDocuments],
           comments: toLegacyComments(comments),
           analysis: result,
           currentDraft: stripCommentMarks(draft),
@@ -1259,7 +1461,115 @@ export default function WorkspacePage() {
             <span className="min-w-0 flex-1">Schrijfkader</span>
             <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
           </Link>
+          <Link
+            to="/leerpunten"
+            className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-sm font-semibold shadow-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
+          >
+            <span className="grid size-8 flex-none place-items-center rounded-lg bg-primary/10 text-primary">
+              <GraduationCap size={16} />
+            </span>
+            <span className="min-w-0 flex-1">Lessons learned</span>
+            {lessonsLibrary.length ? (
+              <Badge variant="secondary" className="flex-none">{lessonsLibrary.length}</Badge>
+            ) : null}
+            <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+          </Link>
         </nav>
+
+        <Card className="mb-[14px]">
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-2 text-primary">
+              <FolderOpen size={17} />
+              <h2 className="text-sm font-semibold">Projecten</h2>
+              <Badge variant="secondary" className="ml-auto">{projects.length}</Badge>
+            </div>
+
+            <Button onClick={startNewProject} className="h-auto w-full justify-start py-2.5 text-left">
+              <FilePlus2 size={16} className="shrink-0" /> <span>Nieuw project</span>
+            </Button>
+
+            {projects.length ? (
+              <ul className="flex max-h-72 list-none flex-col gap-1.5 overflow-y-auto overflow-x-hidden p-0">
+                {projects.map((meta) => {
+                  const isActive = meta.id === activeTenderId
+                  const title = isActive ? project.title || 'Naamloos project' : meta.title
+                  const buyer = isActive ? project.buyer : meta.buyer
+                  const updated = meta.updatedAt
+                    ? new Date(meta.updatedAt).toLocaleDateString('nl-NL', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+                    : null
+                  return (
+                    <li key={meta.id} className="min-w-0">
+                      <div
+                        className={cn(
+                          'group flex items-start gap-2 rounded-lg border px-2.5 py-2 text-xs transition-colors',
+                          isActive ? 'border-primary bg-primary/5' : 'bg-card hover:border-primary/40 hover:bg-primary/5',
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => openProject(meta.id)}
+                          className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                          title={isActive ? 'Open' : 'Open project'}
+                        >
+                          <span
+                            className={cn(
+                              'mt-0.5 grid size-6 flex-none place-items-center rounded-md',
+                              isActive ? 'bg-primary text-primary-foreground' : 'bg-primary/10 text-primary',
+                            )}
+                          >
+                            {meta.source === 'tender' ? <FileText size={13} /> : <FilePlus2 size={13} />}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-semibold">{title}</span>
+                            <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                              {buyer ? <span className="truncate">{buyer}</span> : null}
+                              {isActive ? (
+                                <Badge variant="default" className="rounded-full px-1.5 py-0 text-[10px] font-normal">
+                                  open
+                                </Badge>
+                              ) : updated ? (
+                                <span className="flex items-center gap-1">
+                                  <Clock size={10} /> {updated}
+                                </span>
+                              ) : null}
+                            </span>
+                          </span>
+                        </button>
+                        <div className="flex flex-none items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
+                          <button
+                            type="button"
+                            onClick={() => handleRenameProject(meta)}
+                            className="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                            title="Hernoem project"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteProject(meta.id)}
+                            className="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            title="Verwijder project"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : (
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Nog geen opgeslagen projecten. Start een nieuw project of download een aanbesteding.
+              </p>
+            )}
+          </CardContent>
+        </Card>
 
         <Card className="mb-[14px]">
           <CardContent className="space-y-[10px]">
@@ -1576,6 +1886,13 @@ export default function WorkspacePage() {
             <Button variant="outline" onClick={() => void exportWord()}>
               <FileDown size={17} /> Word
             </Button>
+            <EvaluationDialog
+              project={project}
+              draft={draft}
+              analysis={analysis}
+              sourceTenderId={activeTenderId || project.tendernedId || null}
+              onSaved={loadLessons}
+            />
             <Button disabled={generating} onClick={() => void analyzeAndGenerate(stage)}>
               {generating ? <Loader2 size={17} className="animate-spin" /> : <Sparkles size={17} />}
               {generating ? 'Genereren…' : 'Genereer'}
@@ -1616,6 +1933,25 @@ export default function WorkspacePage() {
             )
           })}
         </nav>
+
+        {appliedLessons.length ? (
+          <div className="mb-[14px] rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+            <p className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+              <GraduationCap size={14} /> Toegepaste leerpunten ({appliedLessons.length})
+            </p>
+            <ul className="grid gap-1 text-sm text-amber-900 dark:text-amber-100">
+              {appliedLessons.map((lesson) => (
+                <li key={lesson.id} className="flex gap-1.5">
+                  <Check size={15} className="mt-0.5 flex-none text-amber-600" />
+                  <span className="min-w-0">
+                    {lesson.category ? <strong>{lesson.category}: </strong> : null}
+                    {lesson.lesson}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         <section className="mb-[14px] grid grid-cols-2 gap-3 sm:grid-cols-4">
           <button

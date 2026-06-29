@@ -26,6 +26,16 @@
       "maxDuration": 30,
       "includeFiles": "node_modules/.prisma/client/**"
     },
+    "api/lessons-learned.js": {
+      "maxDuration": 30,
+      "includeFiles": "node_modules/.prisma/client/**"
+    },
+    "api/evaluate-project.js": {
+      "maxDuration": 120
+    },
+    "api/select-lessons.js": {
+      "maxDuration": 90
+    },
     "api/extract-text.js": {
       "maxDuration": 30
     },

@@ -21,3 +21,20 @@ model StyleDocument {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 }
+
+// Leerpunt uit een afgerond project ("lessons learned"). Wordt bij de evaluatie
+// van een afgeronde aanbesteding opgesteld en als input hergebruikt bij nieuwe projecten.
+model LessonLearned {
+  id             String   @id @default(cuid())
+  projectTitle   String
+  buyer          String?
+  outcome        String // gewonnen | verloren | ingetrokken | onbekend
+  score          Int? // optionele score (bijv. behaalde of geschatte kans 0-100)
+  category       String? // thema/tag, bijv. "prijs", "social return", "ICT"
+  situation      String   @db.Text // context: wat speelde er in dit project
+  lesson         String   @db.Text // het leerpunt zelf
+  recommendation String   @db.Text // hoe toe te passen bij een volgend project
+  sourceTenderId String? // koppeling naar het bron-dossier/tender
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
