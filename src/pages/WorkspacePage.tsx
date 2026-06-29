@@ -530,10 +530,13 @@ export default function WorkspacePage() {
     localStorage.setItem('bid-agent-draft', draft)
   }, [draft])
 
-  // Zorg dat het huidige werk altijd bij een project hoort, ook de standaard-werkruimte
-  // bij een eerste bezoek — zo verschijnt het in de projectenlijst en kun je het heropenen.
+  // Zorg dat het huidige werk bij een project hoort bij het állereerste bezoek, zodat de
+  // standaard-werkruimte in de projectenlijst verschijnt. Heeft de gebruiker de lijst later
+  // bewust leeggemaakt, dan laten we hem leeg (geen nieuw blanco project forceren).
   useEffect(() => {
     if (activeTenderId) return
+    if (localStorage.getItem('bid-agent-initialized')) return
+    localStorage.setItem('bid-agent-initialized', '1')
     const id = makeProjectId()
     // Eénmalige initialisatie na mount; bewuste setState in effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -547,6 +550,8 @@ export default function WorkspacePage() {
   // actueel, zodat je het later precies terugvindt waar je gebleven was.
   useEffect(() => {
     if (!activeTenderId) return
+    // Markeer dat de app in gebruik is, zodat een later leeggemaakte lijst leeg blijft.
+    localStorage.setItem('bid-agent-initialized', '1')
     const updatedAt = new Date().toISOString()
     const snapshot: DossierSnapshot = {
       project,
@@ -962,20 +967,21 @@ export default function WorkspacePage() {
     if (!window.confirm('Dit project verwijderen? Dit kan niet ongedaan worden gemaakt.')) return
     removeProject(id)
     if (id === activeTenderId) {
-      // Verwijder je het open project, start dan een vers blanco project.
-      const newId = makeProjectId()
-      const snapshot = buildBlankProject()
-      applyDossier(snapshot)
-      saveDossier(newId, snapshot)
-      upsertProject({
-        id: newId,
-        title: snapshot.project.title,
-        buyer: snapshot.project.buyer,
-        updatedAt: snapshot.updatedAt,
-        source: 'blank',
-      })
-      setActiveTenderId(newId)
-      setActiveDossierId(newId)
+      // Verwijder je het open project, open dan een ander bestaand project.
+      // Is dit het laatste project, laat de werkruimte dan leeg (geen nieuw blanco
+      // project forceren) zodat je de lijst echt kunt leegmaken.
+      const remaining = listProjects()
+      const next = remaining[0]
+      if (next) {
+        const restored = loadDossier<DossierSnapshot>(next.id)
+        if (restored) applyDossier(restored)
+        setActiveTenderId(next.id)
+        setActiveDossierId(next.id)
+      } else {
+        applyDossier(buildBlankProject())
+        setActiveTenderId('')
+        setActiveDossierId('')
+      }
     }
     setProjectsVersion((v) => v + 1)
     setSyncStatus('Project verwijderd')
