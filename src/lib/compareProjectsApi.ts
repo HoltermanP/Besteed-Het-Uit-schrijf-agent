@@ -102,7 +102,7 @@ export function buildCompareInput(id: string, snapshot: CompareSnapshot): Compar
 export async function compareProjectsViaApi(
   projects: CompareProjectInput[],
 ): Promise<CompareProjectsResponse> {
-  const response = await fetch('/api/compare-projects', {
+  const response = await fetch('/api/insights?action=compare', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ projects, ai: buildAi() }),

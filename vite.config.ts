@@ -32,9 +32,13 @@ const jsonApiRoutes: Record<string, (body: unknown) => Promise<Response>> = {
   '/api/write-draft': handleWriteDraftRequest,
   '/api/review-draft': (body) => handleReviewDraftRequest(body as ReviewDraftRequest),
   '/api/rewrite-fragment': handleRewriteFragmentRequest,
-  '/api/evaluate-project': (body) => handleEvaluateProjectRequest(body as EvaluateProjectRequest),
-  '/api/select-lessons': (body) => handleSelectLessonsRequest(body as SelectLessonsRequest),
-  '/api/compare-projects': (body) => handleCompareProjectsRequest(body as CompareProjectsRequest),
+}
+
+// AI-acties binnen de gecombineerde /api/insights-functie, gekozen via ?action=.
+const insightsActions: Record<string, (body: unknown) => Promise<Response>> = {
+  evaluate: (body) => handleEvaluateProjectRequest(body as EvaluateProjectRequest),
+  select: (body) => handleSelectLessonsRequest(body as SelectLessonsRequest),
+  compare: (body) => handleCompareProjectsRequest(body as CompareProjectsRequest),
 }
 
 async function readNodeBody(req: IncomingMessage): Promise<Buffer | undefined> {
@@ -94,12 +98,12 @@ function serverDevApi(env: Record<string, string>): Plugin {
 
         const isJsonRoute = req.method === 'POST' && jsonApiRoutes[req.url]
         const isStyleRoute = req.url.startsWith('/api/style-documents')
-        const isLessonsRoute = req.url.startsWith('/api/lessons-learned')
+        const isInsightsRoute = req.url.startsWith('/api/insights')
         const isExtractRoute = req.url === '/api/extract-text' && req.method === 'POST'
         const isTenderDocsRoute = req.url.startsWith('/api/tender-documents') && req.method === 'GET'
         const isWriterStatusRoute = req.url === '/api/writer-status' && req.method === 'GET'
 
-        if (!isJsonRoute && !isStyleRoute && !isLessonsRoute && !isExtractRoute && !isTenderDocsRoute && !isWriterStatusRoute) {
+        if (!isJsonRoute && !isStyleRoute && !isInsightsRoute && !isExtractRoute && !isTenderDocsRoute && !isWriterStatusRoute) {
           next()
           return
         }
@@ -119,7 +123,16 @@ function serverDevApi(env: Record<string, string>): Plugin {
             return
           }
 
-          if (isLessonsRoute) {
+          if (isInsightsRoute) {
+            const action = new URL(req.url, 'http://localhost').searchParams.get('action') ?? ''
+            const runAction = insightsActions[action]
+            if (runAction) {
+              const chunks: Buffer[] = []
+              for await (const chunk of req) chunks.push(chunk as Buffer)
+              const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}
+              await sendWebResponse(res, await runAction(body))
+              return
+            }
             const response = await handleLessonsLearnedRequest(await toWebRequest(req, req.url))
             await sendWebResponse(res, response)
             return

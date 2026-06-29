@@ -32,7 +32,7 @@ function buildAi(): LessonAiConfig | undefined {
 }
 
 export async function fetchLessons(): Promise<LessonLearned[]> {
-  const response = await fetch('/api/lessons-learned')
+  const response = await fetch('/api/insights')
   const data = (await response.json()) as LessonsResponse | ApiError
   if (!response.ok || 'error' in data) {
     throw new Error('error' in data ? data.error : 'Leerpunten ophalen mislukt.')
@@ -41,7 +41,7 @@ export async function fetchLessons(): Promise<LessonLearned[]> {
 }
 
 export async function createLesson(input: LessonLearnedInput): Promise<LessonLearned> {
-  const response = await fetch('/api/lessons-learned', {
+  const response = await fetch('/api/insights', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -64,7 +64,7 @@ export async function updateLesson(input: {
   lesson?: string
   recommendation?: string
 }): Promise<LessonLearned> {
-  const response = await fetch('/api/lessons-learned', {
+  const response = await fetch('/api/insights', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -77,7 +77,7 @@ export async function updateLesson(input: {
 }
 
 export async function deleteLesson(id: string): Promise<void> {
-  const response = await fetch(`/api/lessons-learned?id=${encodeURIComponent(id)}`, {
+  const response = await fetch(`/api/insights?id=${encodeURIComponent(id)}`, {
     method: 'DELETE',
   })
   const data = (await response.json()) as { ok?: boolean; error?: string }
@@ -94,7 +94,7 @@ export async function evaluateProjectViaApi(args: {
   draft: string
   analysis: TenderAnalysis | null
 }): Promise<EvaluateProjectResponse> {
-  const response = await fetch('/api/evaluate-project', {
+  const response = await fetch('/api/insights?action=evaluate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...args, ai: buildAi() }),
@@ -119,7 +119,7 @@ export async function selectRelevantLessons(args: {
   if (!args.candidates.length) return []
 
   try {
-    const response = await fetch('/api/select-lessons', {
+    const response = await fetch('/api/insights?action=select', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
