@@ -1,6 +1,3 @@
-import { OfficeParser } from 'officeparser'
-import { PDFParse } from 'pdf-parse'
-
 const TEXT_EXTENSIONS = new Set(['.txt', '.md', '.csv', '.json', '.html', '.htm'])
 
 function extensionOf(fileName: string): string {
@@ -12,7 +9,11 @@ function normalizeText(text: string): string {
   return text.replace(/\u0000/g, '').replace(/\r/g, '').trim()
 }
 
+// De parsers worden lazy geladen: ze staan in serverExternalPackages (bundelen breekt
+// de pdfjs-assets van pdf-parse) en een import-probleem mag nooit de hele route
+// platleggen — dan faalt alleen de extractie met een nette foutmelding.
 async function extractPdfText(buffer: Buffer): Promise<string> {
+  const { PDFParse } = await import('pdf-parse')
   const parser = new PDFParse({ data: buffer })
   try {
     const result = await parser.getText()
@@ -23,6 +24,7 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
 }
 
 async function extractOfficeText(buffer: Buffer): Promise<string> {
+  const { OfficeParser } = await import('officeparser')
   const ast = await OfficeParser.parseOffice(buffer)
   return normalizeText(ast.toText())
 }
