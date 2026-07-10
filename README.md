@@ -1,6 +1,6 @@
 # AI Schrijfagent - Besteed Het Uit
 
-Werkende React/Vite-app voor het analyseren van aanbestedingsstukken en het iteratief schrijven van inschrijvingen volgens het brons-zilver-goud-principe.
+Werkende Next.js-app (App Router) voor het analyseren van aanbestedingsstukken en het iteratief schrijven van inschrijvingen volgens het brons-zilver-goud-principe.
 
 ## Wat zit erin
 
@@ -12,17 +12,18 @@ Werkende React/Vite-app voor het analyseren van aanbestedingsstukken en het iter
 - Menselijke review via tekstselectie en opmerkingen.
 - AI-reviewagent met prioriteiten en concrete verbeterrichting.
 - AI-verwerking van open opmerkingen.
-- Export naar PDF en Word-compatibele `.doc`.
-- Lokale opslag via `localStorage`, zodat werk niet verdwijnt bij refresh.
+- Export naar PDF en Word (`.docx`).
+- Ingebouwde handleiding op `/handleiding`.
+- Centrale opslag in Neon/PostgreSQL (`AppState`), zodat werk apparaat-onafhankelijk bewaard blijft.
 
 ## Starten
 
 ```bash
 npm install
-npm run dev -- --host 127.0.0.1
+npm run dev
 ```
 
-Open daarna `http://127.0.0.1:5173/`.
+Open daarna `http://localhost:3000/`.
 
 ## Controleren
 
@@ -32,7 +33,7 @@ npm run build
 
 De huidige versie is technisch gecontroleerd met:
 
-- productiebuild via Vite/TypeScript
+- productiebuild via Next.js/TypeScript
 - lokale servercheck op `200 OK`
 - Playwright desktop- en mobiele screenshots
 - headless rooktest voor genereren, AI-review, TenderNed-import en Neon-status

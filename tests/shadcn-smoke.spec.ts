@@ -12,9 +12,8 @@ for (const route of routes) {
 
     await page.goto(route, { waitUntil: 'networkidle' })
 
-    // #root must have rendered content (app mounted, no white screen)
-    const rootChildren = await page.locator('#root > *').count()
-    expect(rootChildren, `#root should have children on ${route}`).toBeGreaterThan(0)
+    // De app moet gemount zijn (geen wit scherm): elke pagina rendert een <main>.
+    await expect(page.locator('main').first(), `app should have mounted on ${route}`).toBeVisible()
 
     // Theme toggle present (proves shadcn UI rendered in the header)
     await expect(page.getByRole('button', { name: 'Thema wisselen' }).first()).toBeVisible()

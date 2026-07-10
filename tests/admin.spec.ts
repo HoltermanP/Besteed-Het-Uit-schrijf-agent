@@ -1,14 +1,9 @@
 import { expect, test } from '@playwright/test'
+import { resetWorkspace } from './helpers'
 
 const ADMIN_PASSWORD = 'test-admin-wachtwoord'
 
-async function resetStorage(page: import('@playwright/test').Page) {
-  await page.goto('/')
-  await page.evaluate(() => {
-    localStorage.clear()
-    sessionStorage.clear()
-  })
-}
+const resetStorage = resetWorkspace
 
 test('admin vereist inloggen', async ({ page }) => {
   await resetStorage(page)

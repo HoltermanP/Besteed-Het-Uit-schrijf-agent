@@ -1,15 +1,13 @@
 import { expect, test } from '@playwright/test'
+import { resetWorkspace } from './helpers'
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/')
-  await page.evaluate(() => {
-    localStorage.clear()
-    sessionStorage.clear()
-  })
-  await page.goto('/')
+  await resetWorkspace(page)
 })
 
 test('analyseert leidraad met eisen en schrijfstijl', async ({ page }) => {
+  // De analyse zit in een dialog achter de knop "Leidraadanalyse".
+  await page.getByRole('button', { name: 'Leidraadanalyse' }).click()
   await page.getByRole('button', { name: 'Analyseer dossier' }).click()
 
   await expect(page.getByText(/Leidraad "Aanbestedingsleidraad"/)).toBeVisible()

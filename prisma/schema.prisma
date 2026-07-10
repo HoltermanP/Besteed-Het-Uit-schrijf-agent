@@ -8,6 +8,15 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Generieke werkruimte-opslag (key-value). Vervangt localStorage in de browser:
+// projecten, dossiers, concepten, opmerkingen, bedrijfsconfig en API-config staan
+// hier zodat werk apparaat-onafhankelijk bewaard blijft.
+model AppState {
+  key       String   @id
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+}
+
 model StyleDocument {
   id         String   @id @default(cuid())
   name       String

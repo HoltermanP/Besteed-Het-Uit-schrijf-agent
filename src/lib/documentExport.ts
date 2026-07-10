@@ -1,6 +1,6 @@
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
-import proposalDocumentCss from '../styles/proposalDocument.css?raw'
+import { proposalDocumentCss } from '../styles/proposalDocument'
 
 const A4_WIDTH_PT = 595.28
 const A4_HEIGHT_PT = 841.89

@@ -1,3 +1,4 @@
+import '@/lib/nodeGlobals'
 import {
   AlignmentType,
   BorderStyle,

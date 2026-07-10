@@ -1,11 +1,8 @@
 import { expect, test } from '@playwright/test'
+import { resetWorkspace } from './helpers'
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/')
-  await page.evaluate(() => {
-    localStorage.clear()
-    sessionStorage.clear()
-  })
+  await resetWorkspace(page)
 })
 
 test('schrijfkaderpagina laadt en toont sectie met editor', async ({ page }) => {

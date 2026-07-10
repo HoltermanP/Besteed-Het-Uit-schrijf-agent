@@ -1,17 +1,25 @@
+'use client'
+
 import { useEffect, useState, type ReactNode } from 'react'
-import { Navigate } from 'react-router-dom'
+import { useRouter } from 'next/navigation'
 import { isAdminAuthenticated, isAdminPasswordConfigured } from '../lib/adminAuth'
-import AdminLogin from '../pages/AdminLogin'
+import AdminLogin from '../views/AdminLogin'
 
 type Props = {
   children: ReactNode
 }
 
 export default function AdminRoute({ children }: Props) {
+  const router = useRouter()
+  const configured = isAdminPasswordConfigured()
   const [ready, setReady] = useState(false)
   const [authenticated, setAuthenticated] = useState(false)
 
   useEffect(() => {
+    if (!configured) {
+      router.replace('/')
+      return
+    }
     let active = true
     isAdminAuthenticated().then((ok) => {
       if (active) {
@@ -22,10 +30,10 @@ export default function AdminRoute({ children }: Props) {
     return () => {
       active = false
     }
-  }, [])
+  }, [configured, router])
 
-  if (!isAdminPasswordConfigured()) {
-    return <Navigate to="/" replace />
+  if (!configured) {
+    return null
   }
 
   if (!ready) {

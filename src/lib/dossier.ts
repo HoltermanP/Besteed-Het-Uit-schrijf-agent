@@ -1,4 +1,4 @@
-import { loadStored, saveStored } from './storage'
+import { getStoredRaw, loadStored, saveStored } from './storage'
 
 // Per-aanbesteding ("dossier") werkruimte-opslag. Elke gedownloade aanbesteding krijgt
 // een eigen snapshot van project, bronnen, concept, analyse en opmerkingen, zodat je
@@ -31,7 +31,7 @@ export function saveDossier<T>(id: string, snapshot: T) {
 
 export function hasDossier(id: string): boolean {
   if (!id) return false
-  return localStorage.getItem(dossierStorageKey(id)) != null
+  return getStoredRaw(dossierStorageKey(id)) != null
 }
 
 export function getDossierUpdatedAt(id: string): string | null {

@@ -15,7 +15,7 @@ async function hashValue(value: string): Promise<string> {
 }
 
 function getAdminPassword(): string | undefined {
-  return import.meta.env.VITE_ADMIN_PASSWORD?.trim() || undefined
+  return process.env.NEXT_PUBLIC_ADMIN_PASSWORD?.trim() || undefined
 }
 
 async function sessionToken(): Promise<string | null> {

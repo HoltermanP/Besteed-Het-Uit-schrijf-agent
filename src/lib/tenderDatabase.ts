@@ -78,7 +78,7 @@ export async function syncPendingTendersToNeon(): Promise<{ synced: number; mess
     })),
   }
 
-  localStorage.setItem('bid-agent-neon-sync-queue', JSON.stringify(payload))
+  saveStored('bid-agent-neon-sync-queue', payload)
 
   const updated = getSavedTenders().map((item) =>
     item.syncStatus === 'pending' ? { ...item, syncStatus: 'synced' as const } : item,

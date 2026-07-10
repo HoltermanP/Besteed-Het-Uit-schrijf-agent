@@ -1,12 +1,8 @@
 import { expect, test } from '@playwright/test'
+import { resetWorkspace } from './helpers'
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/')
-  await page.evaluate(() => {
-    localStorage.clear()
-    sessionStorage.clear()
-  })
-  await page.goto('/')
+  await resetWorkspace(page)
 })
 
 test('laadt de werkplek met concept en bronnen', async ({ page }) => {
@@ -24,9 +20,11 @@ test('genereert concept en voert AI-review uit', async ({ page }) => {
     page.getByText(/concept lokaal opgeslagen|Analyse en concept/i),
   ).toBeVisible({ timeout: 15000 })
   await expect(page.getByText('Brons versie')).toBeVisible({ timeout: 15000 })
-  await page.getByRole('button', { name: 'Review uitvoeren' }).click()
+  // De reviewagent zit in een dialog achter de knop "AI-review".
+  await page.getByRole('button', { name: 'AI-review', exact: true }).click()
+  await page.getByRole('button', { name: 'Review uitvoeren', exact: true }).click()
   // De review-agent toont minstens één bevinding.
-  await expect(page.getByTestId('review-finding').first()).toBeVisible()
+  await expect(page.getByTestId('review-finding').first()).toBeVisible({ timeout: 15000 })
 })
 
 test('importeert TenderNed dossier', async ({ page }) => {
@@ -37,9 +35,11 @@ test('importeert TenderNed dossier', async ({ page }) => {
 })
 
 test('verwerkt menselijke opmerkingen via AI', async ({ page }) => {
-  await page.getByPlaceholder('Plaats opmerking of wijzigingsinstructie...').fill('Maak de intro korter.')
-  await page.getByRole('button', { name: 'Opmerking plaatsen' }).click()
+  // Algemene opmerkingen zitten achter een uitklapbare disclosure in het reviewpaneel.
+  await page.getByText('Of plaats een algemene opmerking').click()
+  await page.getByPlaceholder('Algemene opmerking (zonder tekstselectie)...').fill('Maak de intro korter.')
+  await page.getByRole('button', { name: 'Algemene opmerking plaatsen' }).click()
   await expect(page.getByText('Maak de intro korter.')).toBeVisible()
   await page.getByRole('button', { name: 'Verwerk opmerkingen' }).click()
-  await expect(page.getByText('AI-verwerking review')).toBeVisible()
+  await expect(page.getByText('AI-verwerking review')).toBeVisible({ timeout: 15000 })
 })

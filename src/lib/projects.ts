@@ -1,5 +1,5 @@
 import { dossierStorageKey, loadDossier, saveDossier } from './dossier'
-import { loadStored, saveStored } from './storage'
+import { listStoredKeys, loadStored, removeStored, saveStored } from './storage'
 
 // Eén gezamenlijk register van alle opgeslagen projecten (zowel blanco gestart als
 // uit een gedownloade aanbesteding). De volledige werkruimte-snapshot blijft in de
@@ -45,9 +45,7 @@ function inferSource(id: string): ProjectSource {
 function reconcile(index: ProjectMeta[]): ProjectMeta[] {
   const known = new Set(index.map((p) => p.id))
   const merged = [...index]
-  for (let i = 0; i < localStorage.length; i += 1) {
-    const key = localStorage.key(i)
-    if (!key || !key.startsWith(DOSSIER_PREFIX)) continue
+  for (const key of listStoredKeys(DOSSIER_PREFIX)) {
     const id = key.slice(DOSSIER_PREFIX.length)
     if (known.has(id)) continue
     const snapshot = loadDossier<StoredSnapshot>(id)
@@ -89,5 +87,5 @@ export function renameProject(id: string, title: string) {
 
 export function removeProject(id: string) {
   writeIndex(readIndex().filter((p) => p.id !== id))
-  localStorage.removeItem(dossierStorageKey(id))
+  removeStored(dossierStorageKey(id))
 }
