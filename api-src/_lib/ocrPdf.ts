@@ -36,7 +36,7 @@ export async function tryOcrPdf(buffer: Buffer): Promise<string | null> {
             },
             {
               type: 'text',
-              text: 'Dit is een (mogelijk gescand) aanbestedingsdocument. Geef de volledige tekstinhoud letterlijk en compleet terug, in leesvolgorde. Geen samenvatting, geen commentaar, geen markdown-opmaak — alleen de tekst zelf.',
+              text: 'Dit is een (mogelijk gescand) aanbestedingsdocument. Geef de volledige tekstinhoud letterlijk en compleet terug, in leesvolgorde. Geen samenvatting, geen commentaar, geen markdown-opmaak — alleen de tekst zelf. Bevat het document geen leesbare tekst, antwoord dan met exact één woord: GEEN_TEKST',
             },
           ],
         },
@@ -50,9 +50,12 @@ export async function tryOcrPdf(buffer: Buffer): Promise<string | null> {
   }
 
   const payload = (await response.json()) as { content?: AnthropicContentBlock[] }
-  return (payload.content ?? [])
+  const text = (payload.content ?? [])
     .filter((block) => block.type === 'text' && block.text)
     .map((block) => block.text)
     .join('\n')
     .trim()
+  // Marker voor "geen leesbare tekst": als leeg behandelen, zodat er geen
+  // AI-commentaar als brontekst in het dossier belandt.
+  return text.includes('GEEN_TEKST') ? '' : text
 }
