@@ -1,6 +1,7 @@
 import { handleExtractTextRequest } from '@api-lib/extractText'
 
-export const maxDuration = 30
+// Ruim genomen: OCR van een gescande PDF via de AI kan enkele minuten duren.
+export const maxDuration = 180
 
 export async function POST(request: Request) {
   try {

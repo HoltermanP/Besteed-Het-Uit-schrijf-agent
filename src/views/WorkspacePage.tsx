@@ -1789,7 +1789,7 @@ export default function WorkspacePage() {
               loading={uploadingFiles}
               title="Sleep bestanden hierheen of klik om te uploaden"
               hint={`Wordt toegevoegd als ${sourceLabels[activeType].toLowerCase()}-bron`}
-              formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 4 MB per bestand"
+              formatsLabel="PDF, Word (ook .doc), PowerPoint, Excel, txt, md, csv — PDF tot 50 MB, overig max. 4 MB"
               onFiles={handleFileUpload}
             />
             <p className="text-xs leading-relaxed text-muted-foreground">

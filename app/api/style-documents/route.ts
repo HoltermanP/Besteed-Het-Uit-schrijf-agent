@@ -1,6 +1,7 @@
 import { handleStyleDocumentsRequest } from '@api-lib/styleDocuments'
 
-export const maxDuration = 30
+// Ruim genomen: uploads kunnen een OCR-stap via de AI vergen.
+export const maxDuration = 180
 
 async function run(request: Request) {
   try {

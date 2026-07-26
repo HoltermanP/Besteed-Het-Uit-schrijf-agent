@@ -327,7 +327,7 @@ export default function HandleidingPage() {
           <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
             <li>
               <strong>Uploaden:</strong> sleep bestanden in de uploadzone of klik erop. Ondersteund: PDF, Word,
-              PowerPoint, Excel, txt, md en csv — maximaal 4 MB per bestand. De tekst wordt automatisch uitgelezen.
+              PowerPoint, Excel, txt, md en csv — ook oude formaten zoals .doc en .xls. PDF's mogen tot 50 MB zijn (die worden in je browser uitgelezen); overige bestanden maximaal 4 MB. De tekst wordt automatisch uitgelezen.
             </li>
             <li>
               <strong>Handmatig plakken:</strong> geef een naam op bij &ldquo;Naam bron&rdquo; en plak de tekst in het
@@ -608,9 +608,9 @@ export default function HandleidingPage() {
               adminpagina.
             </Faq>
             <Faq question="Mijn upload wordt geweigerd.">
-              Ondersteunde formaten zijn PDF, Word, PowerPoint, Excel, txt, md en csv, met een maximum van 4 MB per
-              bestand. Gescande PDF&rsquo;s zonder tekstlaag kunnen niet worden uitgelezen; plak in dat geval de tekst
-              handmatig als bron.
+              Ondersteunde formaten zijn PDF (tot 50 MB), Word (.docx en .doc), PowerPoint, Excel (.xlsx en .xls),
+              txt, md en csv (tot 4 MB). Gescande PDF&rsquo;s zonder tekstlaag worden automatisch via AI-OCR
+              uitgelezen (tot 4 MB, mits een AI-sleutel op de server is geconfigureerd).
             </Faq>
             <Faq question="Verdwijnen mijn handmatige aanpassingen als ik opnieuw genereer?">
               Opnieuw genereren vervangt de tekst van het concept. Wil je gericht iets verbeteren zonder de rest te

@@ -12,6 +12,7 @@ dist
 dist-ssr
 .next
 next-env.d.ts
+public/pdf.worker.min.mjs
 .data
 test-results
 *.local

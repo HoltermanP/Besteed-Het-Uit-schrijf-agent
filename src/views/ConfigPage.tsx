@@ -304,7 +304,7 @@ export default function ConfigPage() {
               loading={uploadingFiles}
               title="Sleep bedrijfsdocumenten hierheen of klik om te uploaden"
               hint="Brochures, profielen, referenties — tekst wordt automatisch geëxtraheerd"
-              formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 4 MB per bestand"
+              formatsLabel="PDF, Word (ook .doc), PowerPoint, Excel, txt, md, csv — PDF tot 50 MB, overig max. 4 MB"
               onFiles={handleFileUpload}
             />
             {uploadStatus ? <p className="text-sm text-muted-foreground">{uploadStatus}</p> : null}
