@@ -400,7 +400,7 @@ function RuleSection({ section, loading, documents, onUpsert, onRemove }: RuleSe
               loading={uploading}
               title={section.uploadTitle}
               hint={section.uploadHint}
-              formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 12 MB per bestand"
+              formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 4 MB per bestand"
               onFiles={handleUpload}
             />
           </div>
@@ -571,7 +571,7 @@ function BackgroundSection({ loading, documents, onUpsert, onRemove }: Backgroun
             loading={uploading}
             title="Sleep eerdere aanbestedingen of achtergrondstukken hierheen"
             hint="Worden na upload automatisch door AI geanalyseerd tot een bruikbaar profiel"
-            formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 12 MB per bestand"
+            formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 4 MB per bestand"
             onFiles={handleUpload}
           />
         </div>

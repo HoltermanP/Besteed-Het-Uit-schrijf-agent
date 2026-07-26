@@ -10,7 +10,9 @@ import type {
 } from '../../src/types/tenderAnalysis'
 import { completeChat, resolveAiFromRequest } from './aiClient'
 
-const DOC_CHAR_LIMIT = 22_000
+// Leidraden volledig meegeven: afkappen laat de analyse eisen missen die de rest
+// van de pijplijn daarna nooit meer ziet.
+const DOC_CHAR_LIMIT = 150_000
 
 function trimSource(text: string, max = DOC_CHAR_LIMIT): string {
   // eslint-disable-next-line no-control-regex -- strip null bytes uit ge-extraheerde PDF/Office-tekst

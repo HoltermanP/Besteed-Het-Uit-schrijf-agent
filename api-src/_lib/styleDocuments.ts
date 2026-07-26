@@ -14,7 +14,7 @@ import { isDatabaseConfigured, prisma } from './prisma'
 
 const DEV_STORE_PATH = path.join(process.cwd(), '.data', 'style-documents.json')
 const MAX_CONTENT_CHARS = 120_000
-const MAX_FILE_BYTES = 12 * 1024 * 1024
+const MAX_FILE_BYTES = 4 * 1024 * 1024
 
 type StoredStyleDocument = StyleDocument
 
@@ -123,7 +123,7 @@ export async function createStyleDocument(input: {
 }): Promise<StyleDocument> {
   validateStyleFileName(input.fileName)
   if (input.buffer.byteLength > MAX_FILE_BYTES) {
-    throw new Error('Bestand is te groot (max. 12 MB).')
+    throw new Error('Bestand is te groot (max. 4 MB). Comprimeer de PDF of splits het document.')
   }
 
   const extracted = trimContent(await extractDocumentText(input.fileName, input.buffer))

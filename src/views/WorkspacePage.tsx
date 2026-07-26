@@ -771,7 +771,9 @@ export default function WorkspacePage() {
     if (skipped.length) {
       setUploadNotice({
         tone: added.length ? 'warning' : 'error',
-        message: skipped.join(' · '),
+        message: added.length
+          ? `${added.length} bron(nen) toegevoegd. Niet gelezen — ${skipped.join(' · ')}`
+          : `Niet gelezen — ${skipped.join(' · ')}`,
       })
     }
 
@@ -1787,7 +1789,7 @@ export default function WorkspacePage() {
               loading={uploadingFiles}
               title="Sleep bestanden hierheen of klik om te uploaden"
               hint={`Wordt toegevoegd als ${sourceLabels[activeType].toLowerCase()}-bron`}
-              formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 12 MB per bestand"
+              formatsLabel="PDF, Word, PowerPoint, Excel, txt, md, csv — max. 4 MB per bestand"
               onFiles={handleFileUpload}
             />
             <p className="text-xs leading-relaxed text-muted-foreground">

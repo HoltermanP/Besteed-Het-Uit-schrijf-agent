@@ -209,7 +209,12 @@ function extractEvaluationCriteria(text: string): string[] {
       })
   }
 
-  return criteria.slice(0, 8)
+  // Ontdubbel: laat criteria vallen die als geheel in een specifieker criterium zitten
+  // (bijv. "kwaliteit (70%)" naast "Beoordeling kwaliteit (70%)").
+  const deduped = criteria.filter(
+    (item) => !criteria.some((other) => other !== item && other.toLowerCase().includes(item.toLowerCase())),
+  )
+  return deduped.slice(0, 8)
 }
 
 function extractContentRequirements(text: string, source: string): ContentRequirement[] {
@@ -220,13 +225,21 @@ function extractContentRequirements(text: string, source: string): ContentRequir
     if (!text.toLowerCase().includes(topic)) return
     const regex = new RegExp(`([^.\\n]{0,90}${topic}[^.\\n]{0,90})`, 'i')
     const match = text.match(regex)
-    const detail = match ? normalize(match[1]) : `Onderwerp "${topic}" genoemd in ${source}`
+    // Snippet kan midden in een woord beginnen (capture van max 90 tekens terug);
+    // knip dan het halve woord eraf zodat er geen "duurzaamheidriteria" ontstaat.
+    let snippet = match ? match[1] : null
+    if (snippet && match?.index != null && match.index > 0 && !/[\s.\n;:]/.test(text[match.index - 1])) {
+      snippet = snippet.replace(/^\S+\s*/, '')
+    }
+    const detail = snippet ? normalize(snippet) : `Onderwerp "${topic}" genoemd in ${source}`
     if (seen.has(topic)) return
     seen.add(topic)
     requirements.push({
       topic,
       detail,
-      mandatory: /verplicht|dient|moet|minimaal|maximaal/i.test(match?.[1] ?? text),
+      // Alleen de gevonden zin telt; de hele documenttekst bevat altijd wel ergens
+      // "moet/verplicht" en maakte voorheen álles verplicht.
+      mandatory: /verplicht|dient|moet/i.test(snippet ?? ''),
       source,
     })
   })
@@ -250,19 +263,24 @@ function extractDocumentRequirements(text: string, source: string): DocumentRequ
   const seen = new Set<string>()
 
   DOCUMENT_PATTERNS.forEach(({ pattern, label }) => {
-    if (!pattern.test(text)) return
-    if (seen.has(label)) return
+    const match = text.match(pattern)
+    if (!match || seen.has(label)) return
     seen.add(label)
+    // Verplicht-signaal alleen in de directe omgeving van de match zoeken,
+    // niet in de volledige documenttekst (die matcht altijd wel ergens).
+    const index = match.index ?? 0
+    const vicinity = text.slice(Math.max(0, index - 150), index + match[0].length + 150)
     requirements.push({
       name: label,
-      mandatory: /verplicht|dient te worden ingediend|moet worden ingediend|bijlage/i.test(text),
+      mandatory: /verplicht|dient|moet/i.test(vicinity),
       source,
     })
   })
 
   const bijlageRegex = /bijlage\s+[A-Z0-9][^:.\n]{0,60}/gi
   for (const match of text.matchAll(bijlageRegex)) {
-    const name = normalize(match[0])
+    // Begrens de naam tot een handvol woorden; de capture sleept anders halve zinnen mee.
+    const name = normalize(match[0]).split(/\s+/).slice(0, 8).join(' ')
     if (seen.has(name)) continue
     seen.add(name)
     requirements.push({ name, mandatory: true, source })

@@ -1,6 +1,8 @@
 import { extractDocumentText, validateStyleFileName } from './extractDocumentText'
 
-const MAX_FILE_BYTES = 12 * 1024 * 1024
+// Vercel-functies accepteren max ~4,5 MB per request; daarboven komt de upload
+// nooit aan en krijgt de gebruiker een onduidelijke platformfout.
+const MAX_FILE_BYTES = 4 * 1024 * 1024
 
 export async function handleExtractTextRequest(request: Request): Promise<Response> {
   try {
@@ -17,7 +19,7 @@ export async function handleExtractTextRequest(request: Request): Promise<Respon
     validateStyleFileName(file.name)
     const buffer = Buffer.from(await file.arrayBuffer())
     if (buffer.byteLength > MAX_FILE_BYTES) {
-      throw new Error('Bestand is te groot (max. 12 MB).')
+      throw new Error('Bestand is te groot (max. 4 MB). Comprimeer de PDF of splits het document.')
     }
 
     const text = await extractDocumentText(file.name, buffer)

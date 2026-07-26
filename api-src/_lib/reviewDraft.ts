@@ -7,8 +7,8 @@ import type {
 } from '../../src/types/reviewDraft'
 import type { TenderAnalysis } from '../../src/types/tenderAnalysis'
 
-const DOC_CHAR_LIMIT = 14_000
-const DRAFT_CHAR_LIMIT = 40_000
+const DOC_CHAR_LIMIT = 40_000
+const DRAFT_CHAR_LIMIT = 120_000
 const MAX_FINDINGS = 14
 
 const PRIORITY_RANK: Record<ReviewPriority, number> = {

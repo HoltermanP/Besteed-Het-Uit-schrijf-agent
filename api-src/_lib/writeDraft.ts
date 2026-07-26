@@ -30,6 +30,8 @@ BRONHIËRARCHIE (streng, van hoog naar laag)
 5. Schrijfstijl & voorbeeldteksten — toon, zinsbouw, opmaak; geen nieuwe inhoud verzinnen
 
 INHOUDELIJKE REGELS
+- VOLG DE LEIDRAAD LETTERLIJK: neem de hoofdstuk-/vraagindeling over die de leidraad voor het in te dienen stuk voorschrijft — dezelfde (sub)gunningscriteria of vraagnummers, dezelfde titels, dezelfde volgorde. Verzin geen eigen hoofdstukindeling; de beoordelaar moet het stuk 1-op-1 naast de leidraad kunnen leggen
+- Verdeel het woordbudget naar de weging van de gunningscriteria: een subcriterium van 30% krijgt aantoonbaar meer diepgang dan een van 15%
 - Maak per verplicht onderwerp uit de leidraadanalyse een eigen <section class="doc-section"> met genummerde <h2>
 - Koppel elke sectie in een <p class="section-subtitle"> aan het relevante beoordelingscriterium of subcriterium
 - Beantwoord wat de opdrachtgever expliciet vraagt én adresseer de onderliggende behoefte uit de analyse "vraag achter de vraag"
@@ -131,12 +133,14 @@ OUTPUT (alleen HTML, geen markdown)
 - Geen meta-sectie over schrijfkwaliteit, stijlbibliotheek of werkwijze van het schrijven
 - Geen tekst buiten het HTML-artikel`
 
+// Ruime limieten: leidraden zijn vaak 50-150k tekens; afkappen betekent dat de
+// agent eisen mist en de leidraad niet kan volgen. Claude verwerkt dit probleemloos.
 const DOC_CHAR_LIMITS: Record<WriteDraftDocument['type'], number> = {
-  tender: 40_000,
-  company: 20_000,
-  rules: 20_000,
-  training: 20_000,
-  lessons: 12_000,
+  tender: 150_000,
+  company: 40_000,
+  rules: 40_000,
+  training: 30_000,
+  lessons: 15_000,
 }
 
 /** Streefdoel en ondergrens t.o.v. leidraad-maximum */
@@ -367,6 +371,8 @@ ${buildVolumeInstruction(analysis)}`
   }
 
   return `STRUCTUUR (verplicht volgen)
+- Spiegel de indeling van de leidraad: zoek in de aanbestedingsbronnen op welke vragen/(sub)criteria het ingediende stuk wordt beoordeeld en gebruik exact die koppen, nummering en volgorde
+- De onderstaande gedetecteerde punten zijn een CHECKLIST (mogelijk onvolledig of ruizig) — de leidraadtekst zelf is altijd leidend
 
 ${buildVolumeInstruction(analysis)}
 
@@ -421,7 +427,7 @@ function buildUserPrompt(request: WriteDraftRequest): string {
 
   const currentDraftBlock = request.currentDraft?.trim()
     ? `HUIDIG CONCEPT (uitgangspunt — structuur behouden tenzij leidraad anders vereist):
-${request.currentDraft.slice(0, 40_000)}`
+${request.currentDraft.slice(0, 120_000)}`
     : ''
 
   const volumeLimited = request.analysis ? hasVolumeLimit(request.analysis) : false

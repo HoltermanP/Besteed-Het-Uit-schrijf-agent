@@ -29,8 +29,20 @@ async function extractOfficeText(buffer: Buffer): Promise<string> {
   return normalizeText(ast.toText())
 }
 
+const LEGACY_EXTENSIONS: Record<string, string> = {
+  '.doc': '.docx',
+  '.xls': '.xlsx',
+  '.ppt': '.pptx',
+}
+
 export async function extractDocumentText(fileName: string, buffer: Buffer): Promise<string> {
   const extension = extensionOf(fileName)
+
+  if (LEGACY_EXTENSIONS[extension]) {
+    throw new Error(
+      `"${fileName}" gebruikt het oude Office-formaat (${extension}). Open het bestand en sla het op als ${LEGACY_EXTENSIONS[extension]} (of PDF) en upload opnieuw.`,
+    )
+  }
 
   if (TEXT_EXTENSIONS.has(extension)) {
     const text = normalizeText(buffer.toString('utf8'))

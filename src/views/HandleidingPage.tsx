@@ -327,7 +327,7 @@ export default function HandleidingPage() {
           <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
             <li>
               <strong>Uploaden:</strong> sleep bestanden in de uploadzone of klik erop. Ondersteund: PDF, Word,
-              PowerPoint, Excel, txt, md en csv — maximaal 12 MB per bestand. De tekst wordt automatisch uitgelezen.
+              PowerPoint, Excel, txt, md en csv — maximaal 4 MB per bestand. De tekst wordt automatisch uitgelezen.
             </li>
             <li>
               <strong>Handmatig plakken:</strong> geef een naam op bij &ldquo;Naam bron&rdquo; en plak de tekst in het
@@ -608,7 +608,7 @@ export default function HandleidingPage() {
               adminpagina.
             </Faq>
             <Faq question="Mijn upload wordt geweigerd.">
-              Ondersteunde formaten zijn PDF, Word, PowerPoint, Excel, txt, md en csv, met een maximum van 12 MB per
+              Ondersteunde formaten zijn PDF, Word, PowerPoint, Excel, txt, md en csv, met een maximum van 4 MB per
               bestand. Gescande PDF&rsquo;s zonder tekstlaag kunnen niet worden uitgelezen; plak in dat geval de tekst
               handmatig als bron.
             </Faq>
