@@ -3,6 +3,7 @@ import type {
   AnalyzeTenderError,
   AnalyzeTenderRequest,
   AnalyzeTenderResponse,
+  TenderDocumentExtract,
 } from '../types/analyzeTender'
 import type { SourceDocument, TenderAnalysis } from '../types/tenderAnalysis'
 
@@ -23,6 +24,7 @@ export async function analyzeTenderViaApi(
   buyerName: string,
   documents: SourceDocument[],
   baseline: TenderAnalysis,
+  extracts?: TenderDocumentExtract[],
 ): Promise<AnalyzeTenderResponse | null> {
   const payload: AnalyzeTenderRequest = {
     buyerName,
@@ -32,6 +34,7 @@ export async function analyzeTenderViaApi(
       content: doc.content,
     })),
     baseline,
+    ...(extracts?.length ? { extracts } : {}),
   }
 
   const apiConfig = getApiConfig()

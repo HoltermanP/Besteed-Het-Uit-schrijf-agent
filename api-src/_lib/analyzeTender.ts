@@ -1,4 +1,8 @@
-import type { AnalyzeTenderRequest, AnalyzeTenderResponse } from '../../src/types/analyzeTender'
+import type {
+  AnalyzeTenderRequest,
+  AnalyzeTenderResponse,
+  TenderDocumentExtract,
+} from '../../src/types/analyzeTender'
 import type {
   ContentRequirement,
   DocumentRequirement,
@@ -220,6 +224,244 @@ function parseAnalysisJson(content: string, baseline: TenderAnalysis): TenderAna
   }
 }
 
+// ---------------------------------------------------------------------------
+// Reduce-fase: per-document extracten (map) deterministisch samenvoegen tot één
+// analyse, gevolgd door een compacte AI-synthesepass. Dit vervangt het opnieuw
+// inlezen van alle volledige documenten en voorkomt truncatie.
+// ---------------------------------------------------------------------------
+
+// Rollen die als "leidraad" gelden voor leidraadFound/leidraadSource.
+const LEIDRAAD_ROLE = 'leidraad'
+const NVI_ROLE = 'nota-van-inlichtingen'
+
+function dedupeWordLimits(limits: WordLimit[]): WordLimit[] {
+  const seen = new Set<string>()
+  const out: WordLimit[] = []
+  for (const limit of limits) {
+    const key = `${limit.unit}|${limit.min ?? ''}|${limit.max ?? ''}|${(limit.section ?? '').toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(limit)
+  }
+  return out
+}
+
+function dedupeBy<T>(items: T[], keyOf: (item: T) => string): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const item of items) {
+    const key = keyOf(item).toLowerCase().trim()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    out.push(item)
+  }
+  return out
+}
+
+/** Strengste maximum (kleinste max) voor een gegeven eenheid; strenger wint zodat NvI-aanscherpingen leiden. */
+function strictestMax(limits: WordLimit[], unit: WordLimit['unit']): number | undefined {
+  return limits
+    .filter((limit) => limit.unit === unit && limit.max)
+    .reduce<number | undefined>((min, limit) => {
+      const value = limit.max!
+      return min === undefined ? value : Math.min(min, value)
+    }, undefined)
+}
+
+/** Voegt de per-document extracten samen tot één analyse, bovenop de heuristische baseline. */
+function mergeExtracts(baseline: TenderAnalysis, extracts: TenderDocumentExtract[]): TenderAnalysis {
+  // NvI achteraan zodat, waar dedup first-wins hanteert, de leidraad-formulering
+  // primair blijft en NvI-wijzigingen expliciet als modifications/gaps landen.
+  const ordered = [...extracts].sort((a, b) => {
+    const rank = (role: string) => (role === NVI_ROLE ? 1 : 0)
+    return rank(a.extract.role) - rank(b.extract.role)
+  })
+
+  const leidraadDoc = extracts.find((item) => item.extract.role === LEIDRAAD_ROLE)
+
+  const wordLimits = dedupeWordLimits([
+    ...ordered.flatMap((item) => item.extract.wordLimits),
+    ...baseline.wordLimits,
+  ])
+  const contentRequirements = dedupeBy(
+    [...ordered.flatMap((item) => item.extract.contentRequirements), ...baseline.contentRequirements],
+    (req) => req.topic,
+  )
+  const documentRequirements = dedupeBy(
+    [...ordered.flatMap((item) => item.extract.documentRequirements), ...baseline.documentRequirements],
+    (req) => req.name,
+  )
+  const submissionRequirements = dedupeBy(
+    [...ordered.flatMap((item) => item.extract.submissionRequirements), ...baseline.submissionRequirements],
+    (req) => `${req.category}|${req.requirement}`,
+  )
+  const evaluationCriteria = dedupeBy(
+    [...ordered.flatMap((item) => item.extract.evaluationCriteria), ...baseline.evaluationCriteria],
+    (criterion) => criterion,
+  ).slice(0, 10)
+
+  // NvI-wijzigingen expliciet zichtbaar maken voor writer én reviewer.
+  const modifications = ordered
+    .filter((item) => item.extract.role === NVI_ROLE)
+    .flatMap((item) => item.extract.modifications.map((mod) => `Nota van Inlichtingen (${item.name}): ${mod}`))
+
+  const gaps = [...new Set([...modifications, ...baseline.gaps])]
+
+  const leidraadFound = Boolean(leidraadDoc) || baseline.leidraadFound
+
+  return {
+    ...baseline,
+    leidraadFound,
+    leidraadSource: leidraadDoc?.name ?? baseline.leidraadSource,
+    wordLimits,
+    contentRequirements,
+    documentRequirements,
+    submissionRequirements,
+    evaluationCriteria,
+    gaps,
+    targetWordCount: strictestMax(wordLimits, 'woorden') ?? baseline.targetWordCount,
+    targetCharCount: strictestMax(wordLimits, 'karakters') ?? baseline.targetCharCount,
+  }
+}
+
+const SYNTHESIS_SYSTEM_PROMPT = `Je bent een senior bid-strateeg voor Nederlandse aanbestedingen.
+Je krijgt een reeds samengevoegde uitvraag-analyse (uit losse documentanalyses) plus korte bedrijfscontext.
+Jouw taak: een scherpe overkoepelende duiding leveren — GEEN eisen toevoegen of weglaten.
+
+Lever concreet:
+- summary: bondige samenvatting van de uitvraag (2-4 zinnen).
+- styleProfile: stem van de inschrijver × verwachtingen van de opdrachtgever, met blendedGuidance.
+- underlyingIntent: de "vraag achter de vraag", onderliggende behoefte, prioriteiten en schrijflens.
+
+Regels:
+- Baseer je uitsluitend op de aangeleverde analyse en context; verzin niets.
+- Als een Nota van Inlichtingen eisen wijzigt (zie modifications), verwerk dat in je duiding.
+- teamBrief is intern en begint met "Intern — niet opnemen in het inschrijfdocument".
+- Schrijf in het Nederlands.
+
+Antwoord UITSLUITEND met geldig JSON in exact deze vorm:
+{
+  "summary": "",
+  "styleProfile": { "companyName": "", "buyerName": "", "companySignals": [], "buyerSignals": [], "blendedGuidance": "" },
+  "underlyingIntent": { "explicitQuestion": "", "underlyingNeed": "", "questionBehindQuestion": "", "buyerPriorities": [], "implicitSuccessFactors": [], "writingGuidance": "", "teamBrief": "" }
+}`
+
+function summarizeMergedForSynthesis(merged: TenderAnalysis, extracts: TenderDocumentExtract[]): string {
+  const docLine = extracts
+    .map((item) => `- ${item.name} [${item.extract.role}]: ${item.extract.summary}`)
+    .join('\n')
+  const facts = extracts
+    .flatMap((item) => item.extract.keyFacts.map((fact) => `- ${fact} (${item.name})`))
+    .slice(0, 30)
+    .join('\n')
+
+  return `Documenten (map-fase):
+${docLine || '- (geen)'}
+
+Samengevoegde eisen:
+${JSON.stringify(
+    {
+      wordLimits: merged.wordLimits,
+      contentRequirements: merged.contentRequirements,
+      documentRequirements: merged.documentRequirements,
+      submissionRequirements: merged.submissionRequirements,
+      evaluationCriteria: merged.evaluationCriteria,
+      targetWordCount: merged.targetWordCount,
+      targetCharCount: merged.targetCharCount,
+    },
+    null,
+    2,
+  )}
+
+Wijzigingen via Nota van Inlichtingen (overrulen de leidraad):
+${merged.gaps.filter((gap) => gap.startsWith('Nota van Inlichtingen')).join('\n') || '- (geen)'}
+
+Relevante feiten uit bijlagen:
+${facts || '- (geen)'}`
+}
+
+async function synthesizeAnalysis(
+  ai: ReturnType<typeof resolveAiFromRequest>,
+  buyerName: string,
+  merged: TenderAnalysis,
+  extracts: TenderDocumentExtract[],
+  companyContext: string,
+): Promise<TenderAnalysis> {
+  const userContent = `Opdrachtgever: ${buyerName}
+
+Bedrijfscontext (inschrijver):
+${companyContext || '(geen bedrijfsbronnen aangeleverd)'}
+
+${summarizeMergedForSynthesis(merged, extracts)}
+
+Lever de overkoepelende duiding als JSON volgens het schema.`
+
+  const content = await completeChat(
+    ai,
+    [
+      { role: 'system', content: SYNTHESIS_SYSTEM_PROMPT },
+      { role: 'user', content: userContent },
+    ],
+    { jsonMode: ai.provider !== 'anthropic', maxTokens: 4_000, timeoutMs: 90_000, useThinking: false },
+  )
+
+  const jsonText = content.match(/```json?\s*([\s\S]*?)```/i)?.[1]?.trim() ?? content.trim()
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(jsonText) as Record<string, unknown>
+  } catch {
+    return merged
+  }
+
+  return {
+    ...merged,
+    summary: str(parsed.summary) || merged.summary,
+    styleProfile: mergeStyleProfile(parsed.styleProfile, merged.styleProfile),
+    underlyingIntent: mergeUnderlyingIntent(parsed.underlyingIntent, merged.underlyingIntent),
+  }
+}
+
+function buildCompanyContext(request: AnalyzeTenderRequest): string {
+  return request.documents
+    .filter((doc) => doc.type === 'company' || doc.type === 'rules' || doc.type === 'training')
+    .map((doc) => `- [${doc.type}] ${doc.name}:\n${trimSource(doc.content, 8_000)}`)
+    .join('\n\n')
+}
+
+/** Reduce-pad: extracten samenvoegen + synthesepass. Faalt de synthese, dan blijft de merge staan. */
+async function reduceFromExtracts(request: AnalyzeTenderRequest): Promise<Response> {
+  const extracts = request.extracts ?? []
+  const merged = mergeExtracts(request.baseline, extracts)
+
+  let ai: ReturnType<typeof resolveAiFromRequest>
+  try {
+    ai = resolveAiFromRequest(request.ai, 'INTENT_MODEL')
+  } catch {
+    // Geen AI beschikbaar → lever de deterministisch samengevoegde analyse (al compleet).
+    return Response.json({
+      analysis: { ...merged, aiAnalyzed: true, summary: merged.summary || request.baseline.summary },
+      provider: 'map-reduce',
+      model: 'deterministisch',
+      enriched: true,
+    } satisfies AnalyzeTenderResponse)
+  }
+
+  let analysis = merged
+  try {
+    analysis = await synthesizeAnalysis(ai, request.buyerName, merged, extracts, buildCompanyContext(request))
+  } catch {
+    // Synthese mislukt → de merge is nog steeds een volledige, bruikbare analyse.
+    analysis = merged
+  }
+
+  return Response.json({
+    analysis: { ...analysis, aiAnalyzed: true, analysisProvider: ai.provider, analysisModel: ai.model },
+    provider: ai.provider,
+    model: ai.model,
+    enriched: true,
+  } satisfies AnalyzeTenderResponse)
+}
+
 export async function handleAnalyzeTenderRequest(request: AnalyzeTenderRequest): Promise<Response> {
   if (!request.buyerName?.trim()) {
     return Response.json({ error: 'Opdrachtgever ontbreekt.' }, { status: 400 })
@@ -229,6 +471,12 @@ export async function handleAnalyzeTenderRequest(request: AnalyzeTenderRequest):
   }
   if (!request.baseline) {
     return Response.json({ error: 'Baseline-analyse ontbreekt.' }, { status: 400 })
+  }
+
+  // Map-reduce-pad: zijn er per-document extracten meegegeven, voeg die dan samen
+  // i.p.v. alle volledige documenten opnieuw in één call te lezen (geen truncatie).
+  if (request.extracts?.length) {
+    return reduceFromExtracts(request)
   }
 
   let ai: ReturnType<typeof resolveAiFromRequest>

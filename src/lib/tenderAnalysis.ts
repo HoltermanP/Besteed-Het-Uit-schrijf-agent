@@ -792,16 +792,45 @@ export function reviewAgainstAnalysis(
   analysis.contentRequirements
     .filter((req) => req.mandatory)
     .forEach((req) => {
-      const keywords = req.topic.split(/\s+/).filter((part) => part.length > 3)
-      const hit = keywords.some((keyword) => plain.includes(keyword.toLowerCase()))
-      if (!hit) {
+      const keywords = req.topic
+        .split(/\s+/)
+        .map((part) => part.toLowerCase())
+        .filter((part) => part.length > 3)
+      if (!keywords.length) return
+      const matched = keywords.filter((keyword) => plain.includes(keyword)).length
+      if (matched === 0) {
         findings.push({
           priority: 'hoog',
           title: `Verplicht onderwerp ontbreekt: ${req.topic}`,
           detail: req.detail,
         })
+      } else if (keywords.length >= 3 && matched < Math.ceil(keywords.length / 2)) {
+        // Onderwerp wordt aangestipt maar mogelijk oppervlakkig behandeld.
+        findings.push({
+          priority: 'normaal',
+          title: `Verplicht onderwerp mogelijk oppervlakkig: ${req.topic}`,
+          detail: `Slechts een deel van dit onderwerp lijkt uitgewerkt. Controleer of "${req.topic}" volledig wordt geraakt: ${req.detail}`,
+        })
       }
     })
+
+  // Beoordelingscriteria: elk criterium moet in het concept herkenbaar geadresseerd zijn.
+  ;(analysis.evaluationCriteria ?? []).slice(0, 6).forEach((criterion) => {
+    const label = criterion.replace(/\s*\(\d+%\)\s*/g, '').trim()
+    const keywords = label
+      .split(/[\s/]+/)
+      .map((part) => part.toLowerCase())
+      .filter((part) => part.length > 3)
+    if (!keywords.length) return
+    const hit = keywords.some((keyword) => plain.includes(keyword))
+    if (!hit) {
+      findings.push({
+        priority: 'normaal',
+        title: `Beoordelingscriterium niet herkenbaar geadresseerd: ${label}`,
+        detail: `Koppel minstens één passage expliciet aan het criterium "${label}" zodat de beoordelaar de score kan onderbouwen.`,
+      })
+    }
+  })
 
   const mandatorySubmission = (analysis.submissionRequirements ?? []).filter((req) => req.mandatory)
 

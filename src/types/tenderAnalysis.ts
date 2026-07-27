@@ -1,11 +1,41 @@
 export type SourceType = 'tender' | 'company' | 'rules' | 'training'
 
+/** Rol van een aanbestedingsdocument in de map-fase van de analyse. */
+export type DocumentRole = 'leidraad' | 'nota-van-inlichtingen' | 'bijlage' | 'overig'
+
+/**
+ * Per-document distillaat uit de map-fase: één AI-call leest één stuk volledig
+ * en levert een compacte, gestructureerde extractie. De reduce-fase voegt de
+ * extracten van alle stukken samen tot één {@link TenderAnalysis}.
+ */
+export type DocumentExtract = {
+  role: DocumentRole
+  /** Beknopte samenvatting van waar dit stuk over gaat. */
+  summary: string
+  wordLimits: WordLimit[]
+  contentRequirements: ContentRequirement[]
+  documentRequirements: DocumentRequirement[]
+  submissionRequirements: SubmissionRequirement[]
+  evaluationCriteria: string[]
+  /** Alleen bij Nota van Inlichtingen: wijzigingen die eerdere eisen overrulen. */
+  modifications: string[]
+  /** Feiten, cijfers en constraints die relevant zijn om conform te schrijven (m.n. bijlagen). */
+  keyFacts: string[]
+  /** Lengte van de brontekst waarop dit extract is gebaseerd — voor cache-invalidatie. */
+  sourceChars: number
+  analyzedAt: string
+  provider?: string
+  model?: string
+}
+
 export type SourceDocument = {
   id: string
   name: string
   type: SourceType
   content: string
   importedAt: string
+  /** Gecachet per-document distillaat uit de map-fase; ontbreekt tot het stuk is geanalyseerd. */
+  extract?: DocumentExtract | null
 }
 
 export type WordLimit = {

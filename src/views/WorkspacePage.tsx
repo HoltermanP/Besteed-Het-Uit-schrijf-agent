@@ -50,12 +50,14 @@ import { buildHtmlDraft } from '../lib/buildDraft'
 import { revealDraftProgressively } from '../lib/draftProgress'
 import { analyzeTenderDocuments, countCharacters, countWords, reviewAgainstAnalysis } from '../lib/tenderAnalysis'
 import { analyzeTenderViaApi } from '../lib/analyzeTenderApi'
+import { analyzeDocumentViaApi, mapWithConcurrency } from '../lib/analyzeDocumentApi'
+import type { TenderDocumentExtract } from '../types/analyzeTender'
 import { assessSourceContent } from '../lib/sourceQuality'
 import { readFileContent } from '../lib/extractTextApi'
 import FileUploadZone from '../components/FileUploadZone'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog'
 import { acceptedStyleExtensions } from '../types/styleDocument'
-import type { TenderAnalysis } from '../types/tenderAnalysis'
+import type { DocumentExtract, TenderAnalysis } from '../types/tenderAnalysis'
 import { exportPdfFromHtml } from '../lib/documentExport'
 import { isNeonConfigured, isWriterConfigured, migrateLegacyNeonUrl } from '../lib/apiConfig'
 import { generateDraftViaApi, fetchWriterStatus, isNoAiConfigError, type WriterStatus } from '../lib/writeDraftApi'
@@ -111,6 +113,8 @@ type SourceDocument = {
   type: SourceType
   content: string
   importedAt: string
+  /** Gecachet per-document distillaat uit de map-fase van de analyse. */
+  extract?: DocumentExtract | null
 }
 
 type CommentStatus = 'open' | 'verwerkt' | 'akkoord'
@@ -624,12 +628,57 @@ export default function WorkspacePage() {
 
   const [showScoreDetails, setShowScoreDetails] = useState(false)
 
+  // Map-fase: analyseer elk aanbestedingsstuk apart (parallel, met cache) zodat álle
+  // documenten volledig gelezen worden zonder truncatie. Levert extracten voor de reduce.
+  const MAP_CONCURRENCY = 3
+
+  const gatherDocumentExtracts = async (): Promise<TenderDocumentExtract[]> => {
+    const tenderDocs = effectiveDocuments.filter((doc) => doc.type === 'tender' && doc.content.trim())
+    if (!tenderDocs.length) return []
+
+    // Cache: hergebruik een eerder extract zolang de brontekst niet is gewijzigd.
+    const cached = new Map(documents.map((doc) => [doc.id, doc.extract]))
+    const isFresh = (doc: (typeof tenderDocs)[number]) =>
+      cached.get(doc.id)?.sourceChars === doc.content.length
+
+    setSyncStatus(`Documenten los analyseren (0/${tenderDocs.length})…`)
+    const extracts = await mapWithConcurrency(
+      tenderDocs,
+      MAP_CONCURRENCY,
+      async (doc): Promise<TenderDocumentExtract | null> => {
+        const reused = isFresh(doc) ? cached.get(doc.id) : null
+        const extract = reused ?? (await analyzeDocumentViaApi(doc, project.buyer))
+        return extract ? { name: doc.name, extract } : null
+      },
+      (done, total) => setSyncStatus(`Documenten los analyseren (${done}/${total})…`),
+    )
+
+    const resolved = extracts.filter((item): item is TenderDocumentExtract => item !== null)
+
+    // Verse extracten terugschrijven naar de documenten-state zodat ze gecachet blijven.
+    const byName = new Map(resolved.map((item) => [item.name, item.extract]))
+    setDocuments((current) =>
+      current.map((doc) =>
+        doc.type === 'tender' && byName.has(doc.name) ? { ...doc, extract: byName.get(doc.name) } : doc,
+      ),
+    )
+
+    return resolved
+  }
+
   const runAnalysis = async () => {
     const baseline = analyzeTenderDocuments(effectiveDocuments, project.buyer)
     setAnalysis(baseline)
-    setSyncStatus('AI analyseert de uitvraag (documenten, limieten, vragen, eisen, stijl)…')
 
-    const enriched = await analyzeTenderViaApi(project.buyer, effectiveDocuments, baseline)
+    const extracts = await gatherDocumentExtracts()
+
+    setSyncStatus(
+      extracts.length
+        ? `Uitvraag samenvoegen uit ${extracts.length} documentanalyse(s)…`
+        : 'AI analyseert de uitvraag (documenten, limieten, vragen, eisen, stijl)…',
+    )
+
+    const enriched = await analyzeTenderViaApi(project.buyer, effectiveDocuments, baseline, extracts)
     if (enriched?.enriched) {
       setAnalysis(enriched.analysis)
       setSyncStatus(
