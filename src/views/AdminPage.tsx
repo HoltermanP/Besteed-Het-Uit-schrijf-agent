@@ -115,9 +115,12 @@ export default function AdminPage() {
               <div>
                 <CardTitle>Testmodus</CardTitle>
                 <CardDescription>
-                  Draai alle AI-taken (schrijven, analyse, review) op het goedkoopste
-                  Anthropic-model (Claude Haiku 4.5) om AI-credits te besparen tijdens testen.
-                  Uitgeschakeld gebruikt de app de productie-instellingen hieronder.
+                  Draai analyse-, review- en overige lichte AI-taken op het goedkoopste model
+                  (Claude Haiku 4.5). Het schrijven van het concept draait op een middenmodel
+                  (Claude Sonnet 4.6) — Haiku houdt de uitgebreide opmaakinstructies (tabellen,
+                  managementmodellen) niet vol over een lange generatie. Nog altijd veel
+                  goedkoper dan het productiemodel. Uitgeschakeld gebruikt de app de
+                  productie-instellingen hieronder.
                 </CardDescription>
               </div>
             </div>
@@ -133,7 +136,7 @@ export default function AdminPage() {
                 }}
               />
               <Label htmlFor="test-mode">
-                Testmodus actief{config.testMode ? ' — alle taken via claude-haiku-4-5' : ''}
+                Testmodus actief{config.testMode ? ' — schrijven via claude-sonnet-4-6, overig via claude-haiku-4-5' : ''}
               </Label>
             </div>
           </CardContent>

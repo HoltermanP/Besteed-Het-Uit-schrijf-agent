@@ -56,8 +56,15 @@ const ANTHROPIC_TIER_MODELS: Record<AiTaskTier, string> = {
 }
 
 // Goedkoopste Anthropic-model ($1/$5 per miljoen tokens): wordt in testmodus
-// voor álle taken gebruikt, zodat functioneel testen vrijwel niets kost.
+// gebruikt voor analyse- en lichte taken, waar modelkwaliteit nauwelijks
+// merkbaar is in het eindresultaat.
 const ANTHROPIC_TEST_MODEL = 'claude-haiku-4-5'
+
+// Het schrijfwerk moet in testmodus lange, complex opgemaakte HTML-secties
+// (tabellen, managementmodellen) volhouden over een hele generatie — Haiku
+// verliest daarbij de opmaak vanaf een paar secties. Sonnet is duidelijk
+// goedkoper dan het productiemodel maar houdt de opmaakinstructies wel vol.
+const ANTHROPIC_TEST_MODEL_WRITER = 'claude-sonnet-4-6'
 
 const ANTHROPIC_VERSION = '2023-06-01'
 
@@ -177,9 +184,13 @@ async function completeAnthropic(
   }
 
   if (systemBlocks) body.system = systemBlocks
+  // effort staat los van thinking: ook zonder adaptive thinking bepaalt dit de
+  // denkdiepte/inspanning van het model, dus altijd meesturen wanneer gezet.
   if (options.useThinking && usesAdaptiveThinking(ai.model)) {
     body.thinking = { type: 'adaptive' }
-    body.output_config = { effort: options.effort ?? 'high' }
+  }
+  if (options.effort) {
+    body.output_config = { effort: options.effort }
   }
 
   const baseUrl = normalizeAnthropicBaseUrl(normalizeBaseUrl(ai.baseUrl, DEFAULT_ANTHROPIC_BASE_URL))
@@ -228,9 +239,13 @@ async function* streamAnthropic(
   }
 
   if (systemBlocks) body.system = systemBlocks
+  // effort staat los van thinking: ook zonder adaptive thinking bepaalt dit de
+  // denkdiepte/inspanning van het model, dus altijd meesturen wanneer gezet.
   if (options.useThinking && usesAdaptiveThinking(ai.model)) {
     body.thinking = { type: 'adaptive' }
-    body.output_config = { effort: options.effort ?? 'high' }
+  }
+  if (options.effort) {
+    body.output_config = { effort: options.effort }
   }
 
   const baseUrl = normalizeAnthropicBaseUrl(normalizeBaseUrl(ai.baseUrl, DEFAULT_ANTHROPIC_BASE_URL))
@@ -479,12 +494,17 @@ export function resolveAiFromRequest(
 ): AiRuntimeConfig {
   if (requestAi?.apiKey?.trim()) {
     if (requestAi.provider === 'anthropic') {
-      // Testmodus (ingesteld in API-beheer): elke taak draait op het goedkoopste
-      // model. Anders geldt het in API-beheer geconfigureerde model alleen voor
-      // het schrijfwerk; lichtere taken draaien op het (goedkopere) tier-model,
-      // tenzij de omgevingsvariabele van deze taakgroep iets anders afdwingt.
+      // Testmodus (ingesteld in API-beheer): analyse- en lichte taken draaien op
+      // het goedkoopste model; het schrijfwerk op een middenmodel dat de lange,
+      // complexe opmaakinstructies wél kan volhouden (zie ANTHROPIC_TEST_MODEL_WRITER
+      // hierboven). Anders geldt het in API-beheer geconfigureerde model alleen
+      // voor het schrijfwerk; lichtere taken draaien op het (goedkopere)
+      // tier-model, tenzij de omgevingsvariabele van deze taakgroep iets anders
+      // afdwingt.
       const model = requestAi.testMode
-        ? ANTHROPIC_TEST_MODEL
+        ? tier === 'writer'
+          ? ANTHROPIC_TEST_MODEL_WRITER
+          : ANTHROPIC_TEST_MODEL
         : tier === 'writer'
           ? requestAi.model?.trim() || ANTHROPIC_TIER_MODELS.writer
           : process.env[envModelKey]?.trim() || ANTHROPIC_TIER_MODELS[tier]
