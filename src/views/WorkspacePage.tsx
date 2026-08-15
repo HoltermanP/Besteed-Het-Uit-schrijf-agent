@@ -1735,6 +1735,16 @@ export default function WorkspacePage() {
             <span className="min-w-0 flex-1">Handleiding</span>
             <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
           </Link>
+          <Link
+            href="/admin"
+            className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-sm font-semibold shadow-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
+          >
+            <span className="grid size-8 flex-none place-items-center rounded-lg bg-primary/10 text-primary">
+              <ShieldCheck size={16} />
+            </span>
+            <span className="min-w-0 flex-1">API-beheer</span>
+            <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+          </Link>
         </nav>
 
         <Card className="mb-[14px]">
