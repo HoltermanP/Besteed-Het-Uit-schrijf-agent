@@ -38,6 +38,8 @@ import {
 } from '../lib/tenderDatabase'
 import { mapWithConcurrency } from '../lib/analyzeDocumentApi'
 import { currentProfileStamp, getTenderScores, scoreTendersForCompany } from '../lib/tenderScoreApi'
+import { matchesCompanyCpv } from '../lib/cpv'
+import { getCompanyConfig } from '../lib/companyConfig'
 import type { SavedTenderDocument, TenderDocument, TenderListItem } from '../types/tenderNed'
 import type { StoredTenderScore } from '../types/tenderScore'
 import { Button } from '@/components/ui/button'
@@ -90,6 +92,11 @@ export default function TenderBrowserPage() {
   const [scoring, setScoring] = useState(false)
   // Scores van een ouder bedrijfsprofiel worden verborgen; opnieuw scoren ververst ze.
   const profileStamp = useMemo(() => currentProfileStamp(), [])
+  // Relevantiefilter: toon alleen tenders waarvan de CPV-codes matchen met de
+  // CPV-codes van het actieve bedrijf (ingesteld in de bedrijfsconfiguratie).
+  const [onlyRelevant, setOnlyRelevant] = useState(false)
+  const companyConfig = useMemo(() => getCompanyConfig(), [])
+  const companyCpvCodes = companyConfig.cpvCodes
 
   const cpvOptions = useMemo(() => collectCpvCodes(items), [items])
 
@@ -148,9 +155,49 @@ export default function TenderBrowserPage() {
     }
   }
 
+  // CPV-codes staan niet op lijstitems; bij het relevantiefilter worden ze per
+  // item bijgeladen via de detail-endpoint (beperkte parallelliteit, en de ref
+  // voorkomt herhaalde pogingen). Items zonder CPV-registratie krijgen na de
+  // poging een lege lijst, zodat de laadteller niet blijft hangen.
+  const cpvAttemptedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!onlyRelevant) return
+    const missing = items.filter(
+      (item) => !item.cpvCodes && !cpvAttemptedRef.current.has(item.publicatieId),
+    )
+    if (!missing.length) return
+    missing.forEach((item) => cpvAttemptedRef.current.add(item.publicatieId))
+    void mapWithConcurrency(missing, 4, async (item) => {
+      try {
+        const detail = await fetchPublicationDetail(item.publicatieId)
+        setItems((current) =>
+          current.map((row) =>
+            row.publicatieId === item.publicatieId ? { ...row, cpvCodes: detail.cpvCodes ?? [] } : row,
+          ),
+        )
+      } catch {
+        setItems((current) =>
+          current.map((row) => (row.publicatieId === item.publicatieId ? { ...row, cpvCodes: [] } : row)),
+        )
+      }
+    })
+  }, [items, onlyRelevant])
+
+  const pendingCpvCount = useMemo(
+    () => (onlyRelevant ? items.filter((item) => !item.cpvCodes).length : 0),
+    [items, onlyRelevant],
+  )
+
   const visibleItems = useMemo(
-    () => items.filter((item) => matchesFilters(item, { cpvPrefix: '', query: '', onlyOpen })),
-    [items, onlyOpen],
+    () =>
+      items.filter((item) => {
+        if (!matchesFilters(item, { cpvPrefix: '', query: '', onlyOpen })) return false
+        if (onlyRelevant && companyCpvCodes.length) {
+          return matchesCompanyCpv(item.cpvCodes ?? [], companyCpvCodes)
+        }
+        return true
+      }),
+    [items, onlyOpen, onlyRelevant, companyCpvCodes],
   )
 
   const toggleSelect = (id: string) => {
@@ -384,14 +431,40 @@ export default function TenderBrowserPage() {
                 onKeyDown={(event) => event.key === 'Enter' && runFilteredSearch()}
               />
             </div>
-            <label className="flex items-center gap-2 text-sm md:pb-2.5">
-              <Checkbox
-                checked={onlyOpen}
-                onCheckedChange={(checked) => setOnlyOpen(checked === true)}
-              />
-              Alleen openstaande inschrijvingen
-            </label>
+            <div className="flex flex-col gap-2 md:pb-2.5">
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={onlyOpen}
+                  onCheckedChange={(checked) => setOnlyOpen(checked === true)}
+                />
+                Alleen openstaande inschrijvingen
+              </label>
+              <label
+                className={cn(
+                  'flex items-center gap-2 text-sm',
+                  !companyCpvCodes.length && 'cursor-not-allowed opacity-60',
+                )}
+                title={
+                  companyCpvCodes.length
+                    ? `Toont alleen tenders waarvan de CPV-codes matchen met de ${companyCpvCodes.length} CPV-code(s) van ${companyConfig.name || 'het actieve bedrijf'}.`
+                    : 'Stel eerst CPV-codes in bij Configuratie → CPV-codes om op relevantie te filteren.'
+                }
+              >
+                <Checkbox
+                  checked={onlyRelevant}
+                  disabled={!companyCpvCodes.length}
+                  onCheckedChange={(checked) => setOnlyRelevant(checked === true)}
+                />
+                Alleen relevant voor {companyConfig.name.trim() || 'mijn bedrijf'}
+              </label>
+            </div>
           </div>
+          {onlyRelevant && pendingCpvCount > 0 ? (
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <LoaderCircle size={13} className="animate-spin" /> CPV-codes laden voor {pendingCpvCount}{' '}
+              aanbesteding(en) — de lijst vult zich terwijl dit loopt.
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             <Button onClick={runFilteredSearch} disabled={loading}>
               {loading ? <LoaderCircle size={16} className="animate-spin" /> : <Search size={16} />}
