@@ -56,10 +56,12 @@ VOLUME (cruciaal)
 OPMAAK & LEESBAARHEID (maak het document visueel sterk, niet kaal)
 - Gebruik opsommingen (<ul>/<ol>) om criteria, stappen, rollen, voorwaarden of bewijslast overzichtelijk te maken — als aanvulling op de alinea's, niet als vervanging van inhoudelijke uitwerking
 - Gebruik tabellen voor gestructureerde gegevens (planning, RACI/rolverdeling, KPI's, risico's met maatregelen, eis-vs-invulling). Format: <div class="table-wrap"><table><caption>…</caption><thead><tr><th>…</th></tr></thead><tbody>…</tbody></table></div>
+- Houd dit kwaliteitsniveau vol over het VOLLEDIGE document: sectie 8 of 12 verdient dezelfde tabellen, opsommingen en structuur als sectie 1. Val bij een lang stuk niet terug op kale alinea's zodra je verder in de tekst zit — dat is een bekende valkuil bij lange documenten en moet je actief vermijden
 
 MANAGEMENTMODELLEN & VISUALISATIE (actief identificeren en praktisch toepassen)
 - Beoordeel bij ELKE sectie actief: welk erkend managementmodel uit de theorie kan deze inhoud structureren, onderbouwen of overtuigender maken? Pas dat model PRAKTISCH toe — geen theorie-uitleg of definitie, maar het model ingevuld met de concrete situatie van déze aanbesteding en opdrachtgever
 - Verspreid over het document mag je meerdere modellen gebruiken (maximaal één per sectie). Kies steeds het inhoudelijk best passende model; gebruik een model alleen waar het echt iets toevoegt, niet als opvulling, en herhaal hetzelfde model niet onnodig
+- "Niet onnodig herhalen" betekent: kies per sectie een ander soort model dan de vorige. Het betekent NIET dat je verderop in het document minder modellen mag gebruiken dan aan het begin — pas dit principe toe in de eerste én de laatste sectie
 - Zet de naam van het model in de <figcaption> (bijv. "SWOT-analyse", "Risicomatrix (kans × impact)", "Kraljic-matrix", "PDCA-cyclus", "Krachtenveldanalyse")
 - Veelgebruikte modellen voor aanbestedingen en het bijbehorende format:
   • SWOT, PESTEL/DESTEP, Five Forces (Porter), 7S (McKinsey), MoSCoW → modelraster (table class="model-grid")
@@ -564,7 +566,7 @@ function buildContinuationPrompt(request: WriteDraftRequest, accumulated: string
     volumeHint = ` Het concept telt nu circa ${words} woorden. Werk alle resterende verplichte onderwerpen volledig uit tot minimaal ${minimumWordTarget(request)} woorden.`
   }
 
-  return `Het vorige antwoord stopte voortijdig. Ga EXACT verder waar de tekst stopte — herhaal geen bestaande alinea's of secties. Sluit alle open HTML-tags af en eindig met </article>.${volumeHint}`
+  return `Het vorige antwoord stopte voortijdig. Ga EXACT verder waar de tekst stopte — herhaal geen bestaande alinea's of secties. Sluit alle open HTML-tags af en eindig met </article>. Blijf de opmaakregels uit de systeeminstructie volgen (tabellen, opsommingen, managementmodellen) — het resterende deel verdient dezelfde opmaakkwaliteit als het al geschreven deel.${volumeHint}`
 }
 
 async function streamDraftToCompletion(
