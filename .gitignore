@@ -29,3 +29,6 @@ test-results
 *.njsproj
 *.sln
 *.sw?
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo
