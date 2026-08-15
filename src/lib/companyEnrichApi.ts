@@ -37,6 +37,7 @@ export async function enrichCompanyFromWebsite(website: string): Promise<Company
       baseUrl: apiConfig.writer.baseUrl,
       apiKey: apiConfig.writer.apiKey,
       model: apiConfig.writer.model,
+      testMode: apiConfig.testMode || undefined,
     }
   }
 

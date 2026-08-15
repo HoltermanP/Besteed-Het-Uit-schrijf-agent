@@ -7,6 +7,7 @@ import {
   Brain,
   Building2,
   Database,
+  FlaskConical,
   Import,
   LogOut,
   PenLine,
@@ -47,7 +48,8 @@ export default function AdminPage() {
   const [config, setConfig] = useState<ApiConfig>(() => getApiConfig())
   const [saved, setSaved] = useState(false)
 
-  const updateSection = <K extends keyof ApiConfig>(
+  // Alleen de object-secties; scalars zoals testMode gaan rechtstreeks via setConfig.
+  const updateSection = <K extends Exclude<keyof ApiConfig, 'testMode'>>(
     section: K,
     patch: Partial<ApiConfig[K]>,
   ) => {
@@ -106,6 +108,37 @@ export default function AdminPage() {
       </header>
 
       <form className="grid gap-4 md:grid-cols-2" onSubmit={handleSubmit}>
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <div className="flex items-start gap-3">
+              <FlaskConical size={20} className="mt-0.5 shrink-0" />
+              <div>
+                <CardTitle>Testmodus</CardTitle>
+                <CardDescription>
+                  Draai alle AI-taken (schrijven, analyse, review) op het goedkoopste
+                  Anthropic-model (Claude Haiku 4.5) om AI-credits te besparen tijdens testen.
+                  Uitgeschakeld gebruikt de app de productie-instellingen hieronder.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="test-mode"
+                checked={config.testMode}
+                onCheckedChange={(checked) => {
+                  setConfig((current) => ({ ...current, testMode: checked }))
+                  setSaved(false)
+                }}
+              />
+              <Label htmlFor="test-mode">
+                Testmodus actief{config.testMode ? ' — alle taken via claude-haiku-4-5' : ''}
+              </Label>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <div className="flex items-start gap-3">

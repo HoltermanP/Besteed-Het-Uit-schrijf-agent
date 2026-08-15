@@ -110,6 +110,7 @@ export async function analyzeStyleDocument(id: string): Promise<StyleDocument> {
         baseUrl: apiConfig.writer.baseUrl,
         apiKey: apiConfig.writer.apiKey,
         model: apiConfig.writer.model,
+        testMode: apiConfig.testMode || undefined,
       }
     : undefined
 
@@ -135,6 +136,7 @@ export async function distillRulesFromDocument(id: string): Promise<string> {
         baseUrl: apiConfig.writer.baseUrl,
         apiKey: apiConfig.writer.apiKey,
         model: apiConfig.writer.model,
+        testMode: apiConfig.testMode || undefined,
       }
     : undefined
 

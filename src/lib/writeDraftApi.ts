@@ -26,6 +26,7 @@ function buildPayload(request: Omit<WriteDraftRequest, 'ai' | 'stream'>): WriteD
       baseUrl: apiConfig.writer.baseUrl,
       apiKey: apiConfig.writer.apiKey,
       model: apiConfig.writer.model,
+      testMode: apiConfig.testMode || undefined,
     }
   }
   return payload

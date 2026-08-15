@@ -139,7 +139,7 @@ export async function handleEvaluateProjectRequest(
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: buildUserPrompt(request) },
       ],
-      { jsonMode: ai.provider !== 'anthropic', maxTokens: 4_000, timeoutMs: 120_000, useThinking: false },
+      { jsonMode: ai.provider !== 'anthropic', maxTokens: 4_000, timeoutMs: 120_000, useThinking: false, label: 'project-evaluatie' },
     )
 
     const lessons = parseLessons(content)

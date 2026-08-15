@@ -6,6 +6,7 @@ export type AnalyzeDocumentAiConfig = {
   baseUrl: string
   apiKey: string
   model: string
+  testMode?: boolean
 }
 
 export type AnalyzeDocumentRequest = {

@@ -6,6 +6,7 @@ export type AnalyzeTenderAiConfig = {
   baseUrl: string
   apiKey: string
   model: string
+  testMode?: boolean
 }
 
 /** Per-document extract uit de map-fase, met de bestandsnaam voor bronverwijzing. */

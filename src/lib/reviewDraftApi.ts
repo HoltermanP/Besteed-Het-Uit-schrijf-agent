@@ -71,6 +71,7 @@ export async function reviewDraftViaApi(args: {
       baseUrl: aiSection.baseUrl,
       apiKey: aiSection.apiKey,
       model: aiSection.model,
+      testMode: apiConfig.testMode || undefined,
     }
   }
 

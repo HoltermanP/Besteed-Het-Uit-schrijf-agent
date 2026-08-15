@@ -229,7 +229,7 @@ Lever het extract als JSON volgens het opgegeven schema.`
         { role: 'system', content: buildSystemPrompt(role) },
         { role: 'user', content: userContent },
       ],
-      { jsonMode: ai.provider !== 'anthropic', maxTokens: 8_000, timeoutMs: 110_000, useThinking: false },
+      { jsonMode: ai.provider !== 'anthropic', maxTokens: 8_000, timeoutMs: 110_000, useThinking: false, label: 'document-extract' },
     )
 
     const extract = parseExtract(content, role, source, doc.content.length)

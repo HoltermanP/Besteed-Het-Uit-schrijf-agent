@@ -113,7 +113,7 @@ export async function generateFragmentRewrite(
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: buildUserPrompt(request) },
     ],
-    { maxTokens: 16_000, timeoutMs: 120_000, useThinking: false, effort: 'high' },
+    { maxTokens: 16_000, timeoutMs: 120_000, useThinking: false, effort: 'high', label: 'sectie-herschrijving' },
   )
 
   return {

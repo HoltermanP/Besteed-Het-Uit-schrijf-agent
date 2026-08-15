@@ -28,6 +28,7 @@ function buildAi(): LessonAiConfig | undefined {
     baseUrl: section.baseUrl,
     apiKey: section.apiKey,
     model: section.model,
+    testMode: apiConfig.testMode || undefined,
   }
 }
 

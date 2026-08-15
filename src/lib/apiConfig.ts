@@ -6,6 +6,7 @@ const STORAGE_KEY = 'bid-agent-api-config'
 export function getApiConfig(): ApiConfig {
   const stored = loadStored<Partial<ApiConfig>>(STORAGE_KEY, {})
   return {
+    testMode: stored.testMode ?? defaultApiConfig.testMode,
     tenderned: { ...defaultApiConfig.tenderned, ...stored.tenderned },
     neon: { ...defaultApiConfig.neon, ...stored.neon },
     writer: { ...defaultApiConfig.writer, ...stored.writer },

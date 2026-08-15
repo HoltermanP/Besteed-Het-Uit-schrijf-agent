@@ -124,7 +124,7 @@ ${formatCandidates(request)}
 Lever je selectie als JSON.`,
         },
       ],
-      { jsonMode: ai.provider !== 'anthropic', maxTokens: 2_000, timeoutMs: 90_000, useThinking: false },
+      { jsonMode: ai.provider !== 'anthropic', maxTokens: 2_000, timeoutMs: 90_000, useThinking: false, label: 'leerpunten-selectie' },
     )
 
     return Response.json({

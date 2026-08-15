@@ -47,6 +47,7 @@ export type LessonAiConfig = {
   baseUrl: string
   apiKey: string
   model: string
+  testMode?: boolean
 }
 
 /** Invoer voor het opslaan van een nieuw leerpunt. */

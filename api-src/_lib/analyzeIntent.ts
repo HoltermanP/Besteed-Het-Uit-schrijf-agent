@@ -105,7 +105,7 @@ Lever een scherpere vraag-achter-de-vraag analyse. teamBrief moet beginnen met "
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: userContent },
     ],
-    { jsonMode: ai.provider !== 'anthropic', maxTokens: 4_000, timeoutMs: 90_000, useThinking: false },
+    { jsonMode: ai.provider !== 'anthropic', maxTokens: 4_000, timeoutMs: 90_000, useThinking: false, label: 'intent-analyse' },
   )
 
   const underlyingIntent = parseIntentJson(content, request.baseline)

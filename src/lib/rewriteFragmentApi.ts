@@ -14,6 +14,7 @@ function buildPayload(request: Omit<RewriteFragmentRequest, 'ai'>): RewriteFragm
       baseUrl: apiConfig.writer.baseUrl,
       apiKey: apiConfig.writer.apiKey,
       model: apiConfig.writer.model,
+      testMode: apiConfig.testMode || undefined,
     }
   }
   return payload

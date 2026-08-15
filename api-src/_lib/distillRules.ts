@@ -71,7 +71,7 @@ Lever uitsluitend de bulletlijst met regels.`
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userContent },
     ],
-    { jsonMode: false, maxTokens: 2_000, timeoutMs: 120_000, useThinking: false },
+    { jsonMode: false, maxTokens: 2_000, timeoutMs: 120_000, useThinking: false, label: 'distillatie-regels' },
   )
 
   const rules = content.trim()

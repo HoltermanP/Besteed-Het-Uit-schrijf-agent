@@ -419,7 +419,33 @@ function docsByType(request: WriteDraftRequest, type: WriteDraftDocument['type']
     .join('\n\n')
 }
 
-function buildUserPrompt(request: WriteDraftRequest): string {
+/**
+ * Stabiel bronnenblok als eerste user-bericht: dit is byte-identiek over de
+ * stadia brons/zilver/goud en over vervolg-passes heen, zodat de cache-marker
+ * aan het einde ervan (zie aiClient) maximaal wordt herlezen. Alles wat per
+ * stadium of per generatie verandert (fase, analyse, opmerkingen, huidig
+ * concept) staat bewust in het aparte taakblok erna.
+ */
+function buildSourcesPrompt(request: WriteDraftRequest): string {
+  return `=== BRONNEN ===
+
+Aanbestedingsstukken (leidraad — leidend voor structuur en eisen):
+${docsByType(request, 'tender') || '- geen'}
+
+Bedrijfsinformatie (feiten voor onderbouwing):
+${docsByType(request, 'company') || '- geen'}
+
+Schrijfregels & kwaliteitsstandaarden (verplicht — formulering en kwaliteit):
+${docsByType(request, 'rules') || '- geen'}
+
+Schrijfstijl & voorbeeldteksten (toon/structuur — geen nieuwe inhoud):
+${docsByType(request, 'training') || '- geen'}
+
+Lessons learned uit eerdere aanbestedingen (toepassen wat werkte, vermijden wat punten kostte; nooit de leidraad-eisen overrulen):
+${docsByType(request, 'lessons') || '- geen'}`
+}
+
+function buildTaskPrompt(request: WriteDraftRequest): string {
   const openComments = request.comments
     .filter((comment) => !comment.resolved)
     .map((comment) => `- Fragment: ${comment.fragment}\n  Opmerking: ${comment.note}`)
@@ -457,22 +483,7 @@ ${buildAnalysisBlock(request.analysis)}
 
 ${buildStructureInstruction(request.analysis)}
 
-=== BRONNEN ===
-
-Aanbestedingsstukken (leidraad — leidend voor structuur en eisen):
-${docsByType(request, 'tender') || '- geen'}
-
-Bedrijfsinformatie (feiten voor onderbouwing):
-${docsByType(request, 'company') || '- geen'}
-
-Schrijfregels & kwaliteitsstandaarden (verplicht — formulering en kwaliteit):
-${docsByType(request, 'rules') || '- geen'}
-
-Schrijfstijl & voorbeeldteksten (toon/structuur — geen nieuwe inhoud):
-${docsByType(request, 'training') || '- geen'}
-
-Lessons learned uit eerdere aanbestedingen (toepassen wat werkte, vermijden wat punten kostte; nooit de leidraad-eisen overrulen):
-${docsByType(request, 'lessons') || '- geen'}
+De bronnen staan in het vorige bericht.
 
 Open reviewopmerkingen:
 ${openComments || '- geen'}
@@ -599,9 +610,12 @@ async function streamDraftToCompletion(
 }
 
 function buildChatMessages(request: WriteDraftRequest) {
+  // Twee user-berichten: het stabiele bronnenblok eerst (met cache-marker via
+  // aiClient), daarna het per-stadium wisselende taakblok.
   return [
     { role: 'system' as const, content: SYSTEM_PROMPT },
-    { role: 'user' as const, content: buildUserPrompt(request) },
+    { role: 'user' as const, content: buildSourcesPrompt(request) },
+    { role: 'user' as const, content: buildTaskPrompt(request) },
   ]
 }
 
@@ -611,9 +625,12 @@ function chatOptions(request: WriteDraftRequest) {
     timeoutMs: 300_000,
     useThinking: false,
     effort: request.stage === 'goud' ? ('xhigh' as const) : ('high' as const),
-    // De system prompt en het documentblok worden bij vervolg-passes en
-    // herhaalde generaties herlezen — prompt caching scheelt daar ~90% input.
+    // De system prompt en het bronnenblok worden bij vervolg-passes en bij de
+    // stadia zilver/goud herlezen — prompt caching scheelt daar ~90% input.
+    // 1h-TTL omdat er tussen stadia doorgaans een menselijke reviewronde zit.
     cachePrompt: true,
+    cacheTtl: '1h' as const,
+    label: 'schrijfagent',
   }
 }
 

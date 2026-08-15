@@ -130,7 +130,18 @@ function formatAnalysis(analysis: TenderAnalysis | null): string {
   return lines.join('\n')
 }
 
-function buildUserPrompt(request: ReviewDraftRequest): string {
+/**
+ * Stabiel bronnenblok als eerste user-bericht: identiek over herhaalde reviews
+ * van hetzelfde project, zodat de cache-marker (zie aiClient) hits oplevert.
+ * Alles wat per review verandert (baseline, opmerkingen, concept) staat in het
+ * taakblok erna.
+ */
+function buildSourcesPrompt(request: ReviewDraftRequest): string {
+  return `=== BRONNEN ===
+${formatDocuments(request)}`
+}
+
+function buildTaskPrompt(request: ReviewDraftRequest): string {
   return `Fase: ${stageLabels[request.stage]}
 
 Project:
@@ -148,8 +159,7 @@ ${formatBaseline(request.baseline)}
 Open menselijke reviewopmerkingen (betrek in je oordeel):
 ${formatComments(request)}
 
-=== BRONNEN ===
-${formatDocuments(request)}
+De bronnen staan in het vorige bericht.
 
 === CONCEPT (platte tekst) ===
 ${draftToPlainText(request.draft) || '(leeg concept)'}
@@ -230,9 +240,20 @@ export async function handleReviewDraftRequest(request: ReviewDraftRequest): Pro
       ai,
       [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: buildUserPrompt(request) },
+        { role: 'user', content: buildSourcesPrompt(request) },
+        { role: 'user', content: buildTaskPrompt(request) },
       ],
-      { jsonMode: ai.provider !== 'anthropic', maxTokens: 4_000, timeoutMs: 120_000, useThinking: false },
+      {
+        jsonMode: ai.provider !== 'anthropic',
+        maxTokens: 4_000,
+        timeoutMs: 120_000,
+        useThinking: false,
+        // Herhaalde reviews van hetzelfde project herlezen het bronnenblok;
+        // 1h-TTL omdat een review-fix-cyclus doorgaans langer dan 5 min duurt.
+        cachePrompt: true,
+        cacheTtl: '1h',
+        label: 'ai-review',
+      },
     )
 
     const aiFindings = parseFindings(content)

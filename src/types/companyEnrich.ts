@@ -5,6 +5,7 @@ export type CompanyEnrichAiConfig = {
   baseUrl: string
   apiKey: string
   model: string
+  testMode?: boolean
 }
 
 export type CompanyEnrichRequest = {

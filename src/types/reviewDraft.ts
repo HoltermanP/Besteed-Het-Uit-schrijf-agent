@@ -14,6 +14,7 @@ export type ReviewDraftAiConfig = {
   baseUrl: string
   apiKey: string
   model: string
+  testMode?: boolean
 }
 
 export type ReviewDraftComment = {

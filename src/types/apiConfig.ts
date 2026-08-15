@@ -1,6 +1,12 @@
 export type AiProvider = 'openai' | 'anthropic' | 'custom'
 
 export type ApiConfig = {
+  /**
+   * Testmodus: alle Anthropic-taken (schrijven, analyse, licht) draaien op het
+   * goedkoopste model, zodat testen vrijwel geen credits kost. Uit = productie:
+   * per taak het geconfigureerde/tier-model.
+   */
+  testMode: boolean
   tenderned: {
     baseUrl: string
     apiKey: string
@@ -27,6 +33,7 @@ export type ApiConfig = {
 }
 
 export const defaultApiConfig: ApiConfig = {
+  testMode: false,
   tenderned: {
     baseUrl: '/api/tenderned',
     apiKey: '',

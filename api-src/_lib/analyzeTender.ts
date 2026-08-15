@@ -402,7 +402,7 @@ Lever de overkoepelende duiding als JSON volgens het schema.`
       { role: 'system', content: SYNTHESIS_SYSTEM_PROMPT },
       { role: 'user', content: userContent },
     ],
-    { jsonMode: ai.provider !== 'anthropic', maxTokens: 4_000, timeoutMs: 90_000, useThinking: false },
+    { jsonMode: ai.provider !== 'anthropic', maxTokens: 4_000, timeoutMs: 90_000, useThinking: false, label: 'uitvraag-analyse' },
   )
 
   const jsonText = content.match(/```json?\s*([\s\S]*?)```/i)?.[1]?.trim() ?? content.trim()
@@ -422,9 +422,11 @@ Lever de overkoepelende duiding als JSON volgens het schema.`
 }
 
 function buildCompanyContext(request: AnalyzeTenderRequest): string {
+  // De eisen zitten volledig in de per-document extracten; deze context dient
+  // alleen voor stijl- en bedrijfssignalen in de synthese. 2k per doc volstaat.
   return request.documents
     .filter((doc) => doc.type === 'company' || doc.type === 'rules' || doc.type === 'training')
-    .map((doc) => `- [${doc.type}] ${doc.name}:\n${trimSource(doc.content, 8_000)}`)
+    .map((doc) => `- [${doc.type}] ${doc.name}:\n${trimSource(doc.content, 2_000)}`)
     .join('\n\n')
 }
 
@@ -509,7 +511,7 @@ Lever de volledige, aangescherpte uitvraag-analyse als JSON volgens het opgegeve
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userContent },
       ],
-      { jsonMode: ai.provider !== 'anthropic', maxTokens: 8_000, timeoutMs: 120_000, useThinking: false },
+      { jsonMode: ai.provider !== 'anthropic', maxTokens: 8_000, timeoutMs: 120_000, useThinking: false, label: 'uitvraag-samenvoeging' },
     )
     analysis = parseAnalysisJson(content, request.baseline)
   } catch {

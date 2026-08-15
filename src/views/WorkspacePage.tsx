@@ -1191,6 +1191,47 @@ export default function WorkspacePage() {
       return
     }
 
+    // Kostenbesparing: een klein aantal opmerkingen dat elk aan een terug te
+    // vinden tekstdeel hangt, wordt per sectie herschreven (zelfde mechanisme
+    // als de losse "verwerk"-actie) in plaats van het hele document opnieuw te
+    // genereren. Alleen bij veel of algemene opmerkingen volgt de integrale pass.
+    const targetable =
+      openComments.length <= 3 &&
+      openComments.every(
+        (comment) =>
+          comment.note.trim() &&
+          comment.fragment.trim() &&
+          comment.fragment !== GENERAL_COMMENT_FRAGMENT &&
+          findSectionForFragment(comment.fragment),
+      )
+    if (targetable) {
+      setGenerating(true)
+      try {
+        const result = analysis ?? (await runAnalysis())
+        let done = 0
+        for (const comment of openComments) {
+          setSyncStatus(`Opmerking ${done + 1}/${openComments.length} gericht verwerken…`)
+          if (await rewriteCommentSection(comment, result)) done += 1
+        }
+        setFindings(reviewDraft(liveDraftHtml(), effectiveDocuments, result))
+        setSyncStatus(
+          done === openComments.length
+            ? `${done} opmerking(en) gericht verwerkt — beoordeel per sectie: akkoord of terugdraaien`
+            : `${done}/${openComments.length} opmerkingen gericht verwerkt; de overige staan nog open`,
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Verwerken mislukt.'
+        setSyncStatus(
+          isNoAiConfigError(message)
+            ? 'Geen AI geconfigureerd — stel de schrijfagent in via API-beheer om opmerkingen te verwerken.'
+            : message,
+        )
+      } finally {
+        setGenerating(false)
+      }
+      return
+    }
+
     setGenerating(true)
     setSyncStatus('Schrijfagent verwerkt opmerkingen…')
     const result = analysis ?? (await runAnalysis())
@@ -1256,6 +1297,48 @@ export default function WorkspacePage() {
     return best
   }
 
+  // Kern van een gerichte sectie-herschrijving: vind de sectie, laat de AI die
+  // herschrijven en vervang haar in de editor. Geeft de gebruikte provider/model
+  // terug, of null als de sectie niet teruggevonden werd. Gedeeld door de losse
+  // actie én de batchverwerking van "Verwerk opmerkingen".
+  const rewriteCommentSection = async (
+    comment: ReviewComment,
+    result: TenderAnalysis | null,
+  ): Promise<{ provider: string; model: string } | null> => {
+    const target = findSectionForFragment(comment.fragment)
+    if (!target) return null
+
+    // Bewaar de oorspronkelijke sectie zodat de wijziging teruggedraaid kan worden.
+    const previousSectionHtml = target.outerHTML
+
+    const rewrite = await rewriteFragmentViaApi({
+      stage,
+      project,
+      fragment: comment.fragment,
+      note: comment.note,
+      sectionHtml: stripCommentMarks(previousSectionHtml),
+      documents: effectiveDocuments,
+      analysis: result,
+    })
+
+    const template = document.createElement('template')
+    template.innerHTML = rewrite.html.trim()
+    const replacement = template.content.firstElementChild
+    if (!replacement) throw new Error('Het herschreven onderdeel was leeg.')
+    // Anker zodat we het herschreven onderdeel later kunnen terugdraaien of accorderen.
+    replacement.setAttribute('data-rewrite-of', comment.id)
+    target.replaceWith(replacement)
+
+    const editor = editorRef.current
+    if (editor) updateEditorHtml(editor.innerHTML)
+    setComments((current) =>
+      current.map((item) =>
+        item.id === comment.id ? { ...item, status: 'verwerkt', previousSectionHtml } : item,
+      ),
+    )
+    return { provider: rewrite.provider, model: rewrite.model }
+  }
+
   // Verwerk één opmerking gericht: de AI herschrijft alleen het betreffende
   // onderdeel (zin/alinea, of de hele paragraaf/sectie als de opmerking dat vraagt).
   const applyTargetedRewrite = async (comment: ReviewComment) => {
@@ -1269,45 +1352,16 @@ export default function WorkspacePage() {
       return
     }
 
-    const target = findSectionForFragment(comment.fragment)
-    if (!target) {
-      setSyncStatus('Kon het bijbehorende tekstdeel niet terugvinden. Selecteer het fragment opnieuw of gebruik "Verwerk opmerkingen".')
-      return
-    }
-
     setRewritingId(comment.id)
     setSyncStatus('Schrijfagent herschrijft het betreffende onderdeel…')
 
-    // Bewaar de oorspronkelijke sectie zodat de wijziging teruggedraaid kan worden.
-    const previousSectionHtml = target.outerHTML
-
     try {
       const result = analysis ?? (await runAnalysis())
-      const rewrite = await rewriteFragmentViaApi({
-        stage,
-        project,
-        fragment: comment.fragment,
-        note: comment.note,
-        sectionHtml: stripCommentMarks(previousSectionHtml),
-        documents: effectiveDocuments,
-        analysis: result,
-      })
-
-      const template = document.createElement('template')
-      template.innerHTML = rewrite.html.trim()
-      const replacement = template.content.firstElementChild
-      if (!replacement) throw new Error('Het herschreven onderdeel was leeg.')
-      // Anker zodat we het herschreven onderdeel later kunnen terugdraaien of accorderen.
-      replacement.setAttribute('data-rewrite-of', comment.id)
-      target.replaceWith(replacement)
-
-      const editor = editorRef.current
-      if (editor) updateEditorHtml(editor.innerHTML)
-      setComments((current) =>
-        current.map((item) =>
-          item.id === comment.id ? { ...item, status: 'verwerkt', previousSectionHtml } : item,
-        ),
-      )
+      const rewrite = await rewriteCommentSection(comment, result)
+      if (!rewrite) {
+        setSyncStatus('Kon het bijbehorende tekstdeel niet terugvinden. Selecteer het fragment opnieuw of gebruik "Verwerk opmerkingen".')
+        return
+      }
       setFindings(reviewDraft(liveDraftHtml(), effectiveDocuments, result))
       setSyncStatus(`Onderdeel herschreven met ${rewrite.provider} (${rewrite.model}) — beoordeel: akkoord of terugdraaien`)
     } catch (error) {

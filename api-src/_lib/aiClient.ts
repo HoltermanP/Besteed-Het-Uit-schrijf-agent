@@ -5,6 +5,11 @@ export type AiRuntimeConfig = {
   baseUrl: string
   apiKey: string
   model: string
+  /**
+   * Testmodus vanuit API-beheer: alle Anthropic-taken draaien op het
+   * goedkoopste model, ongeacht tier of geconfigureerd model.
+   */
+  testMode?: boolean
 }
 
 export type AiMessage = {
@@ -25,6 +30,14 @@ export type AiCompletionOptions = {
    * een cache-write kost 1,25× input, dus bij eenmalige calls is het verlies.
    */
   cachePrompt?: boolean
+  /**
+   * Levensduur van de cache-entry. '1h' (write kost 2× i.p.v. 1,25×) loont
+   * wanneer hergebruik buiten het 5-minutenvenster valt, zoals tussen de
+   * stadia brons/zilver/goud waar een menselijke reviewronde tussen zit.
+   */
+  cacheTtl?: '5m' | '1h'
+  /** Taaknaam voor de verbruikslog, zodat tokengebruik per taak meetbaar is. */
+  label?: string
 }
 
 /**
@@ -41,6 +54,10 @@ const ANTHROPIC_TIER_MODELS: Record<AiTaskTier, string> = {
   analysis: 'claude-sonnet-4-6',
   light: 'claude-haiku-4-5',
 }
+
+// Goedkoopste Anthropic-model ($1/$5 per miljoen tokens): wordt in testmodus
+// voor álle taken gebruikt, zodat functioneel testen vrijwel niets kost.
+const ANTHROPIC_TEST_MODEL = 'claude-haiku-4-5'
 
 const ANTHROPIC_VERSION = '2023-06-01'
 
@@ -80,7 +97,31 @@ function splitMessages(messages: AiMessage[]) {
 type AnthropicTextBlock = {
   type: 'text'
   text: string
-  cache_control?: { type: 'ephemeral' }
+  cache_control?: { type: 'ephemeral'; ttl?: '1h' }
+}
+
+type AnthropicUsage = {
+  input_tokens?: number
+  output_tokens?: number
+  cache_creation_input_tokens?: number
+  cache_read_input_tokens?: number
+}
+
+// Verbruikslog per aanroep (zichtbaar in de serverlogs): maakt meetbaar waar
+// tokens heengaan en of prompt caching daadwerkelijk hits oplevert.
+function logUsage(label: string | undefined, model: string, usage: AnthropicUsage | undefined) {
+  if (!usage) return
+  console.log(
+    '[ai-verbruik]',
+    JSON.stringify({
+      taak: label ?? 'onbekend',
+      model,
+      input: usage.input_tokens ?? 0,
+      output: usage.output_tokens ?? 0,
+      cacheWrite: usage.cache_creation_input_tokens ?? 0,
+      cacheRead: usage.cache_read_input_tokens ?? 0,
+    }),
+  )
 }
 
 /**
@@ -89,18 +130,21 @@ type AnthropicTextBlock = {
  * van de schrijfagent en herhaalde aanroepen met dezelfde bronnen lezen die
  * prefix dan uit cache tegen ~10% van de reguliere inputprijs.
  */
-function buildAnthropicPayload(messages: AiMessage[], cachePrompt: boolean) {
+function buildAnthropicPayload(messages: AiMessage[], options: AiCompletionOptions) {
   const { system, chatMessages } = splitMessages(messages)
 
-  if (!cachePrompt) {
+  if (!options.cachePrompt) {
     return {
       systemBlocks: system ? [{ type: 'text', text: system } satisfies AnthropicTextBlock] : undefined,
       anthropicMessages: chatMessages,
     }
   }
 
+  const cacheControl: AnthropicTextBlock['cache_control'] =
+    options.cacheTtl === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' }
+
   const systemBlocks: AnthropicTextBlock[] | undefined = system
-    ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+    ? [{ type: 'text', text: system, cache_control: cacheControl }]
     : undefined
 
   let firstUserMarked = false
@@ -110,7 +154,7 @@ function buildAnthropicPayload(messages: AiMessage[], cachePrompt: boolean) {
       const block: AnthropicTextBlock = {
         type: 'text',
         text: message.content,
-        cache_control: { type: 'ephemeral' },
+        cache_control: cacheControl,
       }
       return { role: message.role, content: [block] }
     }
@@ -125,7 +169,7 @@ async function completeAnthropic(
   messages: AiMessage[],
   options: AiCompletionOptions,
 ): Promise<string> {
-  const { systemBlocks, anthropicMessages } = buildAnthropicPayload(messages, options.cachePrompt ?? false)
+  const { systemBlocks, anthropicMessages } = buildAnthropicPayload(messages, options)
   const body: Record<string, unknown> = {
     model: ai.model,
     max_tokens: options.maxTokens ?? 16_000,
@@ -157,7 +201,9 @@ async function completeAnthropic(
 
   const payload = (await response.json()) as {
     content?: Array<{ type?: string; text?: string }>
+    usage?: AnthropicUsage
   }
+  logUsage(options.label, ai.model, payload.usage)
   const text = payload.content
     ?.filter((block) => block.type === 'text')
     .map((block) => block.text ?? '')
@@ -173,7 +219,7 @@ async function* streamAnthropic(
   messages: AiMessage[],
   options: AiCompletionOptions,
 ): AsyncGenerator<string> {
-  const { systemBlocks, anthropicMessages } = buildAnthropicPayload(messages, options.cachePrompt ?? false)
+  const { systemBlocks, anthropicMessages } = buildAnthropicPayload(messages, options)
   const body: Record<string, unknown> = {
     model: ai.model,
     max_tokens: options.maxTokens ?? 16_000,
@@ -210,6 +256,17 @@ async function* streamAnthropic(
   const decoder = new TextDecoder()
   let buffer = ''
 
+  // Verbruik komt bij streaming verspreid binnen: input/cache in message_start,
+  // output cumulatief in message_delta. Verzamelen en aan het einde loggen.
+  const usageTotals: AnthropicUsage = {}
+  const mergeUsage = (usage?: AnthropicUsage) => {
+    if (!usage) return
+    if (usage.input_tokens != null) usageTotals.input_tokens = usage.input_tokens
+    if (usage.output_tokens != null) usageTotals.output_tokens = usage.output_tokens
+    if (usage.cache_creation_input_tokens != null) usageTotals.cache_creation_input_tokens = usage.cache_creation_input_tokens
+    if (usage.cache_read_input_tokens != null) usageTotals.cache_read_input_tokens = usage.cache_read_input_tokens
+  }
+
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
@@ -226,7 +283,11 @@ async function* streamAnthropic(
         const event = JSON.parse(payload) as {
           type?: string
           delta?: { type?: string; text?: string }
+          message?: { usage?: AnthropicUsage }
+          usage?: AnthropicUsage
         }
+        if (event.type === 'message_start') mergeUsage(event.message?.usage)
+        if (event.type === 'message_delta') mergeUsage(event.usage)
         if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
           const text = event.delta.text
           if (text) yield text
@@ -246,7 +307,11 @@ async function* streamAnthropic(
         const event = JSON.parse(payload) as {
           type?: string
           delta?: { type?: string; text?: string }
+          message?: { usage?: AnthropicUsage }
+          usage?: AnthropicUsage
         }
+        if (event.type === 'message_start') mergeUsage(event.message?.usage)
+        if (event.type === 'message_delta') mergeUsage(event.usage)
         if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
           const text = event.delta.text
           if (text) yield text
@@ -256,6 +321,8 @@ async function* streamAnthropic(
       }
     }
   }
+
+  if (Object.keys(usageTotals).length) logUsage(options.label, ai.model, usageTotals)
 }
 
 async function* streamOpenAiCompatible(
@@ -412,11 +479,13 @@ export function resolveAiFromRequest(
 ): AiRuntimeConfig {
   if (requestAi?.apiKey?.trim()) {
     if (requestAi.provider === 'anthropic') {
-      // Het in API-beheer geconfigureerde model geldt alleen voor het schrijfwerk;
-      // lichtere taken draaien op het (goedkopere) tier-model, tenzij de
-      // omgevingsvariabele van deze taakgroep expliciet iets anders afdwingt.
-      const model =
-        tier === 'writer'
+      // Testmodus (ingesteld in API-beheer): elke taak draait op het goedkoopste
+      // model. Anders geldt het in API-beheer geconfigureerde model alleen voor
+      // het schrijfwerk; lichtere taken draaien op het (goedkopere) tier-model,
+      // tenzij de omgevingsvariabele van deze taakgroep iets anders afdwingt.
+      const model = requestAi.testMode
+        ? ANTHROPIC_TEST_MODEL
+        : tier === 'writer'
           ? requestAi.model?.trim() || ANTHROPIC_TIER_MODELS.writer
           : process.env[envModelKey]?.trim() || ANTHROPIC_TIER_MODELS[tier]
       return {

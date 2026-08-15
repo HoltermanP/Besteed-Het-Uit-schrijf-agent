@@ -136,7 +136,7 @@ async function extractFactsWithAi(
         content: `Website URL: ${website}\n\nBronnen:\n${sourcesText}`,
       },
     ],
-    { jsonMode: ai.provider !== 'anthropic', maxTokens: 4_000, timeoutMs: 60_000 },
+    { jsonMode: ai.provider !== 'anthropic', maxTokens: 4_000, timeoutMs: 60_000, label: 'bedrijfsverrijking' },
   )
 
   const jsonText = content.match(/```json?\s*([\s\S]*?)```/i)?.[1]?.trim() ?? content.trim()

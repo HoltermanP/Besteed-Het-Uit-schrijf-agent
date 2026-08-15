@@ -14,6 +14,7 @@ function resolveAiConfig(): AnalyzeDocumentRequest['ai'] {
     baseUrl: apiConfig.writer.baseUrl,
     apiKey: apiConfig.writer.apiKey,
     model: apiConfig.writer.model,
+    testMode: apiConfig.testMode || undefined,
   }
 }
 

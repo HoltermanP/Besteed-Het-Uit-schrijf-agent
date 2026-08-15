@@ -6,6 +6,7 @@ export type AnalyzeIntentAiConfig = {
   baseUrl: string
   apiKey: string
   model: string
+  testMode?: boolean
 }
 
 export type AnalyzeIntentRequest = {
