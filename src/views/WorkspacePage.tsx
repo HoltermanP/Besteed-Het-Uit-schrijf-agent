@@ -582,7 +582,7 @@ export default function WorkspacePage() {
       documents,
       comments,
       stage,
-      draft: editorRef.current?.innerHTML ?? draft,
+      draft: liveDraftHtml(),
       analysis,
       updatedAt,
     }
@@ -608,6 +608,15 @@ export default function WorkspacePage() {
     setDraft(html)
     const editor = editorRef.current
     if (editor) editor.innerHTML = html
+  }
+
+  // Het live editor-DOM is leidend, maar direct na mount is de editor nog leeg
+  // (de inhoud wordt pas via een effect ingevuld). Val dan terug op de
+  // draft-state, zodat een dossier nooit met een leeg concept wordt
+  // overschreven en geschreven stukken niet verloren gaan.
+  const liveDraftHtml = () => {
+    const html = editorRef.current?.innerHTML
+    return html && html.trim() ? html : draft
   }
 
   const visibleSources = useMemo(() => {
@@ -793,7 +802,7 @@ export default function WorkspacePage() {
 
   const analyzeAndGenerate = async (targetStage = stage) => {
     // Bewaar de huidige tekst, zodat een mislukte generatie het concept niet wist.
-    const previousDraft = editorRef.current?.innerHTML ?? draft
+    const previousDraft = liveDraftHtml()
     setGenerating(true)
     // Hergebruik de bestaande AI-analyse zolang bronnen en opdrachtgever
     // ongewijzigd zijn; dat scheelt de volledige analyse-pijplijn per generatie.
@@ -1021,7 +1030,7 @@ export default function WorkspacePage() {
     documents,
     comments,
     stage,
-    draft: editorRef.current?.innerHTML ?? draft,
+    draft: liveDraftHtml(),
     analysis,
     updatedAt: new Date().toISOString(),
   })
@@ -1299,7 +1308,7 @@ export default function WorkspacePage() {
           item.id === comment.id ? { ...item, status: 'verwerkt', previousSectionHtml } : item,
         ),
       )
-      setFindings(reviewDraft(editorRef.current?.innerHTML ?? draft, effectiveDocuments, result))
+      setFindings(reviewDraft(liveDraftHtml(), effectiveDocuments, result))
       setSyncStatus(`Onderdeel herschreven met ${rewrite.provider} (${rewrite.model}) — beoordeel: akkoord of terugdraaien`)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Herschrijven mislukt.'
@@ -1477,7 +1486,7 @@ export default function WorkspacePage() {
     if (reviewing) return
     setReviewing(true)
     setSyncStatus('AI-review wordt uitgevoerd…')
-    const html = editorRef.current?.innerHTML ?? draft
+    const html = liveDraftHtml()
     try {
       const result = analysis ?? (await runAnalysis())
       const baselineFindings = reviewDraft(html, effectiveDocuments, result)
@@ -1524,7 +1533,7 @@ export default function WorkspacePage() {
   }, [commentPopover])
 
   // Markeringen en herschrijf-ankers zijn editor-only; verwijder ze uit de export.
-  const getExportHtml = () => stripCommentMarks(editorRef.current?.innerHTML ?? draft)
+  const getExportHtml = () => stripCommentMarks(liveDraftHtml())
 
   const exportPdf = async () => {
     syncDraftFromEditor()
