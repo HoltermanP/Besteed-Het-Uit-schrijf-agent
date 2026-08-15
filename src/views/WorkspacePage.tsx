@@ -76,7 +76,7 @@ import { fetchLessons, lessonsToPromptContent, selectRelevantLessons } from '../
 import type { LessonLearned } from '../types/lessonLearned'
 import type { WriteDraftDocument } from '../types/writeDraft'
 import { getSavedTenders } from '../lib/tenderDatabase'
-import type { SavedTender } from '../types/tenderNed'
+import type { SavedTender, SavedTenderDocument } from '../types/tenderNed'
 import {
   getActiveDossierId,
   getDossierUpdatedAt,
@@ -161,6 +161,8 @@ type TenderProject = {
 type DossierSnapshot = {
   project: TenderProject
   documents: SourceDocument[]
+  /** Origineel gedownloade aanbestedingsbestanden (met archieflink in Vercel Blob). */
+  tenderDocuments?: SavedTenderDocument[]
   comments: ReviewComment[]
   stage: Stage
   draft: string
@@ -342,7 +344,13 @@ function loadInitialState() {
   const storedDraft = getStoredRaw('bid-agent-draft')
   const storedAnalysis = normalizeStoredAnalysis(loadStored<TenderAnalysis | null>('bid-agent-analysis', null))
   const draft = storedDraft ?? buildHtmlDraft(stage, project, documents, toLegacyComments(comments), storedAnalysis)
-  return { project, documents, comments, stage, draft, analysis: storedAnalysis }
+  // Gearchiveerde aanbestedingsbestanden van het actieve project. Oudere sessies bewaarden
+  // deze alleen bij de opgeslagen aanbesteding zelf; val daar dan op terug.
+  const storedTenderDocuments = loadStored<SavedTenderDocument[]>('bid-agent-tender-documents', [])
+  const tenderDocuments = storedTenderDocuments.length
+    ? storedTenderDocuments
+    : getSavedTenders().find((tender) => tender.publicatieId === getActiveDossierId())?.documents ?? []
+  return { project, documents, comments, stage, draft, analysis: storedAnalysis, tenderDocuments }
 }
 
 function summarize(text: string, max = 220) {
@@ -419,6 +427,7 @@ export default function WorkspacePage() {
   const initial = useMemo(() => loadInitialState(), [])
   const [project, setProject] = useState<TenderProject>(initial.project)
   const [documents, setDocuments] = useState<SourceDocument[]>(initial.documents)
+  const [tenderDocuments, setTenderDocuments] = useState<SavedTenderDocument[]>(initial.tenderDocuments)
   const [stage, setStage] = useState<Stage>(initial.stage)
   const [draft, setDraft] = useState(initial.draft)
   const [comments, setComments] = useState<ReviewComment[]>(initial.comments)
@@ -446,9 +455,6 @@ export default function WorkspacePage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const savedTenders = getSavedTenders()
-  // Gedownloade aanbestedingsdocumenten (met links naar de gearchiveerde
-  // originelen in Vercel Blob) van het actieve dossier.
-  const activeSavedTender = savedTenders.find((tender) => tender.publicatieId === activeTenderId) ?? null
 
   // Bedrijfskiezer: alle werkdata is per bedrijf gescheiden. Wisselen schrijft
   // eerst openstaande wijzigingen weg en herlaadt daarna de pagina, zodat alle
@@ -573,6 +579,10 @@ export default function WorkspacePage() {
   }, [documents])
 
   useEffect(() => {
+    saveStored('bid-agent-tender-documents', tenderDocuments)
+  }, [tenderDocuments])
+
+  useEffect(() => {
     saveStored('bid-agent-comments', comments)
   }, [comments])
 
@@ -610,6 +620,7 @@ export default function WorkspacePage() {
     const snapshot: DossierSnapshot = {
       project,
       documents,
+      tenderDocuments,
       comments,
       stage,
       draft: liveDraftHtml(),
@@ -624,7 +635,7 @@ export default function WorkspacePage() {
       updatedAt,
       source: activeTenderId.startsWith('prj-') ? 'blank' : 'tender',
     })
-  }, [activeTenderId, project, documents, comments, stage, draft, analysis])
+  }, [activeTenderId, project, documents, tenderDocuments, comments, stage, draft, analysis])
 
   useEffect(() => {
     const editor = editorRef.current
@@ -1027,6 +1038,7 @@ export default function WorkspacePage() {
     return {
       project,
       documents,
+      tenderDocuments: tender.documents ?? [],
       comments: [],
       stage: 'brons',
       draft: buildHtmlDraft('brons', project, documents, [], null),
@@ -1046,6 +1058,7 @@ export default function WorkspacePage() {
     return {
       project,
       documents: [],
+      tenderDocuments: [],
       comments: [],
       stage: 'brons',
       draft: buildHtmlDraft('brons', project, [], [], null),
@@ -1058,6 +1071,7 @@ export default function WorkspacePage() {
   const captureCurrentDossier = (): DossierSnapshot => ({
     project,
     documents,
+    tenderDocuments,
     comments,
     stage,
     draft: liveDraftHtml(),
@@ -1065,9 +1079,20 @@ export default function WorkspacePage() {
     updatedAt: new Date().toISOString(),
   })
 
+  // Dossiers van vóór het archief-in-project missen tenderDocuments; vul ze dan
+  // aan vanuit de opgeslagen aanbesteding met hetzelfde id.
+  const withTenderDocuments = (id: string, snapshot: DossierSnapshot): DossierSnapshot =>
+    snapshot.tenderDocuments?.length
+      ? snapshot
+      : {
+          ...snapshot,
+          tenderDocuments: savedTenders.find((tender) => tender.publicatieId === id)?.documents ?? [],
+        }
+
   const applyDossier = (snapshot: DossierSnapshot) => {
     setProject(snapshot.project)
     setDocuments(snapshot.documents)
+    setTenderDocuments(snapshot.tenderDocuments ?? [])
     setComments(normalizeComments(snapshot.comments))
     setStage(snapshot.stage)
     setAnalysis(snapshot.analysis)
@@ -1089,7 +1114,11 @@ export default function WorkspacePage() {
       saveDossier(activeTenderId, captureCurrentDossier())
     }
     const restored = loadDossier<DossierSnapshot>(targetId)
-    const snapshot = restored ?? buildFreshDossier(tender)
+    // Neem bij heropenen de nieuwste archieflinks van de aanbesteding mee, zodat een
+    // opnieuw gedownloade tender ook in een bestaand dossier bijgewerkte bestanden toont.
+    const snapshot = restored
+      ? { ...restored, tenderDocuments: tender.documents?.length ? tender.documents : restored.tenderDocuments ?? [] }
+      : buildFreshDossier(tender)
     applyDossier(snapshot)
     // Direct opslaan + in de projectenlijst zetten, ook als er nog niet in gewerkt is.
     saveDossier(targetId, snapshot)
@@ -1147,7 +1176,7 @@ export default function WorkspacePage() {
       setProjectsVersion((v) => v + 1)
       return
     }
-    applyDossier(restored)
+    applyDossier(withTenderDocuments(id, restored))
     setActiveTenderId(id)
     setActiveDossierId(id)
     setDossierSearch('')
@@ -1176,7 +1205,7 @@ export default function WorkspacePage() {
       const next = remaining[0]
       if (next) {
         const restored = loadDossier<DossierSnapshot>(next.id)
-        if (restored) applyDossier(restored)
+        if (restored) applyDossier(withTenderDocuments(next.id, restored))
         setActiveTenderId(next.id)
         setActiveDossierId(next.id)
       } else {
@@ -2194,20 +2223,20 @@ export default function WorkspacePage() {
           </CardContent>
         </Card>
 
-        {activeSavedTender?.documents?.length ? (
+        {tenderDocuments.length ? (
           <Card className="mb-[14px]">
             <CardContent className="space-y-2.5">
               <div className="flex items-center gap-2 text-primary">
                 <FileText size={17} />
                 <h2 className="text-sm font-semibold">Aanbestedingsdocumenten</h2>
-                <Badge variant="secondary" className="ml-auto">{activeSavedTender.documents.length}</Badge>
+                <Badge variant="secondary" className="ml-auto">{tenderDocuments.length}</Badge>
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Origineel gedownloade bestanden van TenderNed. De tekst is al ingelezen als bron; via
-                “Openen” bekijk je het originele bestand.
+                Origineel gedownloade bestanden van TenderNed, bewaard bij dit project. De tekst is al
+                ingelezen als bron; klik op een bestand om het origineel te openen.
               </p>
               <ul className="grid max-h-72 list-none gap-0 overflow-y-auto p-0">
-                {activeSavedTender.documents.map((doc, index) => (
+                {tenderDocuments.map((doc, index) => (
                   <li
                     key={`${doc.naam}-${index}`}
                     className="flex items-center gap-2 border-t py-1.5 text-xs first:border-t-0"
@@ -2215,12 +2244,24 @@ export default function WorkspacePage() {
                     <span className="w-11 shrink-0 rounded bg-muted py-0.5 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                       {doc.type}
                     </span>
-                    <span
-                      className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
-                      title={doc.note ? `${doc.naam} — ${doc.note}` : doc.naam}
-                    >
-                      {doc.naam}
-                    </span>
+                    {doc.fileUrl ? (
+                      <a
+                        className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium underline-offset-2 hover:text-primary hover:underline"
+                        href={doc.fileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={doc.note ? `${doc.naam} — ${doc.note}` : doc.naam}
+                      >
+                        {doc.naam}
+                      </a>
+                    ) : (
+                      <span
+                        className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                        title={doc.note ? `${doc.naam} — ${doc.note}` : doc.naam}
+                      >
+                        {doc.naam}
+                      </span>
+                    )}
                     <span className="shrink-0 tabular-nums text-muted-foreground">{formatBytes(doc.grootte)}</span>
                     {doc.fileUrl ? (
                       <a
@@ -2242,7 +2283,7 @@ export default function WorkspacePage() {
                   </li>
                 ))}
               </ul>
-              {activeSavedTender.documents.every((doc) => !doc.fileUrl) ? (
+              {tenderDocuments.every((doc) => !doc.fileUrl) ? (
                 <p className="rounded-md border border-amber-300 bg-amber-50 px-[10px] py-2 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
                   De originele bestanden zijn nog niet gearchiveerd. Download deze aanbesteding opnieuw
                   in de catalogus nadat Vercel Blob is geconfigureerd.

@@ -38,7 +38,7 @@ import {
 } from '../lib/tenderDatabase'
 import { mapWithConcurrency } from '../lib/analyzeDocumentApi'
 import { currentProfileStamp, getTenderScores, scoreTendersForCompany } from '../lib/tenderScoreApi'
-import { matchesCompanyCpv } from '../lib/cpv'
+import { cpvSignificantPrefix, matchesCompanyCpv } from '../lib/cpv'
 import { getCompanyConfig } from '../lib/companyConfig'
 import type { SavedTenderDocument, TenderDocument, TenderListItem } from '../types/tenderNed'
 import type { StoredTenderScore } from '../types/tenderScore'
@@ -63,6 +63,71 @@ function formatDate(value: string): string {
   if (!value) return 'onbekend'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? 'onbekend' : date.toLocaleDateString('nl-NL')
+}
+
+// Kleurenklasse per scoreband, aansluitend op de rubriek van de AI-score
+// (70+ goed passend, 40-69 gedeeltelijk, daaronder weinig passend).
+function scoreTier(score: number) {
+  if (score >= 70) {
+    return {
+      label: 'Sterke match',
+      text: 'text-emerald-600 dark:text-emerald-400',
+      stroke: 'stroke-emerald-500',
+      panel: 'border-emerald-500/30 bg-emerald-500/10',
+    }
+  }
+  if (score >= 40) {
+    return {
+      label: 'Deels passend',
+      text: 'text-amber-600 dark:text-amber-400',
+      stroke: 'stroke-amber-500',
+      panel: 'border-amber-500/30 bg-amber-500/10',
+    }
+  }
+  return {
+    label: 'Weinig passend',
+    text: 'text-destructive',
+    stroke: 'stroke-destructive',
+    panel: 'border-destructive/30 bg-destructive/10',
+  }
+}
+
+/** Donutring met de AI-geschiktheidsscore (0-100) groot in het midden. */
+function ScoreRing({ score, size = 64 }: { score: number; size?: number }) {
+  const tier = scoreTier(score)
+  const strokeWidth = 5
+  const radius = (size - strokeWidth) / 2
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference * (1 - Math.min(100, Math.max(0, score)) / 100)
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          strokeWidth={strokeWidth}
+          className="stroke-muted"
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          className={cn(tier.stroke, 'transition-[stroke-dashoffset] duration-700 ease-out')}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
+        <span className={cn('text-xl font-bold tabular-nums', tier.text)}>{score}</span>
+        <span className="mt-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">/ 100</span>
+      </div>
+    </div>
+  )
 }
 
 export default function TenderBrowserPage() {
@@ -474,17 +539,45 @@ export default function TenderBrowserPage() {
               Toon pagina {page + 1}
             </Button>
           </div>
+          {companyCpvCodes.length ? (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-muted-foreground">
+                CPV-codes van {companyConfig.name.trim() || 'jouw bedrijf'} — klik om ermee te zoeken (inclusief onderliggende codes):
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {companyCpvCodes.map((cpv) => (
+                  <button
+                    key={cpv.code}
+                    className={cn(
+                      'max-w-full break-words rounded-full border px-2 py-0.5 text-left text-xs transition-colors',
+                      cpvPrefix.trim() && cpvSignificantPrefix(cpv.code) === cpvSignificantPrefix(cpvPrefix)
+                        ? 'border-primary bg-primary/10 font-medium text-primary'
+                        : 'border-primary/40 bg-primary/5 text-primary hover:bg-primary/10',
+                    )}
+                    title={`Zoek op ${cpv.code} en alle onderliggende codes`}
+                    onClick={() => setCpvPrefix(cpv.code.slice(0, 8))}
+                  >
+                    {cpv.code}
+                    {cpv.omschrijving ? ` — ${cpv.omschrijving}` : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {cpvOptions.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
-              {cpvOptions.slice(0, 12).map((cpv) => (
-                <button
-                  key={cpv.code}
-                  className="max-w-full break-words rounded-full border bg-muted px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent"
-                  onClick={() => setCpvPrefix(cpv.code.slice(0, 8))}
-                >
-                  {cpv.code} — {cpv.omschrijving}
-                </button>
-              ))}
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">Codes uit de geladen resultaten (ter oriëntatie):</p>
+              <div className="flex flex-wrap gap-1.5">
+                {cpvOptions.slice(0, 12).map((cpv) => (
+                  <button
+                    key={cpv.code}
+                    className="max-w-full break-words rounded-full border bg-muted px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent"
+                    onClick={() => setCpvPrefix(cpv.code.slice(0, 8))}
+                  >
+                    {cpv.code} — {cpv.omschrijving}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : null}
           <p className="text-sm text-muted-foreground">{status}{scannedPages ? ` (${scannedPages} pagina('s) gescand)` : ''}</p>
@@ -562,30 +655,12 @@ export default function TenderBrowserPage() {
               <div className="min-w-0 flex-1">
                 <div className="flex justify-between gap-2.5">
                   <strong className="min-w-0 break-words">{item.aanbestedingNaam}</strong>
-                  <span className="flex shrink-0 items-start gap-1.5">
-                    {score ? (
-                      <Badge
-                        variant="outline"
-                        title={score.toelichting || 'AI-geschiktheidsscore voor het bedrijfsprofiel'}
-                        className={cn(
-                          'whitespace-nowrap rounded-full font-semibold',
-                          score.score >= 70
-                            ? 'border-emerald-500/50 text-emerald-600 dark:text-emerald-400'
-                            : score.score >= 40
-                              ? 'border-amber-500/50 text-amber-600 dark:text-amber-400'
-                              : 'border-destructive/50 text-destructive',
-                        )}
-                      >
-                        <Sparkles size={12} /> {score.score}/100
-                      </Badge>
-                    ) : null}
-                    <Badge
-                      variant={isOpen ? 'default' : 'secondary'}
-                      className="whitespace-nowrap rounded-full"
-                    >
-                      {isOpen ? `${item.aantalDagenTotSluitingsDatum} dagen` : 'Gesloten'}
-                    </Badge>
-                  </span>
+                  <Badge
+                    variant={isOpen ? 'default' : 'secondary'}
+                    className="shrink-0 whitespace-nowrap rounded-full"
+                  >
+                    {isOpen ? `${item.aantalDagenTotSluitingsDatum} dagen` : 'Gesloten'}
+                  </Badge>
                 </div>
                 <p className="mt-1.5 flex flex-wrap items-center gap-x-1 break-words text-sm text-muted-foreground">
                   {item.opdrachtgeverNaam} · TN-{item.kenmerk} · sluit {formatDate(item.sluitingsDatum)}
@@ -596,23 +671,45 @@ export default function TenderBrowserPage() {
                   ) : null}
                 </p>
                 <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{item.opdrachtBeschrijving.slice(0, 220)}{item.opdrachtBeschrijving.length > 220 ? '...' : ''}</p>
-                {score?.toelichting ? (
-                  <p className="mt-1.5 flex items-start gap-1.5 text-xs leading-relaxed text-muted-foreground">
-                    <Sparkles size={13} className="mt-0.5 shrink-0" />
-                    <span className="min-w-0 break-words">{score.toelichting}</span>
-                  </p>
+                {score ? (
+                  <div
+                    className={cn(
+                      'mt-2.5 flex items-start gap-2 rounded-lg border p-2.5 text-xs leading-relaxed',
+                      scoreTier(score.score).panel,
+                    )}
+                  >
+                    <Sparkles size={14} className={cn('mt-0.5 shrink-0', scoreTier(score.score).text)} />
+                    <span className="min-w-0 break-words">
+                      <span className={cn('font-semibold', scoreTier(score.score).text)}>
+                        AI-match: {scoreTier(score.score).label}
+                      </span>
+                      {score.toelichting ? <> — {score.toelichting}</> : null}
+                    </span>
+                  </div>
                 ) : null}
                 {item.cpvCodes?.length ? (
                   <div className="mt-2.5 flex flex-wrap gap-1.5">
-                    {item.cpvCodes.slice(0, 4).map((cpv) => (
-                      <Badge
-                        key={cpv.code}
-                        variant={cpv.isHoofdOpdracht ? 'default' : 'secondary'}
-                        className="break-all rounded-full font-normal"
-                      >
-                        {cpv.code}
-                      </Badge>
-                    ))}
+                    {item.cpvCodes.slice(0, 4).map((cpv) => {
+                      const matchesCompany =
+                        companyCpvCodes.length > 0 && matchesCompanyCpv([cpv], companyCpvCodes)
+                      return (
+                        <Badge
+                          key={cpv.code}
+                          variant={matchesCompany || cpv.isHoofdOpdracht ? 'default' : 'secondary'}
+                          className={cn(
+                            'break-all rounded-full font-normal',
+                            matchesCompany && 'ring-2 ring-primary/40',
+                          )}
+                          title={
+                            matchesCompany
+                              ? `Valt binnen de CPV-codes van ${companyConfig.name.trim() || 'jouw bedrijf'}`
+                              : cpv.omschrijving
+                          }
+                        >
+                          {cpv.code}
+                        </Badge>
+                      )
+                    })}
                   </div>
                 ) : (
                   <Button
@@ -733,6 +830,22 @@ export default function TenderBrowserPage() {
                 ) : null}
               </div>
               <div className="flex shrink-0 flex-col items-stretch gap-1.5" onClick={(event) => event.stopPropagation()}>
+                {score ? (
+                  <div
+                    className="mb-1 flex flex-col items-center gap-1"
+                    title={score.toelichting || 'AI-geschiktheidsscore voor het bedrijfsprofiel'}
+                  >
+                    <ScoreRing score={score.score} />
+                    <span
+                      className={cn(
+                        'text-[10px] font-semibold uppercase tracking-wide',
+                        scoreTier(score.score).text,
+                      )}
+                    >
+                      {scoreTier(score.score).label}
+                    </span>
+                  </div>
+                ) : null}
                 <Button
                   size="sm"
                   title="Alle documenten downloaden en meteen openen in de werkplek"

@@ -6,6 +6,7 @@ import type {
   TenderListItem,
   TenderSearchFilters,
 } from '../types/tenderNed'
+import { cpvSignificantPrefix } from './cpv'
 
 const API_BASE = '/api/tenderned'
 
@@ -68,7 +69,10 @@ export function matchesFilters(item: TenderListItem, filters: TenderSearchFilter
   }
 
   if (filters.cpvPrefix.trim() && item.cpvCodes?.length) {
-    const prefix = filters.cpvPrefix.replace(/\s/g, '')
+    // CPV is hiërarchisch: een volledige code als "72000000" betekent de hele
+    // afdeling 72 — opvullende nullen tellen niet mee in de match, anders
+    // vindt zoeken op een bedrijfscode vrijwel nooit iets.
+    const prefix = cpvSignificantPrefix(filters.cpvPrefix)
     const hit = item.cpvCodes.some((cpv) => cpv.code.replace(/\s/g, '').startsWith(prefix))
     if (!hit) return false
   }
