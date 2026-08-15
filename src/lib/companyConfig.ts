@@ -1,5 +1,6 @@
 import { type CompanyConfig, defaultCompanyConfig } from '../types/companyConfig'
 import type { SourceType } from '../types/tenderAnalysis'
+import { getActiveCompanyId, renameCompany } from './companies'
 import { loadStored, saveStored } from './storage'
 
 const STORAGE_KEY = 'bid-agent-company-config'
@@ -17,6 +18,7 @@ export function getCompanyConfig(): CompanyConfig {
   return {
     ...defaultCompanyConfig,
     ...stored,
+    cpvCodes: stored.cpvCodes ?? defaultCompanyConfig.cpvCodes,
     files: stored.files ?? defaultCompanyConfig.files,
   }
 }
@@ -26,6 +28,9 @@ export function saveCompanyConfig(config: CompanyConfig) {
     ...config,
     updatedAt: new Date().toISOString(),
   })
+  // Naam in het bedrijvenregister meebewegen met de configuratie, zodat de
+  // bedrijfskiezer overal de actuele naam toont.
+  if (config.name.trim()) renameCompany(getActiveCompanyId(), config.name)
 }
 
 export function isCompanyConfigured(config = getCompanyConfig()) {
@@ -53,6 +58,11 @@ export function companyConfigToSourceDocuments(config = getCompanyConfig()): Com
     config.competencies.trim() ? `Kerncompetenties: ${config.competencies.trim()}` : '',
     config.usps.trim() ? `Onderscheidend vermogen: ${config.usps.trim()}` : '',
     config.references.trim() ? `Referenties: ${config.references.trim()}` : '',
+    config.cpvCodes.length
+      ? `CPV-codes: ${config.cpvCodes
+          .map((cpv) => (cpv.omschrijving ? `${cpv.code} (${cpv.omschrijving})` : cpv.code))
+          .join(', ')}`
+      : '',
   ].filter(Boolean)
 
   if (profileParts.length) {

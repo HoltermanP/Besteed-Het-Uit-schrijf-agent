@@ -5,6 +5,11 @@ export type CompanyFile = {
   uploadedAt: string
 }
 
+export type CompanyCpvCode = {
+  code: string
+  omschrijving: string
+}
+
 export type CompanyConfig = {
   name: string
   tagline: string
@@ -15,6 +20,7 @@ export type CompanyConfig = {
   competencies: string
   usps: string
   references: string
+  cpvCodes: CompanyCpvCode[]
   files: CompanyFile[]
   updatedAt: string
 }
@@ -30,6 +36,7 @@ export const defaultCompanyConfig: CompanyConfig = {
   competencies: 'Bidmanagement, tenderanalyse, conceptontwikkeling, kwaliteitsreview',
   usps: 'Snelle doorlooptijd, toetsbare bewijsvoering, geïntegreerde AI-review',
   references: '',
+  cpvCodes: [],
   files: [],
   updatedAt: '',
 }

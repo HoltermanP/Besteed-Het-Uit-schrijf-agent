@@ -8,24 +8,46 @@ import {
   FileText,
   Loader2,
   PenLine,
+  Plus,
   Save,
   Sparkles,
+  Tags,
   Trash2,
   Upload,
 } from 'lucide-react'
 import { getCompanyConfig, saveCompanyConfig } from '../lib/companyConfig'
+import {
+  createCompany,
+  getActiveCompanyId,
+  getCompanies,
+  removeCompany,
+  setActiveCompanyId,
+} from '../lib/companies'
+import { flushStorage } from '../lib/storage'
+import { defaultCompanyConfig } from '../types/companyConfig'
 import { enrichCompanyFromWebsite } from '../lib/companyEnrichApi'
+import { suggestCpvCodesForCompany } from '../lib/cpvSuggestApi'
+import { normalizeCpvCode } from '../lib/cpv'
 import { readFileContent } from '../lib/extractTextApi'
 import FileUploadZone from '../components/FileUploadZone'
 import { acceptedStyleExtensions } from '../types/styleDocument'
-import type { CompanyConfig, CompanyFile } from '../types/companyConfig'
+import type { CompanyConfig, CompanyCpvCode, CompanyFile } from '../types/companyConfig'
 import type { CompanyEnrichFields } from '../types/companyEnrich'
+import type { CpvSuggestion } from '../types/cpvSuggest'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { ModeToggle } from '@/components/mode-toggle'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
 
 const makeId = () => Math.random().toString(36).slice(2, 10)
 
@@ -36,6 +58,63 @@ export default function ConfigPage() {
   const [enrichStatus, setEnrichStatus] = useState('')
   const [uploadingFiles, setUploadingFiles] = useState(false)
   const [uploadStatus, setUploadStatus] = useState('')
+  const [cpvSuggesting, setCpvSuggesting] = useState(false)
+  const [cpvStatus, setCpvStatus] = useState('')
+  const [cpvSuggestions, setCpvSuggestions] = useState<CpvSuggestion[]>([])
+  const [newCpvCode, setNewCpvCode] = useState('')
+  const [newCpvDescription, setNewCpvDescription] = useState('')
+  // Wisselen/aanmaken/verwijderen eindigt altijd in een reload, dus deze twee
+  // hoeven binnen de pagina niet te muteren.
+  const [companies] = useState(() => getCompanies())
+  const [activeCompanyId] = useState(() => getActiveCompanyId())
+  const [newCompanyName, setNewCompanyName] = useState('')
+  const [companyBusy, setCompanyBusy] = useState(false)
+
+  const activeCompany = companies.find((company) => company.id === activeCompanyId) ?? companies[0]
+
+  // Wissel van bedrijf: eerst openstaande wijzigingen wegschrijven, dan de
+  // pagina herladen zodat alle views de data van het nieuwe bedrijf inlezen.
+  const switchCompany = async (id: string) => {
+    if (id === activeCompanyId) return
+    setCompanyBusy(true)
+    setActiveCompanyId(id)
+    await flushStorage()
+    window.location.reload()
+  }
+
+  const handleCreateCompany = async () => {
+    const name = newCompanyName.trim()
+    if (!name) return
+    setCompanyBusy(true)
+    const company = createCompany(name)
+    setActiveCompanyId(company.id)
+    // Verse, lege configuratie voor het nieuwe bedrijf (schrijft onder de
+    // nieuwe bedrijfsscope, want de active-pointer is zojuist omgezet).
+    saveCompanyConfig({
+      ...defaultCompanyConfig,
+      name,
+      tagline: '',
+      profile: '',
+      competencies: '',
+      usps: '',
+      references: '',
+      files: [],
+    })
+    await flushStorage()
+    window.location.reload()
+  }
+
+  const handleRemoveCompany = async () => {
+    if (companies.length <= 1) return
+    const confirmed = window.confirm(
+      `Bedrijf "${activeCompany.name}" verwijderen? Alle projecten, bronnen en opgeslagen aanbestedingen van dit bedrijf worden definitief verwijderd.`,
+    )
+    if (!confirmed) return
+    setCompanyBusy(true)
+    removeCompany(activeCompanyId)
+    await flushStorage()
+    window.location.reload()
+  }
 
   const update = (patch: Partial<CompanyConfig>) => {
     setConfig((current) => ({ ...current, ...patch }))
@@ -83,6 +162,81 @@ export default function ConfigPage() {
 
   const removeFile = (id: string) => {
     update({ files: config.files.filter((file) => file.id !== id) })
+  }
+
+  // Voegt codes toe zonder duplicaten (vergeleken op de 8-cijferige basis,
+  // zodat "72000000" en "72000000-5" niet naast elkaar komen te staan).
+  const addCpvCodes = (entries: CompanyCpvCode[]) => {
+    setConfig((current) => {
+      const existing = new Set(current.cpvCodes.map((cpv) => cpv.code.slice(0, 8)))
+      const additions = entries.filter((entry) => {
+        const base = entry.code.slice(0, 8)
+        if (existing.has(base)) return false
+        existing.add(base)
+        return true
+      })
+      if (!additions.length) return current
+      return { ...current, cpvCodes: [...current.cpvCodes, ...additions] }
+    })
+    setSaved(false)
+  }
+
+  const handleAddManualCpv = () => {
+    const code = normalizeCpvCode(newCpvCode)
+    if (!code) {
+      setCpvStatus('Ongeldige CPV-code. Gebruik 8 cijfers, eventueel met controlecijfer (bijv. 72000000-5).')
+      return
+    }
+    if (config.cpvCodes.some((cpv) => cpv.code.slice(0, 8) === code.slice(0, 8))) {
+      setCpvStatus('Deze CPV-code staat er al tussen.')
+      return
+    }
+    addCpvCodes([{ code, omschrijving: newCpvDescription.trim() }])
+    setNewCpvCode('')
+    setNewCpvDescription('')
+    setCpvStatus('')
+  }
+
+  const removeCpvCode = (code: string) => {
+    update({ cpvCodes: config.cpvCodes.filter((cpv) => cpv.code !== code) })
+  }
+
+  const applyCpvSuggestion = (suggestion: CpvSuggestion) => {
+    addCpvCodes([{ code: suggestion.code, omschrijving: suggestion.omschrijving }])
+    setCpvSuggestions((current) => current.filter((item) => item.code !== suggestion.code))
+  }
+
+  const applyAllCpvSuggestions = () => {
+    addCpvCodes(cpvSuggestions.map((item) => ({ code: item.code, omschrijving: item.omschrijving })))
+    setCpvSuggestions([])
+  }
+
+  const hasCompanyInfoForCpv = Boolean(
+    config.profile.trim() ||
+      config.competencies.trim() ||
+      config.usps.trim() ||
+      config.references.trim() ||
+      config.files.length,
+  )
+
+  const handleSuggestCpv = async () => {
+    setCpvSuggesting(true)
+    setCpvSuggestions([])
+    setCpvStatus('AI analyseert het bedrijfsprofiel…')
+    try {
+      const result = await suggestCpvCodesForCompany(config)
+      setCpvSuggestions(result.suggestions)
+      const note = result.notes ? ` ${result.notes}` : ''
+      setCpvStatus(
+        result.suggestions.length
+          ? `${result.suggestions.length} voorstel${result.suggestions.length === 1 ? '' : 'len'} gevonden. Controleer en voeg toe wat past.${note}`
+          : result.notes || 'Geen voorstellen gevonden.',
+      )
+    } catch (error) {
+      setCpvStatus(error instanceof Error ? error.message : 'Voorstellen van CPV-codes mislukt.')
+    } finally {
+      setCpvSuggesting(false)
+    }
   }
 
   const applyEnrichedFields = (fields: CompanyEnrichFields) => {
@@ -134,7 +288,7 @@ export default function ConfigPage() {
           </div>
           <div className="min-w-0 leading-tight">
             <div className="truncate font-semibold">Configuratie</div>
-            <div className="truncate text-sm text-muted-foreground">Besteed Het Uit</div>
+            <div className="truncate text-sm text-muted-foreground">{activeCompany.name}</div>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -146,6 +300,93 @@ export default function ConfigPage() {
           </Button>
         </div>
       </header>
+
+      <div className="mx-auto mb-4 max-w-[920px]">
+        <Card>
+          <CardHeader>
+            <div className="flex items-start gap-3">
+              <Building2 size={20} className="mt-0.5 shrink-0" />
+              <div>
+                <h2 className="text-lg font-semibold">Bedrijven</h2>
+                <p className="text-sm text-muted-foreground">
+                  Werk voor meerdere bedrijven: projecten, bronnen en opgeslagen aanbestedingen zijn
+                  per bedrijf gescheiden. Kies hier voor welk bedrijf je werkt of maak een nieuw
+                  bedrijf aan.
+                </p>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="company-select">Actief bedrijf</Label>
+                <div className="flex items-center gap-2">
+                  <Select value={activeCompanyId} onValueChange={(value) => void switchCompany(value)}>
+                    <SelectTrigger id="company-select" className="min-w-0 flex-1" disabled={companyBusy}>
+                      <SelectValue placeholder="Kies bedrijf…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {companies.map((company) => (
+                        <SelectItem key={company.id} value={company.id}>
+                          {company.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0 text-destructive"
+                    disabled={companyBusy || companies.length <= 1}
+                    title={
+                      companies.length <= 1
+                        ? 'Het laatste bedrijf kan niet worden verwijderd.'
+                        : 'Verwijder dit bedrijf inclusief alle bijbehorende data.'
+                    }
+                    onClick={() => void handleRemoveCompany()}
+                  >
+                    <Trash2 size={15} />
+                    <span className="sr-only">Verwijder bedrijf</span>
+                  </Button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="company-new">Nieuw bedrijf</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="company-new"
+                    className="min-w-0 flex-1"
+                    value={newCompanyName}
+                    onChange={(event) => setNewCompanyName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        void handleCreateCompany()
+                      }
+                    }}
+                    placeholder="Naam van het bedrijf"
+                    disabled={companyBusy}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0"
+                    disabled={companyBusy || !newCompanyName.trim()}
+                    onClick={() => void handleCreateCompany()}
+                  >
+                    {companyBusy ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+                    Aanmaken
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              De configuratie hieronder geldt voor het actieve bedrijf: {activeCompany.name}. Na het
+              wisselen of aanmaken herlaadt de applicatie met de data van dat bedrijf.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
 
       <form className="mx-auto grid max-w-[920px] gap-4" onSubmit={handleSubmit}>
         <Card>
@@ -282,6 +523,140 @@ export default function ConfigPage() {
                 onChange={(event) => update({ references: event.target.value })}
                 placeholder="Projecten, opdrachtgevers, resultaten"
               />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-start gap-3">
+              <Tags size={20} className="mt-0.5 shrink-0" />
+              <div>
+                <h2 className="text-lg font-semibold">CPV-codes</h2>
+                <p className="text-sm text-muted-foreground">
+                  De aanbestedingscategorieën waarbinnen dit bedrijf inschrijft. Gebruikt als
+                  filtervoorstel bij het zoeken naar aanbestedingen.
+                </p>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {config.cpvCodes.length ? (
+              <ul className="grid gap-2">
+                {config.cpvCodes.map((cpv) => (
+                  <li
+                    key={cpv.code}
+                    className="flex items-center justify-between gap-3 rounded-md border p-3"
+                  >
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <Badge variant="secondary" className="shrink-0 font-mono">
+                        {cpv.code}
+                      </Badge>
+                      <span className="min-w-0 break-words text-sm">
+                        {cpv.omschrijving || 'Geen omschrijving'}
+                      </span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={() => removeCpvCode(cpv.code)}
+                    >
+                      <Trash2 size={14} /> Verwijder
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">Nog geen CPV-codes toegevoegd.</p>
+            )}
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Input
+                className="sm:w-44"
+                value={newCpvCode}
+                onChange={(event) => setNewCpvCode(event.target.value)}
+                placeholder="72000000-5"
+                aria-label="CPV-code"
+              />
+              <Input
+                className="min-w-0 flex-1"
+                value={newCpvDescription}
+                onChange={(event) => setNewCpvDescription(event.target.value)}
+                placeholder="Omschrijving (optioneel)"
+                aria-label="CPV-omschrijving"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="shrink-0 whitespace-nowrap"
+                disabled={!newCpvCode.trim()}
+                onClick={handleAddManualCpv}
+              >
+                <Plus size={16} /> Voeg toe
+              </Button>
+            </div>
+
+            <div className="space-y-2 rounded-md border border-dashed p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-muted-foreground">
+                  Laat AI relevante CPV-codes voorstellen op basis van het bedrijfsprofiel,
+                  de competenties en geüploade documenten.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0 whitespace-nowrap"
+                  disabled={cpvSuggesting || !hasCompanyInfoForCpv}
+                  onClick={handleSuggestCpv}
+                >
+                  {cpvSuggesting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                  {cpvSuggesting ? 'Bezig…' : 'Stel CPV-codes voor'}
+                </Button>
+              </div>
+              {!hasCompanyInfoForCpv ? (
+                <p className="text-xs text-muted-foreground">
+                  Vul eerst het bedrijfsprofiel of de competenties in, of upload documenten.
+                </p>
+              ) : null}
+              {cpvStatus ? <p className="text-sm text-muted-foreground">{cpvStatus}</p> : null}
+              {cpvSuggestions.length ? (
+                <div className="space-y-2">
+                  <ul className="grid gap-2">
+                    {cpvSuggestions.map((suggestion) => (
+                      <li
+                        key={suggestion.code}
+                        className="flex items-center justify-between gap-3 rounded-md border bg-card p-3"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="secondary" className="shrink-0 font-mono">
+                              {suggestion.code}
+                            </Badge>
+                            <span className="min-w-0 break-words text-sm">{suggestion.omschrijving}</span>
+                          </div>
+                          {suggestion.reden ? (
+                            <p className="mt-1 text-xs text-muted-foreground">{suggestion.reden}</p>
+                          ) : null}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={() => applyCpvSuggestion(suggestion)}
+                        >
+                          <Plus size={14} /> Voeg toe
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                  <Button type="button" variant="secondary" size="sm" onClick={applyAllCpvSuggestions}>
+                    <Plus size={14} /> Alles toevoegen
+                  </Button>
+                </div>
+              ) : null}
             </div>
           </CardContent>
         </Card>

@@ -20,6 +20,7 @@ import {
   Clock,
   Crown,
   Download,
+  ExternalLink,
   Eye,
   FileDown,
   FilePlus2,
@@ -92,7 +93,8 @@ import {
   upsertProject,
   type ProjectMeta,
 } from '../lib/projects'
-import { getStoredRaw, loadStored, saveStored, setStoredRaw } from '../lib/storage'
+import { flushStorage, getStoredRaw, loadStored, saveStored, setStoredRaw } from '../lib/storage'
+import { getActiveCompanyId, getCompanies, setActiveCompanyId } from '../lib/companies'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -101,6 +103,13 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Progress } from '@/components/ui/progress'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
 import { ModeToggle } from '@/components/mode-toggle'
 import { cn } from '@/lib/utils'
 import { proposalDocumentCss } from '../styles/proposalDocument'
@@ -279,6 +288,12 @@ function toLegacyComments(comments: ReviewComment[]) {
   }))
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} kB`
+  return `${bytes} B`
+}
+
 /** Verwijder editor-only annotaties (markeringen, herschrijf-ankers) uit HTML vóór export/AI. */
 function stripCommentMarks(html: string): string {
   if (typeof document === 'undefined') return html
@@ -431,6 +446,21 @@ export default function WorkspacePage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const savedTenders = getSavedTenders()
+  // Gedownloade aanbestedingsdocumenten (met links naar de gearchiveerde
+  // originelen in Vercel Blob) van het actieve dossier.
+  const activeSavedTender = savedTenders.find((tender) => tender.publicatieId === activeTenderId) ?? null
+
+  // Bedrijfskiezer: alle werkdata is per bedrijf gescheiden. Wisselen schrijft
+  // eerst openstaande wijzigingen weg en herlaadt daarna de pagina, zodat alle
+  // state-initializers de data van het gekozen bedrijf inlezen.
+  const companies = getCompanies()
+  const activeCompanyId = getActiveCompanyId()
+  const switchCompany = async (id: string) => {
+    if (id === activeCompanyId) return
+    setActiveCompanyId(id)
+    await flushStorage()
+    window.location.reload()
+  }
   const filteredSavedTenders = (() => {
     const term = dossierSearch.trim().toLowerCase()
     const matched = term
@@ -1676,11 +1706,32 @@ export default function WorkspacePage() {
             </div>
             <div className="min-w-0 leading-tight">
               <strong className="block truncate">Bid Writer</strong>
-              <span className="mt-0.5 block truncate text-xs text-muted-foreground">Besteed Het Uit</span>
+              <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                {companies.find((company) => company.id === activeCompanyId)?.name ?? 'Besteed Het Uit'}
+              </span>
             </div>
           </div>
           <ModeToggle />
         </div>
+
+        <div className="mb-4 space-y-1.5">
+          <Label htmlFor="company-switcher" className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+            <Building2 size={13} /> Actief bedrijf
+          </Label>
+          <Select value={activeCompanyId} onValueChange={(value) => void switchCompany(value)}>
+            <SelectTrigger id="company-switcher" className="w-full bg-card">
+              <SelectValue placeholder="Kies bedrijf…" />
+            </SelectTrigger>
+            <SelectContent>
+              {companies.map((company) => (
+                <SelectItem key={company.id} value={company.id}>
+                  {company.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         <nav className="mb-4 grid gap-1.5">
           <Link
             href="/configuratie"
@@ -2142,6 +2193,64 @@ export default function WorkspacePage() {
             ) : null}
           </CardContent>
         </Card>
+
+        {activeSavedTender?.documents?.length ? (
+          <Card className="mb-[14px]">
+            <CardContent className="space-y-2.5">
+              <div className="flex items-center gap-2 text-primary">
+                <FileText size={17} />
+                <h2 className="text-sm font-semibold">Aanbestedingsdocumenten</h2>
+                <Badge variant="secondary" className="ml-auto">{activeSavedTender.documents.length}</Badge>
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Origineel gedownloade bestanden van TenderNed. De tekst is al ingelezen als bron; via
+                “Openen” bekijk je het originele bestand.
+              </p>
+              <ul className="grid max-h-72 list-none gap-0 overflow-y-auto p-0">
+                {activeSavedTender.documents.map((doc, index) => (
+                  <li
+                    key={`${doc.naam}-${index}`}
+                    className="flex items-center gap-2 border-t py-1.5 text-xs first:border-t-0"
+                  >
+                    <span className="w-11 shrink-0 rounded bg-muted py-0.5 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                      {doc.type}
+                    </span>
+                    <span
+                      className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                      title={doc.note ? `${doc.naam} — ${doc.note}` : doc.naam}
+                    >
+                      {doc.naam}
+                    </span>
+                    <span className="shrink-0 tabular-nums text-muted-foreground">{formatBytes(doc.grootte)}</span>
+                    {doc.fileUrl ? (
+                      <a
+                        className="inline-flex shrink-0 items-center gap-1 font-medium text-primary underline-offset-2 hover:underline"
+                        href={doc.fileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <ExternalLink size={12} /> Openen
+                      </a>
+                    ) : (
+                      <span
+                        className="shrink-0 text-[10px] text-muted-foreground"
+                        title="Origineel niet gearchiveerd — download de aanbesteding opnieuw in de catalogus (vereist Vercel Blob-configuratie)."
+                      >
+                        geen origineel
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {activeSavedTender.documents.every((doc) => !doc.fileUrl) ? (
+                <p className="rounded-md border border-amber-300 bg-amber-50 px-[10px] py-2 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                  De originele bestanden zijn nog niet gearchiveerd. Download deze aanbesteding opnieuw
+                  in de catalogus nadat Vercel Blob is geconfigureerd.
+                </p>
+              ) : null}
+            </CardContent>
+          </Card>
+        ) : null}
       </aside>
 
       <section className="h-auto min-w-0 overflow-auto p-4 sm:p-6 xl:h-screen">

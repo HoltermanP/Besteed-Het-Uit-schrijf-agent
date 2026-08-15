@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -19,6 +19,7 @@ import {
   LoaderCircle,
   RefreshCw,
   Search,
+  Sparkles,
   X,
 } from 'lucide-react'
 import {
@@ -35,7 +36,10 @@ import {
   getSavedTenders,
   syncPendingTendersToNeon,
 } from '../lib/tenderDatabase'
+import { mapWithConcurrency } from '../lib/analyzeDocumentApi'
+import { currentProfileStamp, getTenderScores, scoreTendersForCompany } from '../lib/tenderScoreApi'
 import type { SavedTenderDocument, TenderDocument, TenderListItem } from '../types/tenderNed'
+import type { StoredTenderScore } from '../types/tenderScore'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -82,6 +86,10 @@ export default function TenderBrowserPage() {
   const [scannedPages, setScannedPages] = useState(0)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [docLists, setDocLists] = useState<Record<string, DocListState>>({})
+  const [scores, setScores] = useState<Record<string, StoredTenderScore>>(() => getTenderScores())
+  const [scoring, setScoring] = useState(false)
+  // Scores van een ouder bedrijfsprofiel worden verborgen; opnieuw scoren ververst ze.
+  const profileStamp = useMemo(() => currentProfileStamp(), [])
 
   const cpvOptions = useMemo(() => collectCpvCodes(items), [items])
 
@@ -175,6 +183,18 @@ export default function TenderBrowserPage() {
     }
   }, [])
 
+  // Documentenlijsten automatisch ophalen zodra publicaties geladen zijn, zodat
+  // per kaart direct zichtbaar is hoeveel en welke documenten erbij horen.
+  // Beperkte parallelliteit om de TenderNed-proxy niet te overvragen; de ref
+  // voorkomt dubbele requests wanneer items opnieuw renderen.
+  const requestedDocListsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const missing = items.filter((item) => !requestedDocListsRef.current.has(item.publicatieId))
+    if (!missing.length) return
+    missing.forEach((item) => requestedDocListsRef.current.add(item.publicatieId))
+    void mapWithConcurrency(missing, 4, (item) => loadDocList(item.publicatieId))
+  }, [items, loadDocList])
+
   const toggleExpand = (id: string) => {
     setExpanded((current) => {
       const next = new Set(current)
@@ -243,6 +263,34 @@ export default function TenderBrowserPage() {
       router.push(`/?open=${encodeURIComponent(item.publicatieId)}`)
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Downloaden mislukt.')
+    }
+  }
+
+  const scoreSelected = async () => {
+    if (!selected.size || scoring) return
+    const targets = items.filter((item) => selected.has(item.publicatieId))
+    if (!targets.length) return
+    setScoring(true)
+    setStatus('AI-score berekenen…')
+    try {
+      // CPV-codes zijn het belangrijkste matchsignaal, maar ontbreken op
+      // lijstitems; eerst bijladen via de detail-endpoint.
+      const enriched = await enrichWithCpv(targets)
+      const byId = new Map(enriched.map((item) => [item.publicatieId, item]))
+      setItems((current) => current.map((row) => byId.get(row.publicatieId) ?? row))
+
+      const result = await scoreTendersForCompany(enriched, {
+        onProgress: ({ done, total }) => setStatus(`AI-score berekenen… ${done}/${total} tenders.`),
+      })
+      setScores({ ...result.scores })
+      const parts = [`${result.scored} gescoord`]
+      if (result.fromCache) parts.push(`${result.fromCache} uit cache`)
+      if (result.failed) parts.push(`${result.failed} mislukt`)
+      setStatus(`AI-score klaar: ${parts.join(', ')}.`)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'AI-score berekenen mislukt.')
+    } finally {
+      setScoring(false)
     }
   }
 
@@ -390,6 +438,15 @@ export default function TenderBrowserPage() {
               <X size={15} /> Wis selectie
             </Button>
           ) : null}
+          <Button
+            variant="outline"
+            onClick={scoreSelected}
+            disabled={!selected.size || scoring || loading}
+            title="Laat AI per geselecteerde tender scoren (0-100) hoe goed die past bij het bedrijfsprofiel"
+          >
+            {scoring ? <LoaderCircle size={16} className="animate-spin" /> : <Sparkles size={16} />}
+            Scoor {selected.size > 0 ? `${selected.size} ` : ''}met AI
+          </Button>
           <Button onClick={downloadSelected} disabled={!selected.size || loading}>
             {loading ? <LoaderCircle size={16} className="animate-spin" /> : <Download size={16} />}
             Download {selected.size > 0 ? `${selected.size} ` : ''}naar database
@@ -405,6 +462,8 @@ export default function TenderBrowserPage() {
           const isExpanded = expanded.has(item.publicatieId)
           const docState = docLists[item.publicatieId]
           const isOpen = item.aantalDagenTotSluitingsDatum >= 0
+          const rawScore = scores[item.publicatieId]
+          const score = rawScore && rawScore.profileStamp === profileStamp ? rawScore : undefined
           return (
             <Card
               key={item.publicatieId}
@@ -430,12 +489,30 @@ export default function TenderBrowserPage() {
               <div className="min-w-0 flex-1">
                 <div className="flex justify-between gap-2.5">
                   <strong className="min-w-0 break-words">{item.aanbestedingNaam}</strong>
-                  <Badge
-                    variant={isOpen ? 'default' : 'secondary'}
-                    className="shrink-0 whitespace-nowrap rounded-full"
-                  >
-                    {isOpen ? `${item.aantalDagenTotSluitingsDatum} dagen` : 'Gesloten'}
-                  </Badge>
+                  <span className="flex shrink-0 items-start gap-1.5">
+                    {score ? (
+                      <Badge
+                        variant="outline"
+                        title={score.toelichting || 'AI-geschiktheidsscore voor het bedrijfsprofiel'}
+                        className={cn(
+                          'whitespace-nowrap rounded-full font-semibold',
+                          score.score >= 70
+                            ? 'border-emerald-500/50 text-emerald-600 dark:text-emerald-400'
+                            : score.score >= 40
+                              ? 'border-amber-500/50 text-amber-600 dark:text-amber-400'
+                              : 'border-destructive/50 text-destructive',
+                        )}
+                      >
+                        <Sparkles size={12} /> {score.score}/100
+                      </Badge>
+                    ) : null}
+                    <Badge
+                      variant={isOpen ? 'default' : 'secondary'}
+                      className="whitespace-nowrap rounded-full"
+                    >
+                      {isOpen ? `${item.aantalDagenTotSluitingsDatum} dagen` : 'Gesloten'}
+                    </Badge>
+                  </span>
                 </div>
                 <p className="mt-1.5 flex flex-wrap items-center gap-x-1 break-words text-sm text-muted-foreground">
                   {item.opdrachtgeverNaam} · TN-{item.kenmerk} · sluit {formatDate(item.sluitingsDatum)}
@@ -446,6 +523,12 @@ export default function TenderBrowserPage() {
                   ) : null}
                 </p>
                 <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{item.opdrachtBeschrijving.slice(0, 220)}{item.opdrachtBeschrijving.length > 220 ? '...' : ''}</p>
+                {score?.toelichting ? (
+                  <p className="mt-1.5 flex items-start gap-1.5 text-xs leading-relaxed text-muted-foreground">
+                    <Sparkles size={13} className="mt-0.5 shrink-0" />
+                    <span className="min-w-0 break-words">{score.toelichting}</span>
+                  </p>
+                ) : null}
                 {item.cpvCodes?.length ? (
                   <div className="mt-2.5 flex flex-wrap gap-1.5">
                     {item.cpvCodes.slice(0, 4).map((cpv) => (
@@ -477,8 +560,13 @@ export default function TenderBrowserPage() {
                     onClick={() => toggleExpand(item.publicatieId)}
                   >
                     {isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                    <FileText size={14} /> Documenten
+                    <FileText size={14} /> Documenten{Array.isArray(docState) ? ` (${docState.length})` : ''}
                   </Button>
+                  {docState === 'loading' ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <LoaderCircle size={13} className="animate-spin" /> documenten tellen…
+                    </span>
+                  ) : null}
                   {item.link ? (
                     <a
                       className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
@@ -490,6 +578,17 @@ export default function TenderBrowserPage() {
                     </a>
                   ) : null}
                 </div>
+
+                {!isExpanded && Array.isArray(docState) ? (
+                  <p className="mt-1.5 break-words text-xs text-muted-foreground">
+                    {docState.length
+                      ? `${docState
+                          .slice(0, 3)
+                          .map((doc) => doc.documentNaam)
+                          .join(' · ')}${docState.length > 3 ? ` · +${docState.length - 3} meer` : ''}`
+                      : 'Geen losse documenten bij deze publicatie.'}
+                  </p>
+                ) : null}
 
                 {isExpanded ? (
                   <div className="mt-2.5 rounded-lg border bg-muted/40 p-3">

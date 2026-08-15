@@ -16,6 +16,55 @@ let flushChain: Promise<void> = Promise.resolve()
 const FLUSH_DELAY_MS = 800
 const LEGACY_PREFIX = 'bid-agent-'
 
+// ── Bedrijfsscheiding ────────────────────────────────────────────────────────
+// Werkdata (projecten, dossiers, bronnen, bedrijfsconfig, opgeslagen
+// aanbestedingen) is gescheiden per bedrijf: elke sleutel krijgt een suffix met
+// het actieve bedrijfs-id. Het eerste bedrijf ('default') gebruikt de
+// oorspronkelijke, ongescopede sleutels zodat bestaande data zonder migratie
+// behouden blijft. App-brede sleutels (API-config, het bedrijvenregister zelf)
+// worden nooit gescoped.
+
+export const DEFAULT_COMPANY_ID = 'default'
+const COMPANY_SEPARATOR = '@@'
+const GLOBAL_KEYS = new Set([
+  'bid-agent-api-config',
+  'bid-agent-companies',
+  'bid-agent-active-company',
+])
+
+function activeCompanyId(): string {
+  const raw = cache.get('bid-agent-active-company')
+  if (!raw) return DEFAULT_COMPANY_ID
+  try {
+    return (JSON.parse(raw) as string) || DEFAULT_COMPANY_ID
+  } catch {
+    return DEFAULT_COMPANY_ID
+  }
+}
+
+function scopeKey(key: string): string {
+  if (GLOBAL_KEYS.has(key)) return key
+  const company = activeCompanyId()
+  return company === DEFAULT_COMPANY_ID ? key : `${key}${COMPANY_SEPARATOR}${company}`
+}
+
+/** Verwijdert alle werkdata van één bedrijf (gebruikt bij het verwijderen ervan). */
+export function purgeCompanyData(companyId: string) {
+  const suffix = `${COMPANY_SEPARATOR}${companyId}`
+  const targets = [...cache.keys()].filter((key) => {
+    if (GLOBAL_KEYS.has(key)) return false
+    return companyId === DEFAULT_COMPANY_ID
+      ? !key.includes(COMPANY_SEPARATOR)
+      : key.endsWith(suffix)
+  })
+  targets.forEach((key) => {
+    cache.delete(key)
+    dirtyKeys.delete(key)
+    removedKeys.add(key)
+  })
+  scheduleFlush()
+}
+
 async function fetchServerState(): Promise<Record<string, string>> {
   const response = await fetch('/api/state', { cache: 'no-store' })
   if (!response.ok) {
@@ -148,25 +197,36 @@ function registerUnloadFlush() {
 }
 
 export function getStoredRaw(key: string): string | null {
-  return cache.get(key) ?? null
+  return cache.get(scopeKey(key)) ?? null
 }
 
 export function setStoredRaw(key: string, value: string) {
-  cache.set(key, value)
-  removedKeys.delete(key)
-  dirtyKeys.add(key)
+  const scoped = scopeKey(key)
+  cache.set(scoped, value)
+  removedKeys.delete(scoped)
+  dirtyKeys.add(scoped)
   scheduleFlush()
 }
 
 export function removeStored(key: string) {
-  cache.delete(key)
-  dirtyKeys.delete(key)
-  removedKeys.add(key)
+  const scoped = scopeKey(key)
+  cache.delete(scoped)
+  dirtyKeys.delete(scoped)
+  removedKeys.add(scoped)
   scheduleFlush()
 }
 
+/** Sleutels van het actieve bedrijf; het bedrijfssuffix wordt gestript zodat aanroepers logische sleutels zien. */
 export function listStoredKeys(prefix: string): string[] {
-  return [...cache.keys()].filter((key) => key.startsWith(prefix))
+  const company = activeCompanyId()
+  const suffix = company === DEFAULT_COMPANY_ID ? '' : `${COMPANY_SEPARATOR}${company}`
+  return [...cache.keys()]
+    .filter(
+      (key) =>
+        key.startsWith(prefix) &&
+        (suffix ? key.endsWith(suffix) : !key.includes(COMPANY_SEPARATOR)),
+    )
+    .map((key) => (suffix ? key.slice(0, key.length - suffix.length) : key))
 }
 
 export function loadStored<T>(key: string, fallback: T): T {

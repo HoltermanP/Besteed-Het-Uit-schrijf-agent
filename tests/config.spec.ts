@@ -70,3 +70,64 @@ test('gegevens ophalen vult velden in op basis van website', async ({ page }) =>
   await expect(page.getByPlaceholder('tenders@bedrijf.nl')).toHaveValue('info@voorbeeld.nl')
   await expect(page.getByText('2 bronnen verwerkt')).toBeVisible()
 })
+
+test('CPV-codes handmatig toevoegen en verwijderen', async ({ page }) => {
+  await page.goto('/configuratie')
+  await expect(page.getByRole('heading', { name: 'CPV-codes' })).toBeVisible()
+
+  await page.getByLabel('CPV-code').fill('72000000-5')
+  await page.getByLabel('CPV-omschrijving').fill('IT-diensten')
+  await page.getByRole('button', { name: 'Voeg toe' }).click()
+
+  await expect(page.getByText('72000000-5')).toBeVisible()
+  await expect(page.getByText('IT-diensten')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Opslaan' }).click()
+  await expect(page.getByText('Bedrijfsconfiguratie opgeslagen')).toBeVisible()
+
+  await page.reload()
+  await expect(page.getByText('72000000-5')).toBeVisible()
+})
+
+test('ongeldige CPV-code toont foutmelding', async ({ page }) => {
+  await page.goto('/configuratie')
+  await page.getByLabel('CPV-code').fill('abc')
+  await page.getByRole('button', { name: 'Voeg toe' }).click()
+  await expect(page.getByText('Ongeldige CPV-code')).toBeVisible()
+})
+
+test('AI stelt CPV-codes voor op basis van bedrijfsinfo', async ({ page }) => {
+  await page.route('**/api/cpv-suggest', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        suggestions: [
+          {
+            code: '72000000-5',
+            omschrijving: 'IT-diensten: adviezen, softwareontwikkeling, internet en ondersteuning',
+            reden: 'Het bedrijf levert AI-ondersteunde diensten.',
+          },
+          {
+            code: '79400000-8',
+            omschrijving: 'Adviezen inzake bedrijfsvoering en management',
+            reden: 'Bidmanagement is een adviesdienst.',
+          },
+        ],
+        notes: '',
+      }),
+    })
+  })
+
+  await page.goto('/configuratie')
+  await page.getByRole('button', { name: 'Stel CPV-codes voor' }).click()
+
+  await expect(page.getByText('2 voorstellen gevonden')).toBeVisible()
+  await expect(page.getByText('79400000-8')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Alles toevoegen' }).click()
+  await expect(page.getByRole('button', { name: 'Alles toevoegen' })).toBeHidden()
+
+  await page.getByRole('button', { name: 'Opslaan' }).click()
+  await expect(page.getByText('Bedrijfsconfiguratie opgeslagen')).toBeVisible()
+})
