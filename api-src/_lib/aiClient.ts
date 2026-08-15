@@ -19,6 +19,27 @@ export type AiCompletionOptions = {
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   /** Adaptive thinking verbruikt output-budget; standaard uit voor lange teksten. */
   useThinking?: boolean
+  /**
+   * Prompt caching (alleen Anthropic). Zet dit aan bij aanroepen waarvan de
+   * prefix aantoonbaar wordt herlezen (vervolg-passes, herhaalde generaties);
+   * een cache-write kost 1,25× input, dus bij eenmalige calls is het verlies.
+   */
+  cachePrompt?: boolean
+}
+
+/**
+ * Kostenklasse van de taak. Alleen het daadwerkelijke schrijfwerk ('writer')
+ * draait op het topmodel; analyse- en selectietaken draaien op goedkopere
+ * modellen zonder merkbaar kwaliteitsverlies voor het eindresultaat.
+ */
+export type AiTaskTier = 'writer' | 'analysis' | 'light'
+
+// Alleen van toepassing op Anthropic; bij OpenAI-compatibele endpoints kennen
+// we het beschikbare modelaanbod niet en blijft het geconfigureerde model staan.
+const ANTHROPIC_TIER_MODELS: Record<AiTaskTier, string> = {
+  writer: 'claude-opus-4-8',
+  analysis: 'claude-sonnet-4-6',
+  light: 'claude-haiku-4-5',
 }
 
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -56,19 +77,62 @@ function splitMessages(messages: AiMessage[]) {
   return { system, chatMessages }
 }
 
+type AnthropicTextBlock = {
+  type: 'text'
+  text: string
+  cache_control?: { type: 'ephemeral' }
+}
+
+/**
+ * Prompt caching: markeer het einde van de stabiele prefix — de system prompt en
+ * het eerste user-bericht (waar de grote documentblokken zitten). Vervolg-passes
+ * van de schrijfagent en herhaalde aanroepen met dezelfde bronnen lezen die
+ * prefix dan uit cache tegen ~10% van de reguliere inputprijs.
+ */
+function buildAnthropicPayload(messages: AiMessage[], cachePrompt: boolean) {
+  const { system, chatMessages } = splitMessages(messages)
+
+  if (!cachePrompt) {
+    return {
+      systemBlocks: system ? [{ type: 'text', text: system } satisfies AnthropicTextBlock] : undefined,
+      anthropicMessages: chatMessages,
+    }
+  }
+
+  const systemBlocks: AnthropicTextBlock[] | undefined = system
+    ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+    : undefined
+
+  let firstUserMarked = false
+  const anthropicMessages = chatMessages.map((message) => {
+    if (message.role === 'user' && !firstUserMarked) {
+      firstUserMarked = true
+      const block: AnthropicTextBlock = {
+        type: 'text',
+        text: message.content,
+        cache_control: { type: 'ephemeral' },
+      }
+      return { role: message.role, content: [block] }
+    }
+    return message
+  })
+
+  return { systemBlocks, anthropicMessages }
+}
+
 async function completeAnthropic(
   ai: AiRuntimeConfig,
   messages: AiMessage[],
   options: AiCompletionOptions,
 ): Promise<string> {
-  const { system, chatMessages } = splitMessages(messages)
+  const { systemBlocks, anthropicMessages } = buildAnthropicPayload(messages, options.cachePrompt ?? false)
   const body: Record<string, unknown> = {
     model: ai.model,
     max_tokens: options.maxTokens ?? 16_000,
-    messages: chatMessages,
+    messages: anthropicMessages,
   }
 
-  if (system) body.system = system
+  if (systemBlocks) body.system = systemBlocks
   if (options.useThinking && usesAdaptiveThinking(ai.model)) {
     body.thinking = { type: 'adaptive' }
     body.output_config = { effort: options.effort ?? 'high' }
@@ -109,15 +173,15 @@ async function* streamAnthropic(
   messages: AiMessage[],
   options: AiCompletionOptions,
 ): AsyncGenerator<string> {
-  const { system, chatMessages } = splitMessages(messages)
+  const { systemBlocks, anthropicMessages } = buildAnthropicPayload(messages, options.cachePrompt ?? false)
   const body: Record<string, unknown> = {
     model: ai.model,
     max_tokens: options.maxTokens ?? 16_000,
-    messages: chatMessages,
+    messages: anthropicMessages,
     stream: true,
   }
 
-  if (system) body.system = system
+  if (systemBlocks) body.system = systemBlocks
   if (options.useThinking && usesAdaptiveThinking(ai.model)) {
     body.thinking = { type: 'adaptive' }
     body.output_config = { effort: options.effort ?? 'high' }
@@ -316,14 +380,17 @@ export async function completeChat(
   return completeOpenAiCompatible(ai, messages, options)
 }
 
-export function resolveAnthropicFromEnv(modelEnv = 'WRITER_MODEL'): AiRuntimeConfig | null {
+export function resolveAnthropicFromEnv(
+  modelEnv = 'WRITER_MODEL',
+  tier: AiTaskTier = 'writer',
+): AiRuntimeConfig | null {
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim()
   if (!apiKey) return null
   return {
     provider: 'anthropic',
     baseUrl: normalizeBaseUrl(process.env.ANTHROPIC_BASE_URL, DEFAULT_ANTHROPIC_BASE_URL),
     apiKey,
-    model: process.env[modelEnv]?.trim() || 'claude-opus-4-8',
+    model: process.env[modelEnv]?.trim() || ANTHROPIC_TIER_MODELS[tier],
   }
 }
 
@@ -341,20 +408,33 @@ export function resolveOpenAiFromEnv(modelEnv = 'OPENAI_MODEL'): AiRuntimeConfig
 export function resolveAiFromRequest(
   requestAi: AiRuntimeConfig | undefined,
   envModelKey = 'WRITER_MODEL',
+  tier: AiTaskTier = 'writer',
 ): AiRuntimeConfig {
   if (requestAi?.apiKey?.trim()) {
-    const defaults = requestAi.provider === 'anthropic'
-      ? { baseUrl: DEFAULT_ANTHROPIC_BASE_URL, model: 'claude-opus-4-8' }
-      : { baseUrl: DEFAULT_OPENAI_BASE_URL, model: 'gpt-4.1-mini' }
+    if (requestAi.provider === 'anthropic') {
+      // Het in API-beheer geconfigureerde model geldt alleen voor het schrijfwerk;
+      // lichtere taken draaien op het (goedkopere) tier-model, tenzij de
+      // omgevingsvariabele van deze taakgroep expliciet iets anders afdwingt.
+      const model =
+        tier === 'writer'
+          ? requestAi.model?.trim() || ANTHROPIC_TIER_MODELS.writer
+          : process.env[envModelKey]?.trim() || ANTHROPIC_TIER_MODELS[tier]
+      return {
+        provider: requestAi.provider,
+        baseUrl: normalizeBaseUrl(requestAi.baseUrl, DEFAULT_ANTHROPIC_BASE_URL),
+        apiKey: requestAi.apiKey.trim(),
+        model,
+      }
+    }
     return {
       provider: requestAi.provider,
-      baseUrl: normalizeBaseUrl(requestAi.baseUrl, defaults.baseUrl),
+      baseUrl: normalizeBaseUrl(requestAi.baseUrl, DEFAULT_OPENAI_BASE_URL),
       apiKey: requestAi.apiKey.trim(),
-      model: requestAi.model?.trim() || defaults.model,
+      model: requestAi.model?.trim() || 'gpt-4.1-mini',
     }
   }
 
-  const anthropic = resolveAnthropicFromEnv(envModelKey)
+  const anthropic = resolveAnthropicFromEnv(envModelKey, tier)
   if (anthropic) return anthropic
 
   const openai = resolveOpenAiFromEnv(envModelKey)

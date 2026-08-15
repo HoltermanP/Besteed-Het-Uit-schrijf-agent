@@ -125,7 +125,7 @@ export async function handleEvaluateProjectRequest(
 
   let ai: ReturnType<typeof resolveAiFromRequest>
   try {
-    ai = resolveAiFromRequest(request.ai, 'REVIEW_MODEL')
+    ai = resolveAiFromRequest(request.ai, 'REVIEW_MODEL', 'analysis')
   } catch (error) {
     const message =
       error instanceof Error ? error.message : 'Geen AI-configuratie beschikbaar voor evaluatie.'

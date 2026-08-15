@@ -79,7 +79,7 @@ export async function handleAnalyzeIntentRequest(
 
   let ai: ReturnType<typeof resolveAiFromRequest>
   try {
-    ai = resolveAiFromRequest(request.ai, 'INTENT_MODEL')
+    ai = resolveAiFromRequest(request.ai, 'INTENT_MODEL', 'light')
   } catch {
     return Response.json({
       underlyingIntent: request.baseline,

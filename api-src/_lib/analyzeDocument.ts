@@ -209,7 +209,7 @@ export async function handleAnalyzeDocumentRequest(request: AnalyzeDocumentReque
 
   let ai: ReturnType<typeof resolveAiFromRequest>
   try {
-    ai = resolveAiFromRequest(request.ai, 'INTENT_MODEL')
+    ai = resolveAiFromRequest(request.ai, 'INTENT_MODEL', 'analysis')
   } catch {
     return Response.json({ error: 'Geen AI-configuratie beschikbaar voor documentanalyse.' }, { status: 400 })
   }

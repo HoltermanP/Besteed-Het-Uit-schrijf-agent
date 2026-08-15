@@ -93,7 +93,7 @@ async function searchWeb(query: string): Promise<{ source: string; text: string 
 }
 
 function resolveAiConfig(request: CompanyEnrichRequest) {
-  return resolveAiFromRequest(request.ai, 'COMPANY_ENRICH_MODEL')
+  return resolveAiFromRequest(request.ai, 'COMPANY_ENRICH_MODEL', 'analysis')
 }
 
 const SYSTEM_PROMPT = `Je extraheert bedrijfsgegevens voor een Nederlandse inschrijving.

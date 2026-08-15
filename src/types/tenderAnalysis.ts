@@ -28,6 +28,16 @@ export type DocumentExtract = {
   model?: string
 }
 
+/** Gecomprimeerde promptversie van een bron (niet-leidraad); eenmalig gedistilleerd en gecachet. */
+export type DocumentDistillate = {
+  content: string
+  /** Lengte van de brontekst waarop het distillaat is gebaseerd — voor cache-invalidatie. */
+  sourceChars: number
+  distilledAt: string
+  provider?: string
+  model?: string
+}
+
 export type SourceDocument = {
   id: string
   name: string
@@ -36,6 +46,8 @@ export type SourceDocument = {
   importedAt: string
   /** Gecachet per-document distillaat uit de map-fase; ontbreekt tot het stuk is geanalyseerd. */
   extract?: DocumentExtract | null
+  /** Gecomprimeerde versie voor de schrijfprompt (alleen company/rules/training). */
+  distilled?: DocumentDistillate | null
 }
 
 export type WordLimit = {

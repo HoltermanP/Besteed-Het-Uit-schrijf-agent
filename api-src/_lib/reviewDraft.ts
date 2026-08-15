@@ -214,7 +214,7 @@ export async function handleReviewDraftRequest(request: ReviewDraftRequest): Pro
 
   let ai: ReturnType<typeof resolveAiFromRequest>
   try {
-    ai = resolveAiFromRequest(request.ai, 'REVIEW_MODEL')
+    ai = resolveAiFromRequest(request.ai, 'REVIEW_MODEL', 'analysis')
   } catch {
     // Geen AI-reviewagent geconfigureerd → lever de heuristische baseline ongewijzigd terug.
     return Response.json({

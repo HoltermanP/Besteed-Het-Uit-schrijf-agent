@@ -288,7 +288,7 @@ export async function analyzeStyleDocument(input: {
   const document = await getStyleDocument(input.id)
   if (!document) throw new Error('Document niet gevonden.')
 
-  const ai = resolveAiFromRequest(input.ai, 'WRITER_MODEL')
+  const ai = resolveAiFromRequest(input.ai, 'WRITER_MODEL', 'analysis')
   const profile = await analyzeSourceProfile(ai, {
     name: document.name,
     content: document.content,
@@ -306,7 +306,7 @@ export async function distillRulesForDocument(input: {
   const document = await getStyleDocument(input.id)
   if (!document) throw new Error('Document niet gevonden.')
 
-  const ai = resolveAiFromRequest(input.ai, 'WRITER_MODEL')
+  const ai = resolveAiFromRequest(input.ai, 'WRITER_MODEL', 'analysis')
   return distillRulesFromContent(ai, {
     name: document.name,
     content: document.content,

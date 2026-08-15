@@ -435,7 +435,7 @@ async function reduceFromExtracts(request: AnalyzeTenderRequest): Promise<Respon
 
   let ai: ReturnType<typeof resolveAiFromRequest>
   try {
-    ai = resolveAiFromRequest(request.ai, 'INTENT_MODEL')
+    ai = resolveAiFromRequest(request.ai, 'INTENT_MODEL', 'analysis')
   } catch {
     // Geen AI beschikbaar → lever de deterministisch samengevoegde analyse (al compleet).
     return Response.json({
@@ -481,7 +481,7 @@ export async function handleAnalyzeTenderRequest(request: AnalyzeTenderRequest):
 
   let ai: ReturnType<typeof resolveAiFromRequest>
   try {
-    ai = resolveAiFromRequest(request.ai, 'INTENT_MODEL')
+    ai = resolveAiFromRequest(request.ai, 'INTENT_MODEL', 'analysis')
   } catch {
     return Response.json({
       analysis: { ...request.baseline, aiAnalyzed: false },

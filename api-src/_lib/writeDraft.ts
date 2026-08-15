@@ -565,7 +565,9 @@ async function streamDraftToCompletion(
   const baseMessages = buildChatMessages(request)
   let accumulated = ''
   let messages: AiMessage[] = baseMessages
-  const maxPasses = 5
+  // Elke extra pass verstuurt de volledige prompt plus het opgebouwde concept
+  // opnieuw; 3 passes à 64k output-tokens is ruim voldoende voor elk stuk.
+  const maxPasses = 3
 
   for (let pass = 0; pass < maxPasses; pass++) {
     if (pass > 0) {
@@ -609,6 +611,9 @@ function chatOptions(request: WriteDraftRequest) {
     timeoutMs: 300_000,
     useThinking: false,
     effort: request.stage === 'goud' ? ('xhigh' as const) : ('high' as const),
+    // De system prompt en het documentblok worden bij vervolg-passes en
+    // herhaalde generaties herlezen — prompt caching scheelt daar ~90% input.
+    cachePrompt: true,
   }
 }
 
@@ -655,7 +660,7 @@ export async function generateDraftWithAi(
   const baseMessages = buildChatMessages(request)
   let messages: AiMessage[] = baseMessages
 
-  for (let pass = 0; pass < 5; pass++) {
+  for (let pass = 0; pass < 3; pass++) {
     const chunk = await completeChat(ai, messages, options)
     accumulated += chunk
     if (!needsContinuation(accumulated, request)) break

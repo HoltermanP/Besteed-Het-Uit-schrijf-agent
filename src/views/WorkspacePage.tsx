@@ -51,13 +51,15 @@ import { revealDraftProgressively } from '../lib/draftProgress'
 import { analyzeTenderDocuments, countCharacters, countWords, reviewAgainstAnalysis } from '../lib/tenderAnalysis'
 import { analyzeTenderViaApi } from '../lib/analyzeTenderApi'
 import { analyzeDocumentViaApi, mapWithConcurrency } from '../lib/analyzeDocumentApi'
+import { distillDocumentViaApi } from '../lib/distillDocumentApi'
+import type { DistillDocumentResponse } from '../types/distillDocument'
 import type { TenderDocumentExtract } from '../types/analyzeTender'
 import { assessSourceContent } from '../lib/sourceQuality'
 import { readFileContent } from '../lib/extractTextApi'
 import FileUploadZone from '../components/FileUploadZone'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog'
 import { acceptedStyleExtensions } from '../types/styleDocument'
-import type { DocumentExtract, TenderAnalysis } from '../types/tenderAnalysis'
+import type { DocumentDistillate, DocumentExtract, TenderAnalysis } from '../types/tenderAnalysis'
 import { exportPdfFromHtml } from '../lib/documentExport'
 import { isNeonConfigured, isWriterConfigured, migrateLegacyNeonUrl } from '../lib/apiConfig'
 import { generateDraftViaApi, fetchWriterStatus, isNoAiConfigError, type WriterStatus } from '../lib/writeDraftApi'
@@ -115,6 +117,8 @@ type SourceDocument = {
   importedAt: string
   /** Gecachet per-document distillaat uit de map-fase van de analyse. */
   extract?: DocumentExtract | null
+  /** Gecomprimeerde promptversie (alleen company/rules/training), gecachet per upload. */
+  distilled?: DocumentDistillate | null
 }
 
 type CommentStatus = 'open' | 'verwerkt' | 'akkoord'
@@ -405,6 +409,11 @@ export default function WorkspacePage() {
   const [comments, setComments] = useState<ReviewComment[]>(initial.comments)
   const [findings, setFindings] = useState<ReviewFinding[]>([])
   const [analysis, setAnalysis] = useState<TenderAnalysis | null>(initial.analysis)
+  // Vingerafdruk van de bronnen waarop de laatste AI-analyse is gebaseerd;
+  // zolang die gelijk blijft, wordt de analyse hergebruikt i.p.v. opnieuw betaald.
+  const [analysisSource, setAnalysisSource] = useState<string | null>(() =>
+    loadStored<string | null>('bid-agent-analysis-source', null),
+  )
   const [activeType, setActiveType] = useState<SourceType>('tender')
   const [manualText, setManualText] = useState('')
   const [manualName, setManualName] = useState('')
@@ -518,6 +527,12 @@ export default function WorkspacePage() {
       saveStored('bid-agent-analysis', analysis)
     }
   }, [analysis])
+
+  useEffect(() => {
+    if (analysisSource) {
+      saveStored('bid-agent-analysis-source', analysisSource)
+    }
+  }, [analysisSource])
 
   useEffect(() => {
     saveStored('bid-agent-project', project)
@@ -666,6 +681,88 @@ export default function WorkspacePage() {
     return resolved
   }
 
+  // Vingerafdruk van de analyse-input: zolang bronnen en opdrachtgever gelijk
+  // blijven, kan een eerdere AI-analyse veilig worden hergebruikt.
+  const analysisFingerprintFor = (
+    docs: { name: string; type: string; content: string }[],
+    buyer: string,
+  ): string => JSON.stringify([buyer, docs.map((doc) => [doc.name, doc.type, doc.content.length])])
+
+  // Compressie: destilleer omvangrijke niet-leidraadbronnen eenmalig tot een
+  // compacte promptversie en cache die op het document. De leidraad (tender)
+  // gaat altijd integraal mee — daar telt elke eis letterlijk.
+  const gatherDistilledDocuments = async (): Promise<Map<string, string>> => {
+    const compressible = new Set<SourceType>(['company', 'rules', 'training'])
+    const minChars = 6_000
+    const candidates = documents.filter(
+      (doc) => compressible.has(doc.type) && doc.content.length >= minChars,
+    )
+    const distilledById = new Map<string, string>()
+    if (!candidates.length) return distilledById
+
+    const stale: SourceDocument[] = []
+    for (const doc of candidates) {
+      if (doc.distilled?.sourceChars === doc.content.length) {
+        distilledById.set(doc.id, doc.distilled.content)
+      } else {
+        stale.push(doc)
+      }
+    }
+    if (!stale.length) return distilledById
+
+    setSyncStatus(`Bronnen comprimeren (0/${stale.length})…`)
+    const results = await mapWithConcurrency(
+      stale,
+      3,
+      async (doc) => ({ id: doc.id, result: await distillDocumentViaApi(doc) }),
+      (done, total) => setSyncStatus(`Bronnen comprimeren (${done}/${total})…`),
+    )
+
+    const fresh = new Map<string, DistillDocumentResponse>()
+    for (const item of results) {
+      if (item.result) {
+        fresh.set(item.id, item.result)
+        distilledById.set(item.id, item.result.content)
+      }
+    }
+
+    // Cache het distillaat op het document, zodat het maar één keer betaald wordt.
+    if (fresh.size) {
+      const stamp = new Date().toISOString()
+      setDocuments((current) =>
+        current.map((doc) => {
+          const result = fresh.get(doc.id)
+          return result
+            ? {
+                ...doc,
+                distilled: {
+                  content: result.content,
+                  sourceChars: result.sourceChars,
+                  distilledAt: stamp,
+                  provider: result.provider,
+                  model: result.model,
+                },
+              }
+            : doc
+        }),
+      )
+    }
+
+    return distilledById
+  }
+
+  /** Vervangt de inhoud van gecomprimeerde bronnen in de prompt; de leidraad blijft integraal. */
+  const applyDistillates = <T extends { id: string; content: string }>(
+    docs: T[],
+    distilledById: Map<string, string>,
+  ): T[] =>
+    distilledById.size
+      ? docs.map((doc) => {
+          const compact = distilledById.get(doc.id)
+          return compact ? { ...doc, content: compact } : doc
+        })
+      : docs
+
   const runAnalysis = async () => {
     const baseline = analyzeTenderDocuments(effectiveDocuments, project.buyer)
     setAnalysis(baseline)
@@ -681,6 +778,7 @@ export default function WorkspacePage() {
     const enriched = await analyzeTenderViaApi(project.buyer, effectiveDocuments, baseline, extracts)
     if (enriched?.enriched) {
       setAnalysis(enriched.analysis)
+      setAnalysisSource(analysisFingerprintFor(effectiveDocuments, project.buyer))
       setSyncStatus(
         `Uitvraag-analyse door ${enriched.provider} (${enriched.model}): ${enriched.analysis.contentRequirements.length} vragen, ${enriched.analysis.documentRequirements.length} documenten, ${enriched.analysis.submissionRequirements.length} inschrijvingseisen`,
       )
@@ -697,10 +795,19 @@ export default function WorkspacePage() {
     // Bewaar de huidige tekst, zodat een mislukte generatie het concept niet wist.
     const previousDraft = editorRef.current?.innerHTML ?? draft
     setGenerating(true)
-    setSyncStatus('Leidraad analyseren…')
-    const result = await runAnalysis()
+    // Hergebruik de bestaande AI-analyse zolang bronnen en opdrachtgever
+    // ongewijzigd zijn; dat scheelt de volledige analyse-pijplijn per generatie.
+    let result: TenderAnalysis
+    if (analysis && analysisSource === analysisFingerprintFor(effectiveDocuments, project.buyer)) {
+      result = analysis
+      setSyncStatus('Leidraadanalyse hergebruikt (bronnen ongewijzigd)…')
+    } else {
+      setSyncStatus('Leidraad analyseren…')
+      result = await runAnalysis()
+    }
     setStage(targetStage)
     const lessonDocuments = await gatherLessonDocuments(result)
+    const distilledById = await gatherDistilledDocuments()
     updateEditorHtml('<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
 
     try {
@@ -713,7 +820,7 @@ export default function WorkspacePage() {
         {
           stage: targetStage,
           project,
-          documents: [...effectiveDocuments, ...lessonDocuments],
+          documents: [...applyDistillates(effectiveDocuments, distilledById), ...lessonDocuments],
           comments: toLegacyComments(comments),
           analysis: result,
           currentDraft: targetStage === 'brons' ? undefined : stripCommentMarks(draft),
@@ -1079,13 +1186,14 @@ export default function WorkspacePage() {
     setSyncStatus('Schrijfagent verwerkt opmerkingen…')
     const result = analysis ?? (await runAnalysis())
     const lessonDocuments = await gatherLessonDocuments(result)
+    const distilledById = await gatherDistilledDocuments()
 
     try {
       const aiResult = await generateDraftViaApi(
         {
           stage: 'zilver',
           project,
-          documents: [...effectiveDocuments, ...lessonDocuments],
+          documents: [...applyDistillates(effectiveDocuments, distilledById), ...lessonDocuments],
           comments: toLegacyComments(comments),
           analysis: result,
           currentDraft: stripCommentMarks(draft),
@@ -1374,11 +1482,12 @@ export default function WorkspacePage() {
       const result = analysis ?? (await runAnalysis())
       const baselineFindings = reviewDraft(html, effectiveDocuments, result)
       const baseline = baselineFindings.map(({ priority, title, detail }) => ({ priority, title, detail }))
+      const distilledById = await gatherDistilledDocuments()
       const ai = await reviewDraftViaApi({
         stage,
         project,
         draft: stripCommentMarks(html),
-        documents: effectiveDocuments,
+        documents: applyDistillates(effectiveDocuments, distilledById),
         comments: toLegacyComments(comments),
         analysis: result,
         baseline,

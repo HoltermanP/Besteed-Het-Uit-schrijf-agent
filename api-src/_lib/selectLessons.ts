@@ -94,7 +94,7 @@ export async function handleSelectLessonsRequest(
 
   let ai: ReturnType<typeof resolveAiFromRequest>
   try {
-    ai = resolveAiFromRequest(request.ai, 'REVIEW_MODEL')
+    ai = resolveAiFromRequest(request.ai, 'REVIEW_MODEL', 'light')
   } catch {
     // Geen AI geconfigureerd → val terug op de meest recente leerpunten (door client al gesorteerd).
     return Response.json({
