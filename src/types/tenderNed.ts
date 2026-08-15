@@ -50,6 +50,8 @@ export type SavedTenderDocument = {
   chars: number
   status: SavedTenderDocumentStatus
   note?: string
+  /** URL van het originele bestand in Vercel Blob (ontbreekt zonder Blob-configuratie). */
+  fileUrl?: string
 }
 
 /** Respons van /api/tender-documents: alle documenten + samengevoegde tekst. */

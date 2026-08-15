@@ -1,4 +1,5 @@
 import { unzipSync } from 'fflate'
+import { put } from '@vercel/blob'
 import { extractDocumentText } from './extractDocumentText'
 
 const TNS_BASE = 'https://www.tenderned.nl'
@@ -53,6 +54,8 @@ type ExtractedDocument = {
   chars: number
   status: DocStatus
   note?: string
+  /** URL van het origineel in Vercel Blob — ontbreekt als BLOB_READ_WRITE_TOKEN niet is geconfigureerd of de upload mislukte. */
+  fileUrl?: string
 }
 
 type ExtractResult = { text: string; status: DocStatus; note?: string }
@@ -78,6 +81,24 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   if (bytes >= 1024) return `${Math.round(bytes / 1024)} kB`
   return `${bytes} B`
+}
+
+const BLOB_PREFIX = 'aanbestedingsdocumenten'
+
+// Origineel bestand archiveren zodat het later (los van de geëxtraheerde tekst)
+// nog te bekijken/downloaden is. Zonder BLOB_READ_WRITE_TOKEN (lokaal, of nog niet
+// geconfigureerd) slaat dit stil over — de tekstextractie werkt dan gewoon door.
+async function archiveOriginal(publicatieId: string, fileName: string, buffer: Buffer): Promise<string | undefined> {
+  if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) return undefined
+  try {
+    const blob = await put(`${BLOB_PREFIX}/${publicatieId}/${fileName}`, buffer, {
+      access: 'public',
+      addRandomSuffix: true,
+    })
+    return blob.url
+  } catch {
+    return undefined
+  }
 }
 
 async function safeExtract(fileName: string, buffer: Buffer): Promise<ExtractResult> {
@@ -119,7 +140,7 @@ async function extractZip(buffer: Buffer): Promise<ExtractResult> {
   return { text: parts.join('\n\n'), status: 'ok' }
 }
 
-async function downloadAndExtract(doc: RawDoc): Promise<ExtractedDocument> {
+async function downloadAndExtract(publicatieId: string, doc: RawDoc): Promise<ExtractedDocument> {
   const naam = doc.documentNaam?.trim() || doc.documentId || 'Document'
   const type = (doc.typeDocument?.code || extensionOf(naam).replace('.', '') || 'onbekend').toLowerCase()
   const categorie = doc.publicatieCategorie?.code ?? ''
@@ -152,10 +173,18 @@ async function downloadAndExtract(doc: RawDoc): Promise<ExtractedDocument> {
   }
 
   const isZip = type === 'zip' || ext === '.zip'
-  const result = isZip ? await extractZip(buffer) : await safeExtract(fileName, buffer)
-  return { ...base, status: result.status, note: result.note, chars: result.text.length, text: result.text } as ExtractedDocument & {
-    text?: string
-  }
+  const [result, fileUrl] = await Promise.all([
+    isZip ? extractZip(buffer) : safeExtract(fileName, buffer),
+    archiveOriginal(publicatieId, fileName, buffer),
+  ])
+  return {
+    ...base,
+    status: result.status,
+    note: result.note,
+    chars: result.text.length,
+    text: result.text,
+    fileUrl,
+  } as ExtractedDocument & { text?: string }
 }
 
 /** Haalt alle documenten bij een publicatie op, downloadt ze en extraheert tekst (incl. zip-inhoud). */
@@ -222,7 +251,7 @@ export async function handleTenderDocumentsRequest(request: Request): Promise<Re
         continue
       }
 
-      const extracted = (await downloadAndExtract(raw)) as ExtractedDocument & { text?: string }
+      const extracted = (await downloadAndExtract(publicatieId, raw)) as ExtractedDocument & { text?: string }
       const { text = '', ...meta } = extracted
 
       if (text) {

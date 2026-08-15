@@ -35,7 +35,7 @@ import {
   getSavedTenders,
   syncPendingTendersToNeon,
 } from '../lib/tenderDatabase'
-import type { TenderDocument, TenderListItem } from '../types/tenderNed'
+import type { SavedTenderDocument, TenderDocument, TenderListItem } from '../types/tenderNed'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -76,6 +76,9 @@ export default function TenderBrowserPage() {
   const [savedIds, setSavedIds] = useState<Set<string>>(
     () => new Set(getSavedTenders().map((tender) => tender.publicatieId)),
   )
+  const [savedDocsById, setSavedDocsById] = useState<Record<string, SavedTenderDocument[]>>(
+    () => Object.fromEntries(getSavedTenders().map((tender) => [tender.publicatieId, tender.documents ?? []])),
+  )
   const [scannedPages, setScannedPages] = useState(0)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [docLists, setDocLists] = useState<Record<string, DocListState>>({})
@@ -86,6 +89,7 @@ export default function TenderBrowserPage() {
     const saved = getSavedTenders()
     setSavedCount(saved.length)
     setSavedIds(new Set(saved.map((tender) => tender.publicatieId)))
+    setSavedDocsById(Object.fromEntries(saved.map((tender) => [tender.publicatieId, tender.documents ?? []])))
   }
 
   const loadPage = useCallback(async (targetPage = 0) => {
@@ -489,7 +493,48 @@ export default function TenderBrowserPage() {
 
                 {isExpanded ? (
                   <div className="mt-2.5 rounded-lg border bg-muted/40 p-3">
-                    {docState === 'loading' ? (
+                    {isSaved && savedDocsById[item.publicatieId]?.length ? (
+                      <>
+                        <p className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                          {savedDocsById[item.publicatieId].length} document(en) gearchiveerd — tekst geëxtraheerd voor de werkplek.
+                        </p>
+                        <ul className="grid list-none gap-1 p-0">
+                          {savedDocsById[item.publicatieId].map((doc, index) => (
+                            <li
+                              key={`${doc.naam}-${index}`}
+                              className="grid grid-cols-[44px_minmax(0,1fr)_auto_auto] items-center gap-2 border-t py-1 text-xs first:border-t-0"
+                            >
+                              <span className="shrink-0 rounded bg-muted px-0 py-0.5 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{doc.type}</span>
+                              <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title={doc.note ? `${doc.naam} — ${doc.note}` : doc.naam}>{doc.naam}</span>
+                              <span
+                                className={cn(
+                                  'shrink-0 text-[10px] font-medium uppercase tracking-wide',
+                                  doc.status === 'ok'
+                                    ? 'text-emerald-600 dark:text-emerald-400'
+                                    : doc.status === 'fout'
+                                      ? 'text-destructive'
+                                      : 'text-muted-foreground',
+                                )}
+                              >
+                                {doc.status}
+                              </span>
+                              {doc.fileUrl ? (
+                                <a
+                                  className="inline-flex shrink-0 items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"
+                                  href={doc.fileUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  <ExternalLink size={12} /> Origineel
+                                </a>
+                              ) : (
+                                <span className="shrink-0" />
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : docState === 'loading' ? (
                       <p className="m-0 flex items-center gap-1.5 text-xs text-muted-foreground"><LoaderCircle size={14} className="animate-spin" /> Documenten laden...</p>
                     ) : docState === 'error' ? (
                       <p className="m-0 flex items-center gap-1.5 text-xs text-destructive">Documentenlijst kon niet worden geladen.</p>
