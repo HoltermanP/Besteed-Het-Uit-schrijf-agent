@@ -25,10 +25,9 @@ test('admin login en API-config opslaan', async ({ page }) => {
   await page.getByRole('button', { name: 'Opslaan' }).click()
   await expect(page.getByText('Instellingen opgeslagen in deze browser.')).toBeVisible()
 
+  // De config staat in de gedeelde opslag: het projectenoverzicht laadt gewoon door.
   await page.goto('/')
-  await page.getByText('Handmatig kenmerk invoeren').click()
-  await page.getByRole('button', { name: 'Importeer TenderNed dossier' }).click()
-  await expect(page.getByText(/Neon-sync/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Nieuw project' })).toBeVisible()
 })
 
 test('verkeerd admin wachtwoord wordt geweigerd', async ({ page }) => {

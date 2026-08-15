@@ -11,8 +11,8 @@ test('TenderNed catalogus laadt publicaties', async ({ page }) => {
   await expect(page.getByText(/publicaties in TenderNed/)).toBeVisible({ timeout: 15000 })
 })
 
-test('navigatie vanuit werkplek naar catalogus', async ({ page }) => {
+test('navigatie vanuit projectenoverzicht naar catalogus', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('link', { name: /Zoek .* download aanbestedingen/ }).click()
+  await page.getByRole('link', { name: 'TenderNed scannen' }).click()
   await expect(page).toHaveURL(/\/aanbestedingen/)
 })

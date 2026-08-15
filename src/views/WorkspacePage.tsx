@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
 import {
   AlertTriangle,
   ArrowRight,
@@ -17,18 +16,15 @@ import {
   ChevronRight,
   ClipboardCheck,
   ClipboardList,
-  Clock,
   Crown,
   Download,
   ExternalLink,
   Eye,
   FileDown,
-  FilePlus2,
   FileText,
   Flag,
   FolderOpen,
   GitCompareArrows,
-  Pencil,
   GraduationCap,
   Highlighter,
   Import,
@@ -60,7 +56,7 @@ import { readFileContent } from '../lib/extractTextApi'
 import FileUploadZone from '../components/FileUploadZone'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog'
 import { acceptedStyleExtensions } from '../types/styleDocument'
-import type { DocumentDistillate, DocumentExtract, TenderAnalysis } from '../types/tenderAnalysis'
+import type { TenderAnalysis } from '../types/tenderAnalysis'
 import { exportPdfFromHtml } from '../lib/documentExport'
 import { isNeonConfigured, isWriterConfigured, migrateLegacyNeonUrl } from '../lib/apiConfig'
 import { generateDraftViaApi, fetchWriterStatus, isNoAiConfigError, type WriterStatus } from '../lib/writeDraftApi'
@@ -75,25 +71,28 @@ import EvaluationDialog from '../components/EvaluationDialog'
 import { fetchLessons, lessonsToPromptContent, selectRelevantLessons } from '../lib/lessonsLearnedApi'
 import type { LessonLearned } from '../types/lessonLearned'
 import type { WriteDraftDocument } from '../types/writeDraft'
-import { getSavedTenders } from '../lib/tenderDatabase'
+import { downloadTenderToDatabase, getSavedTenders } from '../lib/tenderDatabase'
+import { fetchPublicationDetail } from '../lib/tenderNedApi'
+import { buildTenderSourceDocuments } from '../lib/projectFactory'
 import type { SavedTender, SavedTenderDocument } from '../types/tenderNed'
+import type {
+  CommentStatus,
+  DossierSnapshot,
+  ReviewComment,
+  SourceDocument,
+  SourceType,
+  Stage,
+  TenderProject,
+} from '../types/dossier'
 import {
-  getActiveDossierId,
   getDossierUpdatedAt,
   hasDossier,
   loadDossier,
   saveDossier,
   setActiveDossierId,
 } from '../lib/dossier'
-import {
-  listProjects,
-  makeProjectId,
-  removeProject,
-  renameProject,
-  upsertProject,
-  type ProjectMeta,
-} from '../lib/projects'
-import { flushStorage, getStoredRaw, loadStored, saveStored, setStoredRaw } from '../lib/storage'
+import { upsertProject } from '../lib/projects'
+import { flushStorage } from '../lib/storage'
 import { getActiveCompanyId, getCompanies, setActiveCompanyId } from '../lib/companies'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -114,60 +113,13 @@ import { ModeToggle } from '@/components/mode-toggle'
 import { cn } from '@/lib/utils'
 import { proposalDocumentCss } from '../styles/proposalDocument'
 
-type Stage = 'brons' | 'zilver' | 'goud'
-type SourceType = 'tender' | 'company' | 'rules' | 'training'
 type Priority = 'kritiek' | 'hoog' | 'normaal'
-
-type SourceDocument = {
-  id: string
-  name: string
-  type: SourceType
-  content: string
-  importedAt: string
-  /** Gecachet per-document distillaat uit de map-fase van de analyse. */
-  extract?: DocumentExtract | null
-  /** Gecomprimeerde promptversie (alleen company/rules/training), gecachet per upload. */
-  distilled?: DocumentDistillate | null
-}
-
-type CommentStatus = 'open' | 'verwerkt' | 'akkoord'
-
-type ReviewComment = {
-  id: string
-  fragment: string
-  note: string
-  status: CommentStatus
-  /** Oorspronkelijke sectie-HTML vóór een gerichte herschrijving, voor terugdraaien. */
-  previousSectionHtml?: string
-}
 
 type ReviewFinding = {
   id: string
   priority: Priority
   title: string
   detail: string
-}
-
-type TenderProject = {
-  title: string
-  tendernedId: string
-  buyer: string
-  deadline: string
-  neonUrl?: string
-}
-
-// Volledige momentopname van een dossier; per gedownloade aanbesteding bewaard zodat je
-// later verder kunt waar je was gebleven.
-type DossierSnapshot = {
-  project: TenderProject
-  documents: SourceDocument[]
-  /** Origineel gedownloade aanbestedingsbestanden (met archieflink in Vercel Blob). */
-  tenderDocuments?: SavedTenderDocument[]
-  comments: ReviewComment[]
-  stage: Stage
-  draft: string
-  analysis: TenderAnalysis | null
-  updatedAt: string
 }
 
 const stageMeta: Record<
@@ -198,48 +150,6 @@ const commentStatusMeta: Record<CommentStatus, { label: string; className: strin
   verwerkt: { label: 'Verwerkt', className: 'bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300' },
   akkoord: { label: 'Akkoord', className: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300' },
 }
-
-const initialProject: TenderProject = {
-  title: 'Winnende inschrijving dienstverlening',
-  tendernedId: 'TN-2026-00421',
-  buyer: 'Publieke opdrachtgever',
-  deadline: '2026-07-17',
-}
-
-const seedDocuments: SourceDocument[] = [
-  {
-    id: 'doc-leidraad-1',
-    name: 'Aanbestedingsleidraad',
-    type: 'tender',
-    importedAt: '2026-06-12 15:54',
-    content:
-      'Aanbestedingsleidraad dienstverlening. Inschrijvers dienen een plan van aanpak in van maximaal 3500 woorden en maximaal 15 pagina\'s. Verplichte bijlagen: referentielijst, teamoverzicht met CV\'s, invullingsblad EMVI. Beoordeling kwaliteit 70%, prijs 30%. Subcriteria kwaliteit: plan van aanpak (30%), team en competenties (25%), continuiteit (15%), duurzaamheid (15%), implementatie (15%). Schrijf formeel en toetsbaar; vermijd promotionele taal. De opdrachtgever beoordeelt objectief op aansluiting, onderbouwing en uitvoerbaarheid.',
-  },
-  {
-    id: 'doc-tender-1',
-    name: 'Programma van Eisen',
-    type: 'tender',
-    importedAt: '2026-06-12 15:55',
-    content:
-      'De opdrachtgever zoekt een betrouwbare partner die aantoonbaar kwaliteit levert, risico’s actief beheerst, duurzaam werkt en binnen vier weken na gunning kan starten. Beoordeling: kwaliteit 70%, prijs 30%. Subcriteria: plan van aanpak, team, continuiteit, duurzaamheid en implementatie.',
-  },
-  {
-    id: 'doc-company-1',
-    name: 'Bedrijfsprofiel',
-    type: 'company',
-    importedAt: '2026-06-12 15:56',
-    content:
-      'Besteed Het Uit combineert senior bidmanagement, domeinkennis en AI-ondersteunde kwaliteitscontrole. Het team werkt met vaste reviewmomenten, bewezen formats, bronverwijzingen en een pragmatische implementatieaanpak.',
-  },
-  {
-    id: 'doc-rules-1',
-    name: 'Schrijfregels tenders',
-    type: 'rules',
-    importedAt: '2026-06-12 15:57',
-    content:
-      'Schrijf concreet, bewijs elke claim, gebruik actieve zinnen, sluit elke paragraaf aan op het beoordelingscriterium, benoem risico’s inclusief beheersmaatregel en vermijd generieke marketingtaal.',
-  },
-]
 
 const stagePrompts: Record<Stage, string> = {
   brons:
@@ -326,8 +236,15 @@ function normalizeStoredAnalysis(analysis: TenderAnalysis | null): TenderAnalysi
   }
 }
 
-function loadInitialState() {
-  const storedProject = loadStored<TenderProject>('bid-agent-project', initialProject)
+// Laad de werkruimte van één project uit zijn dossier-snapshot.
+function loadInitialState(projectId: string) {
+  const snapshot = loadDossier<DossierSnapshot>(projectId)
+  const storedProject: TenderProject = snapshot?.project ?? {
+    title: 'Nieuw project',
+    tendernedId: '',
+    buyer: '',
+    deadline: '',
+  }
   migrateLegacyNeonUrl(storedProject.neonUrl)
   const project: TenderProject = {
     title: storedProject.title,
@@ -335,22 +252,28 @@ function loadInitialState() {
     buyer: storedProject.buyer,
     deadline: storedProject.deadline,
   }
-  if (storedProject.neonUrl) {
-    saveStored('bid-agent-project', project)
+  const documents = snapshot?.documents ?? []
+  const comments = normalizeComments(snapshot?.comments)
+  const stage: Stage = snapshot?.stage ?? 'brons'
+  const analysis = normalizeStoredAnalysis(snapshot?.analysis ?? null)
+  const draft = snapshot?.draft?.trim()
+    ? snapshot.draft
+    : buildHtmlDraft(stage, project, documents, toLegacyComments(comments), analysis)
+  // Gearchiveerde aanbestedingsbestanden. Oudere dossiers bewaarden deze alleen bij de
+  // opgeslagen aanbesteding zelf; val daar dan op terug.
+  const tenderDocuments = snapshot?.tenderDocuments?.length
+    ? snapshot.tenderDocuments
+    : getSavedTenders().find((tender) => tender.publicatieId === projectId)?.documents ?? []
+  return {
+    project,
+    documents,
+    comments,
+    stage,
+    draft,
+    analysis,
+    tenderDocuments,
+    analysisSource: snapshot?.analysisSource ?? null,
   }
-  const documents = loadStored('bid-agent-documents', seedDocuments)
-  const comments = normalizeComments(loadStored<unknown>('bid-agent-comments', []))
-  const stage = loadStored<Stage>('bid-agent-stage', 'brons')
-  const storedDraft = getStoredRaw('bid-agent-draft')
-  const storedAnalysis = normalizeStoredAnalysis(loadStored<TenderAnalysis | null>('bid-agent-analysis', null))
-  const draft = storedDraft ?? buildHtmlDraft(stage, project, documents, toLegacyComments(comments), storedAnalysis)
-  // Gearchiveerde aanbestedingsbestanden van het actieve project. Oudere sessies bewaarden
-  // deze alleen bij de opgeslagen aanbesteding zelf; val daar dan op terug.
-  const storedTenderDocuments = loadStored<SavedTenderDocument[]>('bid-agent-tender-documents', [])
-  const tenderDocuments = storedTenderDocuments.length
-    ? storedTenderDocuments
-    : getSavedTenders().find((tender) => tender.publicatieId === getActiveDossierId())?.documents ?? []
-  return { project, documents, comments, stage, draft, analysis: storedAnalysis, tenderDocuments }
 }
 
 function summarize(text: string, max = 220) {
@@ -423,8 +346,31 @@ function reviewDraft(html: string, documents: SourceDocument[], analysis: Tender
   return findings
 }
 
-export default function WorkspacePage() {
-  const initial = useMemo(() => loadInitialState(), [])
+// Toegangspoort: bestaat het project niet (meer), toon dan een nette melding in plaats
+// van een lege werkruimte. De sleutel forceert een verse mount per project.
+export default function WorkspacePage({ projectId }: { projectId: string }) {
+  if (!hasDossier(projectId)) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background p-6 text-foreground">
+        <div className="max-w-md text-center">
+          <FolderOpen size={32} className="mx-auto mb-3 text-muted-foreground" />
+          <h1 className="text-lg font-bold">Project niet gevonden</h1>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            Dit project bestaat niet (meer) voor het actieve bedrijf. Ga terug naar het
+            projectenoverzicht om een project te openen of aan te maken.
+          </p>
+          <Button asChild className="mt-4">
+            <Link href="/">Naar projectenoverzicht</Link>
+          </Button>
+        </div>
+      </main>
+    )
+  }
+  return <ProjectWorkspace key={projectId} projectId={projectId} />
+}
+
+function ProjectWorkspace({ projectId }: { projectId: string }) {
+  const initial = useMemo(() => loadInitialState(projectId), [projectId])
   const [project, setProject] = useState<TenderProject>(initial.project)
   const [documents, setDocuments] = useState<SourceDocument[]>(initial.documents)
   const [tenderDocuments, setTenderDocuments] = useState<SavedTenderDocument[]>(initial.tenderDocuments)
@@ -435,37 +381,27 @@ export default function WorkspacePage() {
   const [analysis, setAnalysis] = useState<TenderAnalysis | null>(initial.analysis)
   // Vingerafdruk van de bronnen waarop de laatste AI-analyse is gebaseerd;
   // zolang die gelijk blijft, wordt de analyse hergebruikt i.p.v. opnieuw betaald.
-  const [analysisSource, setAnalysisSource] = useState<string | null>(() =>
-    loadStored<string | null>('bid-agent-analysis-source', null),
-  )
+  const [analysisSource, setAnalysisSource] = useState<string | null>(initial.analysisSource)
   const [activeType, setActiveType] = useState<SourceType>('tender')
   const [manualText, setManualText] = useState('')
   const [manualName, setManualName] = useState('')
   const [commentText, setCommentText] = useState('')
-  const [tendernedQuery, setTendernedQuery] = useState('TN-2026-00421')
-  const [activeTenderId, setActiveTenderId] = useState(() => getActiveDossierId())
+  const [tendernedQuery, setTendernedQuery] = useState(initial.project.tendernedId)
+  const [importingTender, setImportingTender] = useState(false)
+  const activeTenderId = projectId
   const [dossierSearch, setDossierSearch] = useState('')
-  const [projectsVersion, setProjectsVersion] = useState(0)
-  const projects = useMemo<ProjectMeta[]>(
-    () => listProjects(),
-    // Herbereken na elke project-mutatie en bij wisselen van actief project.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectsVersion, activeTenderId],
-  )
-  const router = useRouter()
-  const searchParams = useSearchParams()
   const savedTenders = getSavedTenders()
 
-  // Bedrijfskiezer: alle werkdata is per bedrijf gescheiden. Wisselen schrijft
-  // eerst openstaande wijzigingen weg en herlaadt daarna de pagina, zodat alle
-  // state-initializers de data van het gekozen bedrijf inlezen.
+  // Bedrijfskiezer: alle werkdata is per bedrijf gescheiden. Wisselen schrijft eerst
+  // openstaande wijzigingen weg en gaat daarna naar het projectenoverzicht van het
+  // gekozen bedrijf (dit project bestaat daar immers niet).
   const companies = getCompanies()
   const activeCompanyId = getActiveCompanyId()
   const switchCompany = async (id: string) => {
     if (id === activeCompanyId) return
     setActiveCompanyId(id)
     await flushStorage()
-    window.location.reload()
+    window.location.href = '/'
   }
   const filteredSavedTenders = (() => {
     const term = dossierSearch.trim().toLowerCase()
@@ -558,64 +494,15 @@ export default function WorkspacePage() {
     ]
   }
 
+  // Markeer dit project als "laatst geopend"; sommige onderdelen (zoals de leerpunten)
+  // gebruiken de actieve-dossier-pointer.
   useEffect(() => {
-    if (analysis) {
-      saveStored('bid-agent-analysis', analysis)
-    }
-  }, [analysis])
+    setActiveDossierId(projectId)
+  }, [projectId])
 
+  // Bewaar het open project continu als dossier-snapshot en houd de projectenlijst
+  // (titel/opdrachtgever/tijd) actueel, zodat je het later precies terugvindt.
   useEffect(() => {
-    if (analysisSource) {
-      saveStored('bid-agent-analysis-source', analysisSource)
-    }
-  }, [analysisSource])
-
-  useEffect(() => {
-    saveStored('bid-agent-project', project)
-  }, [project])
-
-  useEffect(() => {
-    saveStored('bid-agent-documents', documents)
-  }, [documents])
-
-  useEffect(() => {
-    saveStored('bid-agent-tender-documents', tenderDocuments)
-  }, [tenderDocuments])
-
-  useEffect(() => {
-    saveStored('bid-agent-comments', comments)
-  }, [comments])
-
-  useEffect(() => {
-    saveStored('bid-agent-stage', stage)
-  }, [stage])
-
-  useEffect(() => {
-    setStoredRaw('bid-agent-draft', draft)
-  }, [draft])
-
-  // Zorg dat het huidige werk bij een project hoort bij het állereerste bezoek, zodat de
-  // standaard-werkruimte in de projectenlijst verschijnt. Heeft de gebruiker de lijst later
-  // bewust leeggemaakt, dan laten we hem leeg (geen nieuw blanco project forceren).
-  useEffect(() => {
-    if (activeTenderId) return
-    if (getStoredRaw('bid-agent-initialized')) return
-    setStoredRaw('bid-agent-initialized', '1')
-    const id = makeProjectId()
-    // Eénmalige initialisatie na mount; bewuste setState in effect.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setActiveTenderId(id)
-    setActiveDossierId(id)
-    setProjectsVersion((v) => v + 1)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // Bewaar het actieve project continu en houd de projectenlijst (titel/opdrachtgever/tijd)
-  // actueel, zodat je het later precies terugvindt waar je gebleven was.
-  useEffect(() => {
-    if (!activeTenderId) return
-    // Markeer dat de app in gebruik is, zodat een later leeggemaakte lijst leeg blijft.
-    setStoredRaw('bid-agent-initialized', '1')
     const updatedAt = new Date().toISOString()
     const snapshot: DossierSnapshot = {
       project,
@@ -625,17 +512,18 @@ export default function WorkspacePage() {
       stage,
       draft: liveDraftHtml(),
       analysis,
+      analysisSource,
       updatedAt,
     }
-    saveDossier(activeTenderId, snapshot)
+    saveDossier(projectId, snapshot)
     upsertProject({
-      id: activeTenderId,
+      id: projectId,
       title: project.title || 'Naamloos project',
       buyer: project.buyer,
       updatedAt,
-      source: activeTenderId.startsWith('prj-') ? 'blank' : 'tender',
+      source: projectId.startsWith('prj-') ? 'blank' : 'tender',
     })
-  }, [activeTenderId, project, documents, tenderDocuments, comments, stage, draft, analysis])
+  }, [projectId, project, documents, tenderDocuments, comments, stage, draft, analysis, analysisSource])
 
   useEffect(() => {
     const editor = editorRef.current
@@ -986,255 +874,63 @@ export default function WorkspacePage() {
     setUploadingFiles(false)
   }
 
-  const importTenderned = () => {
-    addDocument({
-      name: `TenderNed import ${tendernedQuery}`,
-      type: 'tender',
-      content: `TenderNed dossier ${tendernedQuery}: leidraad, opdrachtbeschrijving, Nota van Inlichtingen, beoordelingsmatrix, planning, uitsluitingsgronden en gunningscriteria opgehaald. Plan van aanpak maximaal 3500 woorden. Verplichte bijlagen: referentielijst, teamoverzicht met CV's, invullingsblad EMVI. Kwaliteit 70%, prijs 30%. Schrijf formeel en toetsbaar.`,
+  // Koppel een (gedownloade) aanbesteding aan dít project: tekstbronnen toevoegen,
+  // originele bestanden tonen en de nog lege projectvelden invullen.
+  const attachTender = (tender: SavedTender) => {
+    const sources = buildTenderSourceDocuments(tender)
+    setDocuments((current) => {
+      const existingNames = new Set(current.map((doc) => doc.name))
+      const fresh = sources.filter((doc) => !existingNames.has(doc.name))
+      return fresh.length ? [...fresh, ...current] : current
     })
-    setProject((current) => ({ ...current, tendernedId: tendernedQuery }))
-    setSyncStatus(
-      isNeonConfigured()
-        ? 'TenderNed dossier klaargezet voor Neon-sync'
-        : 'TenderNed dossier geïmporteerd (Neon nog niet geconfigureerd in admin)',
-    )
-  }
-
-  const nowImportedLabel = () =>
-    new Date().toLocaleString('nl-NL', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-
-  // Verse werkruimte voor een aanbesteding waar nog niet in is gewerkt.
-  const buildFreshDossier = (tender: SavedTender): DossierSnapshot => {
-    const documents: SourceDocument[] = [
-      {
-        id: makeId(),
-        name: tender.aanbestedingNaam,
-        type: 'tender',
-        content: tender.documentText || tender.opdrachtBeschrijving,
-        importedAt: nowImportedLabel(),
-      },
-    ]
-    if (tender.opdrachtBeschrijving && tender.opdrachtBeschrijving !== tender.documentText) {
-      documents.push({
-        id: makeId(),
-        name: `${tender.aanbestedingNaam} — samenvatting`,
-        type: 'tender',
-        content: tender.opdrachtBeschrijving,
-        importedAt: nowImportedLabel(),
-      })
+    if (tender.documents?.length) {
+      setTenderDocuments(tender.documents)
     }
-    const project: TenderProject = {
-      title: tender.aanbestedingNaam,
-      buyer: tender.opdrachtgeverNaam,
+    setProject((current) => ({
+      ...current,
+      title: current.title && current.title !== 'Nieuw project' ? current.title : tender.aanbestedingNaam,
+      buyer: current.buyer || tender.opdrachtgeverNaam,
       tendernedId: `TN-${tender.kenmerk}`,
-      deadline: tender.sluitingsDatum?.slice(0, 10) ?? '',
-    }
-    return {
-      project,
-      documents,
-      tenderDocuments: tender.documents ?? [],
-      comments: [],
-      stage: 'brons',
-      draft: buildHtmlDraft('brons', project, documents, [], null),
-      analysis: null,
-      updatedAt: new Date().toISOString(),
-    }
+      deadline: current.deadline || (tender.sluitingsDatum?.slice(0, 10) ?? ''),
+    }))
+    setActiveType('tender')
+    setTendernedQuery(`TN-${tender.kenmerk}`)
+    setSyncStatus(`Aanbesteding gekoppeld aan dit project: ${tender.aanbestedingNaam}`)
   }
 
-  // Lege werkruimte voor een nieuw, blanco project.
-  const buildBlankProject = (): DossierSnapshot => {
-    const project: TenderProject = {
-      title: 'Nieuw project',
-      tendernedId: '',
-      buyer: '',
-      deadline: '',
-    }
-    return {
-      project,
-      documents: [],
-      tenderDocuments: [],
-      comments: [],
-      stage: 'brons',
-      draft: buildHtmlDraft('brons', project, [], [], null),
-      analysis: null,
-      updatedAt: new Date().toISOString(),
-    }
-  }
-
-  // Momentopname van het dossier dat nu open staat (gebruik de live editor-HTML).
-  const captureCurrentDossier = (): DossierSnapshot => ({
-    project,
-    documents,
-    tenderDocuments,
-    comments,
-    stage,
-    draft: liveDraftHtml(),
-    analysis,
-    updatedAt: new Date().toISOString(),
-  })
-
-  // Dossiers van vóór het archief-in-project missen tenderDocuments; vul ze dan
-  // aan vanuit de opgeslagen aanbesteding met hetzelfde id.
-  const withTenderDocuments = (id: string, snapshot: DossierSnapshot): DossierSnapshot =>
-    snapshot.tenderDocuments?.length
-      ? snapshot
-      : {
-          ...snapshot,
-          tenderDocuments: savedTenders.find((tender) => tender.publicatieId === id)?.documents ?? [],
-        }
-
-  const applyDossier = (snapshot: DossierSnapshot) => {
-    setProject(snapshot.project)
-    setDocuments(snapshot.documents)
-    setTenderDocuments(snapshot.tenderDocuments ?? [])
-    setComments(normalizeComments(snapshot.comments))
-    setStage(snapshot.stage)
-    setAnalysis(snapshot.analysis)
-    setFindings([])
-    updateEditorHtml(snapshot.draft)
-    setSelectedSourceId(snapshot.documents[0]?.id ?? null)
-    setTendernedQuery(snapshot.project.tendernedId)
-  }
-
-  // Open een gedownloade aanbesteding: bewaar eerst het huidige dossier, herstel daarna
-  // het doel-dossier (of maak een vers dossier als er nog niet in gewerkt is).
-  const openDossier = (tender: SavedTender) => {
-    const targetId = tender.publicatieId
-    if (targetId === activeTenderId) {
-      setSyncStatus(`Dossier staat al open: ${tender.aanbestedingNaam}`)
-      return
-    }
-    if (activeTenderId) {
-      saveDossier(activeTenderId, captureCurrentDossier())
-    }
-    const restored = loadDossier<DossierSnapshot>(targetId)
-    // Neem bij heropenen de nieuwste archieflinks van de aanbesteding mee, zodat een
-    // opnieuw gedownloade tender ook in een bestaand dossier bijgewerkte bestanden toont.
-    const snapshot = restored
-      ? { ...restored, tenderDocuments: tender.documents?.length ? tender.documents : restored.tenderDocuments ?? [] }
-      : buildFreshDossier(tender)
-    applyDossier(snapshot)
-    // Direct opslaan + in de projectenlijst zetten, ook als er nog niet in gewerkt is.
-    saveDossier(targetId, snapshot)
-    upsertProject({
-      id: targetId,
-      title: snapshot.project.title || 'Naamloos project',
-      buyer: snapshot.project.buyer,
-      updatedAt: snapshot.updatedAt,
-      source: 'tender',
-    })
-    setActiveTenderId(targetId)
-    setActiveDossierId(targetId)
-    setDossierSearch('')
-    setProjectsVersion((v) => v + 1)
-    setSyncStatus(
-      restored
-        ? `Verder met dossier: ${tender.aanbestedingNaam}`
-        : `Dossier geopend: ${tender.aanbestedingNaam}`,
+  // Haal een aanbesteding rechtstreeks op bij TenderNed (op publicatie-ID) of hergebruik
+  // een eerder gedownloade aanbesteding (op TN-kenmerk), en koppel die aan dit project.
+  const importTenderned = async () => {
+    const query = tendernedQuery.trim()
+    if (!query || importingTender) return
+    const normalized = query.replace(/^TN-?/i, '')
+    const saved = savedTenders.find(
+      (tender) => tender.publicatieId === query || String(tender.kenmerk) === normalized,
     )
-  }
-
-  // Bewaar het project dat nu open staat zodat je het later kunt heropenen.
-  const persistActiveProject = () => {
-    if (!activeTenderId) return
-    saveDossier(activeTenderId, captureCurrentDossier())
-  }
-
-  // Start een nieuw, blanco project (bewaart eerst het huidige).
-  const startNewProject = () => {
-    persistActiveProject()
-    const id = makeProjectId()
-    const snapshot = buildBlankProject()
-    applyDossier(snapshot)
-    saveDossier(id, snapshot)
-    upsertProject({
-      id,
-      title: snapshot.project.title,
-      buyer: snapshot.project.buyer,
-      updatedAt: snapshot.updatedAt,
-      source: 'blank',
-    })
-    setActiveTenderId(id)
-    setActiveDossierId(id)
-    setProjectsVersion((v) => v + 1)
-    setSyncStatus('Nieuw project gestart')
-  }
-
-  // Heropen een eerder opgeslagen project op id (bewaart eerst het huidige).
-  const openProject = (id: string) => {
-    if (id === activeTenderId) return
-    persistActiveProject()
-    const restored = loadDossier<DossierSnapshot>(id)
-    if (!restored) {
-      setSyncStatus('Project niet gevonden')
-      setProjectsVersion((v) => v + 1)
+    if (saved) {
+      attachTender(saved)
       return
     }
-    applyDossier(withTenderDocuments(id, restored))
-    setActiveTenderId(id)
-    setActiveDossierId(id)
-    setDossierSearch('')
-    setProjectsVersion((v) => v + 1)
-    setSyncStatus(`Project geopend: ${restored.project.title || 'Naamloos project'}`)
-  }
-
-  const handleRenameProject = (meta: ProjectMeta) => {
-    const next = window.prompt('Nieuwe naam voor dit project', meta.title)
-    if (next == null) return
-    renameProject(meta.id, next)
-    if (meta.id === activeTenderId) {
-      setProject((current) => ({ ...current, title: next.trim() || 'Naamloos project' }))
+    if (!/^\d+$/.test(query)) {
+      setSyncStatus(
+        'Geen opgeslagen aanbesteding met dit kenmerk. Gebruik een TenderNed publicatie-ID (alleen cijfers) of zoek de aanbesteding in de catalogus.',
+      )
+      return
     }
-    setProjectsVersion((v) => v + 1)
-  }
-
-  const handleDeleteProject = (id: string) => {
-    if (!window.confirm('Dit project verwijderen? Dit kan niet ongedaan worden gemaakt.')) return
-    removeProject(id)
-    if (id === activeTenderId) {
-      // Verwijder je het open project, open dan een ander bestaand project.
-      // Is dit het laatste project, laat de werkruimte dan leeg (geen nieuw blanco
-      // project forceren) zodat je de lijst echt kunt leegmaken.
-      const remaining = listProjects()
-      const next = remaining[0]
-      if (next) {
-        const restored = loadDossier<DossierSnapshot>(next.id)
-        if (restored) applyDossier(withTenderDocuments(next.id, restored))
-        setActiveTenderId(next.id)
-        setActiveDossierId(next.id)
-      } else {
-        applyDossier(buildBlankProject())
-        setActiveTenderId('')
-        setActiveDossierId('')
-      }
+    setImportingTender(true)
+    setSyncStatus(`Aanbesteding ${query} ophalen bij TenderNed (alle documenten downloaden)…`)
+    try {
+      const detail = await fetchPublicationDetail(query)
+      const downloaded = await downloadTenderToDatabase(detail)
+      attachTender(downloaded)
+    } catch (error) {
+      setSyncStatus(
+        error instanceof Error ? `Ophalen bij TenderNed mislukt: ${error.message}` : 'Ophalen bij TenderNed mislukt.',
+      )
+    } finally {
+      setImportingTender(false)
     }
-    setProjectsVersion((v) => v + 1)
-    setSyncStatus('Project verwijderd')
   }
-
-  // Open automatisch een aanbesteding die via de catalogus is doorgegeven (/?open=<id>).
-  const openParamHandled = useRef(false)
-  useEffect(() => {
-    if (openParamHandled.current) return
-    const openId = searchParams.get('open')
-    if (!openId) return
-    openParamHandled.current = true
-    const tender = getSavedTenders().find((item) => item.publicatieId === openId)
-    // Eénmalige open-actie na navigatie vanuit de catalogus; bewuste setState na mount.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (tender) openDossier(tender)
-    const nextParams = new URLSearchParams(searchParams.toString())
-    nextParams.delete('open')
-    const query = nextParams.toString()
-    router.replace(query ? `/?${query}` : '/', { scroll: false })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   // Wissel alleen het stadium; de bestaande tekst blijft staan. (Re)genereren gebeurt
   // bewust via de knop "Genereer", niet door op een stadium te klikken.
@@ -1761,6 +1457,17 @@ export default function WorkspacePage() {
           </Select>
         </div>
 
+        <Link
+          href="/"
+          className="group mb-4 flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5 text-sm font-semibold transition-colors hover:bg-primary/10"
+        >
+          <span className="grid size-8 flex-none place-items-center rounded-lg bg-primary text-primary-foreground">
+            <FolderOpen size={16} />
+          </span>
+          <span className="min-w-0 flex-1">Alle projecten</span>
+          <ChevronRight size={16} className="rotate-180 text-muted-foreground transition-transform group-hover:-translate-x-0.5 group-hover:text-primary" />
+        </Link>
+
         <nav className="mb-4 grid gap-1.5">
           <Link
             href="/configuratie"
@@ -1828,101 +1535,6 @@ export default function WorkspacePage() {
         </nav>
 
         <Card className="mb-[14px]">
-          <CardContent className="space-y-3">
-            <div className="flex items-center gap-2 text-primary">
-              <FolderOpen size={17} />
-              <h2 className="text-sm font-semibold">Projecten</h2>
-              <Badge variant="secondary" className="ml-auto">{projects.length}</Badge>
-            </div>
-
-            <Button onClick={startNewProject} className="h-auto w-full justify-start py-2.5 text-left">
-              <FilePlus2 size={16} className="shrink-0" /> <span>Nieuw project</span>
-            </Button>
-
-            {projects.length ? (
-              <ul className="flex max-h-72 list-none flex-col gap-1.5 overflow-y-auto overflow-x-hidden p-0">
-                {projects.map((meta) => {
-                  const isActive = meta.id === activeTenderId
-                  const title = isActive ? project.title || 'Naamloos project' : meta.title
-                  const buyer = isActive ? project.buyer : meta.buyer
-                  const updated = meta.updatedAt
-                    ? new Date(meta.updatedAt).toLocaleDateString('nl-NL', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })
-                    : null
-                  return (
-                    <li key={meta.id} className="min-w-0">
-                      <div
-                        className={cn(
-                          'group flex items-start gap-2 rounded-lg border px-2.5 py-2 text-xs transition-colors',
-                          isActive ? 'border-primary bg-primary/5' : 'bg-card hover:border-primary/40 hover:bg-primary/5',
-                        )}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => openProject(meta.id)}
-                          className="flex min-w-0 flex-1 items-start gap-2 text-left"
-                          title={isActive ? 'Open' : 'Open project'}
-                        >
-                          <span
-                            className={cn(
-                              'mt-0.5 grid size-6 flex-none place-items-center rounded-md',
-                              isActive ? 'bg-primary text-primary-foreground' : 'bg-primary/10 text-primary',
-                            )}
-                          >
-                            {meta.source === 'tender' ? <FileText size={13} /> : <FilePlus2 size={13} />}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate font-semibold">{title}</span>
-                            <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                              {buyer ? <span className="truncate">{buyer}</span> : null}
-                              {isActive ? (
-                                <Badge variant="default" className="rounded-full px-1.5 py-0 text-[10px] font-normal">
-                                  open
-                                </Badge>
-                              ) : updated ? (
-                                <span className="flex items-center gap-1">
-                                  <Clock size={10} /> {updated}
-                                </span>
-                              ) : null}
-                            </span>
-                          </span>
-                        </button>
-                        <div className="flex flex-none items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
-                          <button
-                            type="button"
-                            onClick={() => handleRenameProject(meta)}
-                            className="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                            title="Hernoem project"
-                          >
-                            <Pencil size={13} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteProject(meta.id)}
-                            className="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                            title="Verwijder project"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
-            ) : (
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                Nog geen opgeslagen projecten. Start een nieuw project of download een aanbesteding.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="mb-[14px]">
           <CardContent className="space-y-[10px]">
             <div className="flex items-center gap-2 text-primary">
               <FileText size={17} />
@@ -1973,7 +1585,7 @@ export default function WorkspacePage() {
 
             <div className="space-y-2">
               <p className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                Jouw aanbestedingen
+                Koppel een gedownloade aanbesteding
                 <Badge variant="secondary">{savedTenders.length}</Badge>
               </p>
               {savedTenders.length ? (
@@ -1990,16 +1602,16 @@ export default function WorkspacePage() {
                   {filteredSavedTenders.length ? (
                     <ul className="flex max-h-64 list-none flex-col gap-1.5 overflow-y-auto overflow-x-hidden p-0">
                       {filteredSavedTenders.map((tender) => {
-                        const isActive = tender.publicatieId === activeTenderId
-                        const worked = hasDossier(tender.publicatieId)
+                        const isLinked = tender.publicatieId === activeTenderId
                         return (
                           <li key={tender.publicatieId} className="min-w-0">
                             <button
                               type="button"
-                              onClick={() => openDossier(tender)}
+                              onClick={() => attachTender(tender)}
+                              title="Voeg de documenten van deze aanbesteding toe aan dit project"
                               className={cn(
                                 'flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-left text-xs transition-colors',
-                                isActive
+                                isLinked
                                   ? 'border-primary bg-primary/5'
                                   : 'bg-card hover:border-primary/40 hover:bg-primary/5',
                               )}
@@ -2007,27 +1619,23 @@ export default function WorkspacePage() {
                               <span
                                 className={cn(
                                   'mt-0.5 grid size-6 flex-none place-items-center rounded-md',
-                                  isActive ? 'bg-primary text-primary-foreground' : 'bg-primary/10 text-primary',
+                                  isLinked ? 'bg-primary text-primary-foreground' : 'bg-primary/10 text-primary',
                                 )}
                               >
-                                {isActive ? <FolderOpen size={13} /> : <FileText size={13} />}
+                                <FileText size={13} />
                               </span>
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate font-semibold">{tender.aanbestedingNaam}</span>
                                 <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
                                   TN-{tender.kenmerk}
-                                  {isActive ? (
+                                  {isLinked ? (
                                     <Badge variant="default" className="rounded-full px-1.5 py-0 text-[10px] font-normal">
-                                      open
-                                    </Badge>
-                                  ) : worked ? (
-                                    <Badge variant="outline" className="gap-1 rounded-full px-1.5 py-0 text-[10px] font-normal">
-                                      <Clock size={10} /> bewerkt
+                                      dit project
                                     </Badge>
                                   ) : null}
                                 </span>
                               </span>
-                              {!isActive ? <ArrowRight size={14} className="mt-0.5 flex-none text-muted-foreground" /> : null}
+                              {!isLinked ? <ArrowRight size={14} className="mt-0.5 flex-none text-muted-foreground" /> : null}
                             </button>
                           </li>
                         )
@@ -2041,25 +1649,38 @@ export default function WorkspacePage() {
                 </>
               ) : (
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Nog niets opgeslagen. Open de catalogus om alle documenten van een publicatie te downloaden — je werkt er daarna meteen in verder.
+                  Nog niets opgeslagen. Open de catalogus om aanbestedingen te scannen en te
+                  downloaden, of haal er hieronder één rechtstreeks op.
                 </p>
               )}
             </div>
 
             <details className="mt-1">
               <summary className="cursor-pointer select-none py-1 text-xs font-semibold text-primary">
-                Handmatig kenmerk invoeren
+                Tender ophalen op publicatie-ID of kenmerk
               </summary>
               <div className="mt-2 flex gap-2">
                 <Input
                   value={tendernedQuery}
                   onChange={(event) => setTendernedQuery(event.target.value)}
-                  placeholder="bijv. TN-2026-00421"
+                  placeholder="publicatie-ID of TN-kenmerk"
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void importTenderned()
+                  }}
                 />
-                <Button variant="outline" size="icon" onClick={importTenderned} title="Importeer TenderNed dossier">
-                  <Download size={18} />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => void importTenderned()}
+                  disabled={importingTender}
+                  title="Haal de aanbesteding met alle documenten op en koppel die aan dit project"
+                >
+                  {importingTender ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
                 </Button>
               </div>
+              <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+                Downloadt alle documenten van de publicatie en voegt ze toe aan dit project.
+              </p>
             </details>
           </CardContent>
         </Card>

@@ -36,11 +36,12 @@ import {
   getSavedTenders,
   syncPendingTendersToNeon,
 } from '../lib/tenderDatabase'
+import { createProjectFromTender } from '../lib/projectFactory'
 import { mapWithConcurrency } from '../lib/analyzeDocumentApi'
 import { currentProfileStamp, getTenderScores, scoreTendersForCompany } from '../lib/tenderScoreApi'
 import { cpvSignificantPrefix, matchesCompanyCpv } from '../lib/cpv'
 import { getCompanyConfig } from '../lib/companyConfig'
-import type { SavedTenderDocument, TenderDocument, TenderListItem } from '../types/tenderNed'
+import type { SavedTender, SavedTenderDocument, TenderDocument, TenderListItem } from '../types/tenderNed'
 import type { StoredTenderScore } from '../types/tenderScore'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -320,12 +321,11 @@ export default function TenderBrowserPage() {
     })
   }
 
-  const saveTender = async (id: string): Promise<number> => {
+  const saveTender = async (id: string): Promise<SavedTender> => {
     setBusyIds((current) => new Set(current).add(id))
     try {
       const detail = await fetchPublicationDetail(id)
-      const saved = await downloadTenderToDatabase(detail)
-      return saved.documents?.filter((doc) => doc.status === 'ok').length ?? 0
+      return await downloadTenderToDatabase(detail)
     } finally {
       setBusyIds((current) => {
         const next = new Set(current)
@@ -343,7 +343,8 @@ export default function TenderBrowserPage() {
     let totalDocs = 0
     for (const id of ids) {
       try {
-        totalDocs += await saveTender(id)
+        const saved = await saveTender(id)
+        totalDocs += saved.documents?.filter((doc) => doc.status === 'ok').length ?? 0
         done += 1
         setStatus(`Downloaden... ${done}/${ids.length} aanbestedingen, ${totalDocs} document(en).`)
       } catch {
@@ -358,7 +359,8 @@ export default function TenderBrowserPage() {
 
   const saveSingle = async (item: TenderListItem) => {
     try {
-      const docCount = await saveTender(item.publicatieId)
+      const saved = await saveTender(item.publicatieId)
+      const docCount = saved.documents?.filter((doc) => doc.status === 'ok').length ?? 0
       refreshSaved()
       setStatus(`Opgeslagen: ${item.aanbestedingNaam} (${docCount} document(en)).`)
     } catch (error) {
@@ -366,13 +368,14 @@ export default function TenderBrowserPage() {
     }
   }
 
-  // Eén klik: alle documenten downloaden én meteen het dossier openen in de werkplek.
+  // Eén klik: alle documenten downloaden, direct een project aanmaken en dat openen.
   const downloadAndOpen = async (item: TenderListItem) => {
     try {
       setStatus(`Alle documenten van "${item.aanbestedingNaam}" downloaden…`)
-      await saveTender(item.publicatieId)
+      const saved = await saveTender(item.publicatieId)
       refreshSaved()
-      router.push(`/?open=${encodeURIComponent(item.publicatieId)}`)
+      const projectId = createProjectFromTender(saved)
+      router.push(`/projecten/${encodeURIComponent(projectId)}`)
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Downloaden mislukt.')
     }
@@ -434,7 +437,7 @@ export default function TenderBrowserPage() {
         className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         href="/"
       >
-        <ArrowLeft size={16} /> <span className="sr-only sm:not-sr-only">Terug naar werkplek</span>
+        <ArrowLeft size={16} /> <span className="sr-only sm:not-sr-only">Terug naar projecten</span>
       </Link>
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
@@ -848,12 +851,12 @@ export default function TenderBrowserPage() {
                 ) : null}
                 <Button
                   size="sm"
-                  title="Alle documenten downloaden en meteen openen in de werkplek"
+                  title="Alle documenten downloaden en direct als project openen"
                   disabled={isBusy}
                   onClick={() => downloadAndOpen(item)}
                 >
                   {isBusy ? <LoaderCircle size={16} className="animate-spin" /> : <ArrowRight size={16} />}
-                  Download &amp; open
+                  Maak project
                 </Button>
                 <Button
                   variant="ghost"

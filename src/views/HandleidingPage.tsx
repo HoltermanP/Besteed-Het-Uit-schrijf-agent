@@ -105,7 +105,7 @@ function Faq({ question, children }: { question: string; children: ReactNode }) 
 
 const tocItems = [
   { href: '#snel-starten', label: 'Snel aan de slag' },
-  { href: '#werkplek', label: 'De werkplek' },
+  { href: '#werkplek', label: 'De projectomgeving' },
   { href: '#projecten', label: 'Projecten & dossier' },
   { href: '#aanbestedingen', label: 'Aanbestedingen zoeken' },
   { href: '#bronnen', label: 'Bronnen toevoegen' },
@@ -138,7 +138,7 @@ export default function HandleidingPage() {
         <div className="flex shrink-0 items-center gap-2">
           <Button asChild variant="outline">
             <Link href="/">
-              <ArrowLeft size={16} /> <span className="sr-only sm:not-sr-only">Terug naar werkplek</span>
+              <ArrowLeft size={16} /> <span className="sr-only sm:not-sr-only">Terug naar projecten</span>
             </Link>
           </Button>
           <ModeToggle />
@@ -191,9 +191,10 @@ export default function HandleidingPage() {
               Onder <Term>Schrijfkader</Term> bepaal je schrijfregels, schrijfwijze en kwaliteitseisen — handmatig of
               door documenten te uploaden waaruit de AI regels destilleert.
             </Step>
-            <Step n={3} title="Haal een aanbesteding binnen">
-              Zoek via <Term>TenderNed</Term> in de catalogus, of voer handmatig een kenmerk in (bijv.
-              TN-2026-00421). Alle documenten van de publicatie komen automatisch in je dossier.
+            <Step n={3} title="Maak een project">
+              Start op het projectenoverzicht met <Term>Nieuw project</Term> (blanco, met je eigen documenten), of
+              scan de <Term>TenderNed</Term>-catalogus en kies <Term>Maak project</Term> bij een publicatie — alle
+              documenten worden gedownload en de aanbesteding wordt direct een project.
             </Step>
             <Step n={4} title="Controleer je bronnen">
               Vul het dossier aan met eigen documenten of geplakte tekst onder <Term>Bronnen</Term>. Via de{' '}
@@ -213,14 +214,14 @@ export default function HandleidingPage() {
         <Section
           id="werkplek"
           icon={<LayoutGrid size={17} />}
-          title="De werkplek"
-          intro="De werkplek is het startscherm en bestaat uit drie kolommen. Hier gebeurt het eigenlijke schrijfwerk."
+          title="De projectomgeving"
+          intro="Het startscherm is het projectenoverzicht met al je projecten als kaarten. Open je een project, dan kom je in de projectomgeving: drie kolommen waarin het eigenlijke schrijfwerk gebeurt."
         >
           <InfoGrid
             items={[
               {
                 title: 'Linkerkolom — navigatie & invoer',
-                text: 'Het menu naar alle onderdelen, je projectenlijst, het dossier (titel, opdrachtgever, deadline), de TenderNed-zoekfunctie en het bronnenpaneel.',
+                text: 'De link terug naar alle projecten, het menu naar alle onderdelen, het dossier (titel, opdrachtgever, deadline), de TenderNed-koppeling en het bronnenpaneel.',
               },
               {
                 title: 'Middenkolom — het document',
@@ -246,12 +247,17 @@ export default function HandleidingPage() {
           id="projecten"
           icon={<FolderOpen size={17} />}
           title="Projecten & dossier"
-          intro="Elke aanbesteding is een eigen project met een eigen dossier, bronnen, concepttekst en opmerkingen."
+          intro="Elke aanbesteding is een eigen project met een eigen omgeving: dossier, bronnen, concepttekst en opmerkingen."
         >
           <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
             <li>
-              Klik op <Term>Nieuw project</Term> in het paneel <strong>Projecten</strong> om te starten. Het actieve
-              project is gemarkeerd; klik op een ander project om te wisselen.
+              Klik op het projectenoverzicht op <Term>Nieuw project</Term> en geef een naam (en eventueel
+              opdrachtgever en deadline) op. Het project opent direct in zijn eigen omgeving; wisselen doe je via{' '}
+              <Term>Alle projecten</Term> en de kaart van het andere project.
+            </li>
+            <li>
+              Elke projectkaart toont de kerninfo: bron (TenderNed of eigen project), stadium, aantal bronnen en
+              bestanden, deadline en wanneer je er voor het laatst aan werkte.
             </li>
             <li>
               Vul in het paneel <strong>Dossier</strong> de <strong>titel</strong>, de{' '}
@@ -259,7 +265,7 @@ export default function HandleidingPage() {
               tekst en bij de kansscore.
             </li>
             <li>
-              Een project verwijder je met de prullenbak-knop bij het project. Let op: dit verwijdert ook het
+              Hernoemen en verwijderen doe je met de knoppen op de projectkaart. Let op: verwijderen wist ook het
               bijbehorende dossier en concept.
             </li>
             <li>
@@ -277,24 +283,26 @@ export default function HandleidingPage() {
         >
           <ol className="space-y-4">
             <Step n={1} title="Open de catalogus">
-              Klik in de werkplek op <Term>Zoek &amp; download aanbestedingen</Term>. Je komt in de pagina{' '}
+              Klik op het projectenoverzicht op <Term>TenderNed scannen</Term> (of in een project op{' '}
+              <Term>Zoek &amp; download aanbestedingen</Term>). Je komt in de pagina{' '}
               <strong>Aanbestedingen</strong> met zoeken &amp; voorselectie.
             </Step>
             <Step n={2} title="Zoek gericht">
               Zoek op <strong>CPV-code</strong> (bijv. 45210000), of op titel, opdrachtgever of omschrijving. Met{' '}
               <Term>Ververs lijst</Term> haal je de nieuwste publicaties op.
             </Step>
-            <Step n={3} title="Download naar je dossier">
-              Kies een publicatie en download; alle documenten worden opgehaald en als bronnen aan je dossier
-              toegevoegd. Je keert automatisch terug naar de werkplek met het project geopend.
+            <Step n={3} title="Maak er een project van">
+              Kies bij een publicatie <Term>Maak project</Term>: alle documenten worden gedownload, de aanbesteding
+              wordt direct een project en de projectomgeving opent. Met <Term>Alleen opslaan</Term> bewaar je de
+              aanbesteding in je database om er later (via het overzicht) een project van te maken.
             </Step>
           </ol>
           <Separator />
           <p className="text-sm text-muted-foreground">
-            <strong>Handmatig kenmerk invoeren:</strong> ken je het TenderNed-kenmerk al (bijv. TN-2026-00421)? Klap
-            dan in de werkplek &ldquo;Handmatig kenmerk invoeren&rdquo; open en importeer direct. In &ldquo;Jouw
-            aanbestedingen&rdquo; vind je alles terug wat je eerder hebt binnengehaald, met status{' '}
-            <Badge variant="secondary">open</Badge> of <Badge variant="secondary">bewerkt</Badge> en een zoekveld.
+            <strong>Tender ophalen binnen een project:</strong> werk je al in een project, dan koppel je een
+            aanbesteding via het TenderNed-paneel — kies een eerder gedownloade aanbesteding uit de lijst, of haal er
+            één rechtstreeks op via het publicatie-ID of TN-kenmerk. De documenten worden dan aan het open project
+            toegevoegd.
           </p>
         </Section>
 
@@ -389,7 +397,7 @@ export default function HandleidingPage() {
           id="genereren"
           icon={<Wand2 size={17} />}
           title="Genereren & analyse"
-          intro="Naast het genereren zelf heeft de werkplek drie analyse-instrumenten die je helpen om gericht te sturen."
+          intro="Naast het genereren zelf heeft de projectomgeving drie analyse-instrumenten die je helpen om gericht te sturen."
         >
           <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
             <li>
@@ -453,7 +461,7 @@ export default function HandleidingPage() {
           id="exporteren"
           icon={<FileDown size={17} />}
           title="Exporteren"
-          intro="Het concept exporteer je rechtstreeks vanuit de werkplek, met behoud van opmaak."
+          intro="Het concept exporteer je rechtstreeks vanuit de projectomgeving, met behoud van opmaak."
         >
           <InfoGrid
             items={[
@@ -528,7 +536,7 @@ export default function HandleidingPage() {
         >
           <ol className="space-y-4">
             <Step n={1} title="Evalueer een afgerond project">
-              Klik in de werkplek op <Term>Evalueer &amp; leer</Term>. Leg de uitkomst vast (
+              Klik in de projectomgeving op <Term>Evalueer &amp; leer</Term>. Leg de uitkomst vast (
               <Badge className="bg-emerald-600 text-white">gewonnen</Badge>{' '}
               <Badge className="bg-rose-600 text-white">verloren</Badge>{' '}
               <Badge variant="secondary">ingetrokken</Badge> <Badge variant="outline">onbekend</Badge>), eventueel de
@@ -540,7 +548,7 @@ export default function HandleidingPage() {
               aanbeveling.
             </Step>
             <Step n={3} title="Profiteer automatisch">
-              Bij een nieuw project selecteert de agent zelf de relevante leerpunten en past ze toe. In de werkplek
+              Bij een nieuw project selecteert de agent zelf de relevante leerpunten en past ze toe. In de projectomgeving
               zie je onder <strong>Toegepaste leerpunten</strong> welke lessen zijn meegenomen.
             </Step>
           </ol>
@@ -617,9 +625,10 @@ export default function HandleidingPage() {
               raken, gebruik dan een opmerking met <Term>Verwerk</Term> — die herschrijft alleen het gemarkeerde
               fragment.
             </Faq>
-            <Faq question="Hoe verwijder ik een aanbesteding uit 'Jouw aanbestedingen'?">
-              Open het item in de lijst en gebruik de verwijderactie. Het bijbehorende project verwijder je apart in
-              het projectenpaneel.
+            <Faq question="Hoe verwijder ik een gedownloade aanbesteding of project?">
+              Een project verwijder je met de prullenbak-knop op de projectkaart in het overzicht. Een gedownloade
+              aanbesteding zonder project blijft in je database staan en verschijnt onderaan het overzicht; maak er
+              een project van of laat hem staan.
             </Faq>
             <Faq question="Wat betekent de kansscore precies?">
               De score is een inschatting op basis van vier factoren: match tussen je profiel en de uitvraag, je

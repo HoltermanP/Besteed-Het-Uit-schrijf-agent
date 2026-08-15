@@ -2,9 +2,9 @@
 
 import dynamic from 'next/dynamic'
 
-// De werkplek leunt volledig op localStorage; daarom alleen client-side renderen.
-const WorkspaceView = dynamic(() => import('@/views/WorkspacePage'), { ssr: false })
+// Het projectenoverzicht leunt volledig op de client-side opslag; daarom alleen client-side renderen.
+const ProjectsOverview = dynamic(() => import('@/views/ProjectsOverviewPage'), { ssr: false })
 
 export default function Page() {
-  return <WorkspaceView />
+  return <ProjectsOverview />
 }

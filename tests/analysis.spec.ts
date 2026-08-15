@@ -1,8 +1,11 @@
 import { expect, test } from '@playwright/test'
-import { resetWorkspace } from './helpers'
+import { LEIDRAAD_TEKST, PVE_TEKST, addManualSource, createProject, resetWorkspace } from './helpers'
 
 test.beforeEach(async ({ page }) => {
   await resetWorkspace(page)
+  await createProject(page)
+  await addManualSource(page, 'Aanbestedingsleidraad', LEIDRAAD_TEKST)
+  await addManualSource(page, 'Programma van Eisen', PVE_TEKST)
 })
 
 test('analyseert leidraad met eisen en schrijfstijl', async ({ page }) => {
