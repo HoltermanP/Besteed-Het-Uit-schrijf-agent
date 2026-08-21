@@ -12,6 +12,10 @@ export type TenderListItem = {
   sluitingsDatum: string
   aantalDagenTotSluitingsDatum: number
   opdrachtBeschrijving: string
+  /** Datum waarop TenderNed de aankondiging publiceerde. */
+  publicatieDatum?: string
+  /** Moment waarop dit item uit de TenderNed-API is opgehaald. */
+  fetchedAt?: string
   typeOpdracht?: string
   procedure?: string
   link?: string
@@ -68,6 +72,7 @@ export type SavedTender = {
   aanbestedingNaam: string
   opdrachtgeverNaam: string
   sluitingsDatum: string
+  publicatieDatum?: string
   cpvCodes: CpvCode[]
   opdrachtBeschrijving: string
   documentText: string

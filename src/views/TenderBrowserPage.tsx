@@ -29,6 +29,7 @@ import {
   fetchPublicationDetail,
   fetchPublicationDocumentList,
   matchesFilters,
+  searchCompanyRelevantPublications,
   searchPublications,
 } from '../lib/tenderNedApi'
 import {
@@ -40,7 +41,9 @@ import { createProjectFromTender } from '../lib/projectFactory'
 import { mapWithConcurrency } from '../lib/analyzeDocumentApi'
 import { currentProfileStamp, getTenderScores, scoreTendersForCompany } from '../lib/tenderScoreApi'
 import { cpvSignificantPrefix, matchesCompanyCpv } from '../lib/cpv'
-import { getCompanyConfig } from '../lib/companyConfig'
+import { getCompanyConfig, isCompanyConfigured } from '../lib/companyConfig'
+import { getApiConfig, isWriterConfigured } from '../lib/apiConfig'
+import { fetchWriterStatus } from '../lib/writeDraftApi'
 import type { SavedTender, SavedTenderDocument, TenderDocument, TenderListItem } from '../types/tenderNed'
 import type { StoredTenderScore } from '../types/tenderScore'
 import { Button } from '@/components/ui/button'
@@ -64,6 +67,13 @@ function formatDate(value: string): string {
   if (!value) return 'onbekend'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? 'onbekend' : date.toLocaleDateString('nl-NL')
+}
+
+function formatDateTime(value: string): string {
+  if (!value) return 'onbekend'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'onbekend'
+  return `${date.toLocaleDateString('nl-NL')} ${date.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}`
 }
 
 // Kleurenklasse per scoreband, aansluitend op de rubriek van de AI-score
@@ -151,11 +161,34 @@ export default function TenderBrowserPage() {
   const [savedDocsById, setSavedDocsById] = useState<Record<string, SavedTenderDocument[]>>(
     () => Object.fromEntries(getSavedTenders().map((tender) => [tender.publicatieId, tender.documents ?? []])),
   )
+  const [savedAtById, setSavedAtById] = useState<Record<string, string>>(
+    () => Object.fromEntries(getSavedTenders().map((tender) => [tender.publicatieId, tender.savedAt])),
+  )
   const [scannedPages, setScannedPages] = useState(0)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [docLists, setDocLists] = useState<Record<string, DocListState>>({})
   const [scores, setScores] = useState<Record<string, StoredTenderScore>>(() => getTenderScores())
   const [scoring, setScoring] = useState(false)
+  // Automatische eerste score: zodra tenders geladen zijn krijgen ze een
+  // AI-kansrijkheidsscore met korte onderbouwing. Gaat pas aan als er een
+  // bedrijfsprofiel én een werkende AI-configuratie is (key in /admin of op de
+  // server), en schakelt zichzelf uit na een scorefout.
+  const [autoScoreEnabled, setAutoScoreEnabled] = useState(false)
+  useEffect(() => {
+    if (!isCompanyConfigured()) return
+    if (isWriterConfigured(getApiConfig())) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- eenmalige init na mount
+      setAutoScoreEnabled(true)
+      return
+    }
+    let cancelled = false
+    void fetchWriterStatus().then((writerStatus) => {
+      if (!cancelled && writerStatus.available) setAutoScoreEnabled(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   // Scores van een ouder bedrijfsprofiel worden verborgen; opnieuw scoren ververst ze.
   const profileStamp = useMemo(() => currentProfileStamp(), [])
   // Relevantiefilter: toon alleen tenders waarvan de CPV-codes matchen met de
@@ -171,6 +204,7 @@ export default function TenderBrowserPage() {
     setSavedCount(saved.length)
     setSavedIds(new Set(saved.map((tender) => tender.publicatieId)))
     setSavedDocsById(Object.fromEntries(saved.map((tender) => [tender.publicatieId, tender.documents ?? []])))
+    setSavedAtById(Object.fromEntries(saved.map((tender) => [tender.publicatieId, tender.savedAt])))
   }
 
   const loadPage = useCallback(async (targetPage = 0) => {
@@ -197,6 +231,40 @@ export default function TenderBrowserPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch na mount is bedoeld
     void loadPage(0)
   }, [loadPage])
+
+  // Eén klik: scan de catalogus op de bedrijfs-CPV-codes, houd alleen open
+  // inschrijvingen over en laat de automatische eerste score direct draaien.
+  const fetchRelevantTenders = async () => {
+    if (!companyCpvCodes.length || loading) return
+    setLoading(true)
+    setOnlyOpen(true)
+    setStatus(`Relevante tenders ophalen voor ${companyConfig.name.trim() || 'het actieve bedrijf'}…`)
+    try {
+      const result = await searchCompanyRelevantPublications(companyCpvCodes, {
+        onlyOpen: true,
+        maxPages: 20,
+        pageSize: 50,
+        targetMatches: 30,
+        onProgress: ({ scannedPages: scanned, found }) =>
+          setStatus(`Catalogus scannen… ${scanned} pagina('s), ${found} relevante tender(s) gevonden.`),
+      })
+      setItems(result.items)
+      setTotalElements(result.totalElements)
+      setScannedPages(result.scannedPages)
+      setTotalPages(Math.ceil(result.totalElements / 25))
+      setPage(0)
+      setSelected(new Set())
+      setStatus(
+        result.items.length
+          ? `${result.items.length} relevante open tender(s) opgehaald na ${result.scannedPages} pagina('s); eerste score volgt automatisch.`
+          : `Geen open tenders gevonden die matchen met de bedrijfs-CPV-codes (${result.scannedPages} pagina('s) gescand).`,
+      )
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Relevante tenders ophalen mislukt.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const runFilteredSearch = async () => {
     setLoading(true)
@@ -381,12 +449,11 @@ export default function TenderBrowserPage() {
     }
   }
 
-  const scoreSelected = async () => {
-    if (!selected.size || scoring) return
-    const targets = items.filter((item) => selected.has(item.publicatieId))
+  const runScoring = useCallback(async (targets: TenderListItem[], options: { auto?: boolean } = {}) => {
     if (!targets.length) return
+    const label = options.auto ? 'Eerste kansrijkheidsscore bepalen' : 'AI-score berekenen'
     setScoring(true)
-    setStatus('AI-score berekenen…')
+    setStatus(`${label}…`)
     try {
       // CPV-codes zijn het belangrijkste matchsignaal, maar ontbreken op
       // lijstitems; eerst bijladen via de detail-endpoint.
@@ -395,18 +462,49 @@ export default function TenderBrowserPage() {
       setItems((current) => current.map((row) => byId.get(row.publicatieId) ?? row))
 
       const result = await scoreTendersForCompany(enriched, {
-        onProgress: ({ done, total }) => setStatus(`AI-score berekenen… ${done}/${total} tenders.`),
+        onProgress: ({ done, total }) => setStatus(`${label}… ${done}/${total} tenders.`),
       })
       setScores({ ...result.scores })
       const parts = [`${result.scored} gescoord`]
       if (result.fromCache) parts.push(`${result.fromCache} uit cache`)
       if (result.failed) parts.push(`${result.failed} mislukt`)
-      setStatus(`AI-score klaar: ${parts.join(', ')}.`)
+      setStatus(`${options.auto ? 'Eerste score' : 'AI-score'} klaar: ${parts.join(', ')}.`)
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'AI-score berekenen mislukt.')
+      const message = error instanceof Error ? error.message : `${label} mislukt.`
+      if (options.auto) {
+        // Niet blijven proberen (en de gebruiker niet spammen) als bijv. de
+        // API-key of het bedrijfsprofiel ontbreekt.
+        setAutoScoreEnabled(false)
+        setStatus(`Automatisch scoren gepauzeerd: ${message}`)
+      } else {
+        setStatus(message)
+      }
     } finally {
       setScoring(false)
     }
+  }, [])
+
+  // Eerste score automatisch bepalen voor zichtbare tenders zonder geldige
+  // score; de ref voorkomt herhaalde pogingen voor hetzelfde item.
+  const autoScoreAttemptedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!autoScoreEnabled || scoring || loading) return
+    const targets = visibleItems
+      .filter((item) => {
+        if (autoScoreAttemptedRef.current.has(item.publicatieId)) return false
+        const cached = scores[item.publicatieId]
+        return !(cached && cached.profileStamp === profileStamp)
+      })
+      .slice(0, 30)
+    if (!targets.length) return
+    targets.forEach((item) => autoScoreAttemptedRef.current.add(item.publicatieId))
+    void runScoring(targets, { auto: true })
+  }, [visibleItems, autoScoreEnabled, scoring, loading, scores, profileStamp, runScoring])
+
+  const scoreSelected = async () => {
+    if (!selected.size || scoring) return
+    const targets = items.filter((item) => selected.has(item.publicatieId))
+    await runScoring(targets)
   }
 
   const syncNeon = async () => {
@@ -445,8 +543,10 @@ export default function TenderBrowserPage() {
             <Library size={18} />
           </div>
           <div className="min-w-0 leading-tight">
-            <h1 className="truncate font-semibold">TenderNed catalogus</h1>
-            <div className="truncate text-sm text-muted-foreground">Publieke TNS-webservice</div>
+            <h1 className="truncate font-semibold">Tenders ophalen</h1>
+            <div className="truncate text-sm text-muted-foreground">
+              Relevante tenders vinden, scoren en downloaden incl. documenten (TenderNed TNS)
+            </div>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -534,8 +634,20 @@ export default function TenderBrowserPage() {
             </p>
           ) : null}
           <div className="flex flex-wrap gap-2">
-            <Button onClick={runFilteredSearch} disabled={loading}>
-              {loading ? <LoaderCircle size={16} className="animate-spin" /> : <Search size={16} />}
+            <Button
+              onClick={fetchRelevantTenders}
+              disabled={loading || !companyCpvCodes.length}
+              title={
+                companyCpvCodes.length
+                  ? 'Scant de catalogus op de bedrijfs-CPV-codes, toont alleen open inschrijvingen en bepaalt direct een eerste kansrijkheidsscore.'
+                  : 'Stel eerst CPV-codes in bij Configuratie → CPV-codes.'
+              }
+            >
+              {loading ? <LoaderCircle size={16} className="animate-spin" /> : <Sparkles size={16} />}
+              Haal relevante tenders op
+            </Button>
+            <Button variant="outline" onClick={runFilteredSearch} disabled={loading}>
+              <Search size={16} />
               Zoek in catalogus
             </Button>
             <Button variant="outline" onClick={() => loadPage(page)} disabled={loading}>
@@ -616,9 +728,13 @@ export default function TenderBrowserPage() {
             {scoring ? <LoaderCircle size={16} className="animate-spin" /> : <Sparkles size={16} />}
             Scoor {selected.size > 0 ? `${selected.size} ` : ''}met AI
           </Button>
-          <Button onClick={downloadSelected} disabled={!selected.size || loading}>
+          <Button
+            onClick={downloadSelected}
+            disabled={!selected.size || loading}
+            title="Downloadt de geselecteerde tenders inclusief álle bijbehorende documenten (met tekstextractie) naar de lokale database"
+          >
             {loading ? <LoaderCircle size={16} className="animate-spin" /> : <Download size={16} />}
-            Download {selected.size > 0 ? `${selected.size} ` : ''}naar database
+            Download {selected.size > 0 ? `${selected.size} ` : ''}incl. documenten
           </Button>
         </div>
       </section>
@@ -666,13 +782,36 @@ export default function TenderBrowserPage() {
                   </Badge>
                 </div>
                 <p className="mt-1.5 flex flex-wrap items-center gap-x-1 break-words text-sm text-muted-foreground">
-                  {item.opdrachtgeverNaam} · TN-{item.kenmerk} · sluit {formatDate(item.sluitingsDatum)}
-                  {isSaved ? (
+                  <span>
+                    {item.opdrachtgeverNaam} · TN-{item.kenmerk}
+                    {item.publicatieDatum ? ` · gepubliceerd ${formatDate(item.publicatieDatum)}` : ''}
+                    {` · sluit ${formatDate(item.sluitingsDatum)}`}
+                  </span>
+                  {Array.isArray(docState) ? (
                     <Badge variant="outline" className="ml-2 gap-1 rounded-full text-xs font-normal">
+                      <FileText size={12} /> {docState.length} document{docState.length === 1 ? '' : 'en'}
+                    </Badge>
+                  ) : null}
+                  {isSaved ? (
+                    <Badge
+                      variant="outline"
+                      className="ml-2 gap-1 rounded-full text-xs font-normal"
+                      title={
+                        savedAtById[item.publicatieId]
+                          ? `Gedownload op ${formatDateTime(savedAtById[item.publicatieId])}`
+                          : undefined
+                      }
+                    >
                       <CheckCircle2 size={13} /> opgeslagen
+                      {savedAtById[item.publicatieId] ? ` ${formatDate(savedAtById[item.publicatieId])}` : ''}
                     </Badge>
                   ) : null}
                 </p>
+                {item.fetchedAt ? (
+                  <p className="mt-0.5 text-xs text-muted-foreground/80">
+                    Opgehaald uit TenderNed op {formatDateTime(item.fetchedAt)}
+                  </p>
+                ) : null}
                 <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{item.opdrachtBeschrijving.slice(0, 220)}{item.opdrachtBeschrijving.length > 220 ? '...' : ''}</p>
                 {score ? (
                   <div

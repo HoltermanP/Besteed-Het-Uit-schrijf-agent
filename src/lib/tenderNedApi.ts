@@ -6,7 +6,7 @@ import type {
   TenderListItem,
   TenderSearchFilters,
 } from '../types/tenderNed'
-import { cpvSignificantPrefix } from './cpv'
+import { cpvSignificantPrefix, matchesCompanyCpv } from './cpv'
 
 const API_BASE = '/api/tenderned'
 
@@ -17,6 +17,7 @@ type RawPublication = {
   opdrachtgeverNaam: string
   sluitingsDatum: string
   aantalDagenTotSluitingsDatum: number
+  publicatieDatum?: string
   opdrachtBeschrijving?: string
   typeOpdracht?: { omschrijving: string }
   procedure?: { omschrijving: string }
@@ -44,7 +45,7 @@ type RawDetail = {
   links?: { pdf?: { href: string } }
 }
 
-function mapListItem(raw: RawPublication): TenderListItem {
+function mapListItem(raw: RawPublication, fetchedAt: string): TenderListItem {
   return {
     publicatieId: raw.publicatieId,
     kenmerk: raw.kenmerk,
@@ -52,6 +53,8 @@ function mapListItem(raw: RawPublication): TenderListItem {
     opdrachtgeverNaam: raw.opdrachtgeverNaam,
     sluitingsDatum: raw.sluitingsDatum,
     aantalDagenTotSluitingsDatum: raw.aantalDagenTotSluitingsDatum,
+    publicatieDatum: raw.publicatieDatum,
+    fetchedAt,
     opdrachtBeschrijving: raw.opdrachtBeschrijving ?? '',
     typeOpdracht: raw.typeOpdracht?.omschrijving,
     procedure: raw.procedure?.omschrijving,
@@ -89,8 +92,9 @@ export async function fetchPublicationsPage(page = 0, size = 20): Promise<{
   const response = await fetch(`${API_BASE}/v2/publicaties?page=${page}&size=${size}`)
   if (!response.ok) throw new Error(`TenderNed laden mislukt (${response.status})`)
   const data = (await response.json()) as RawPage
+  const fetchedAt = new Date().toISOString()
   return {
-    items: data.content.map(mapListItem),
+    items: data.content.map((raw) => mapListItem(raw, fetchedAt)),
     totalElements: data.totalElements,
     totalPages: data.totalPages,
     page: data.number,
@@ -112,6 +116,7 @@ export async function fetchPublicationDetail(publicatieId: string): Promise<Tend
     aantalDagenTotSluitingsDatum: 0,
     opdrachtBeschrijving: raw.opdrachtBeschrijving ?? '',
     publicatieDatum: raw.publicatieDatum ?? '',
+    fetchedAt: new Date().toISOString(),
     cpvCodes: raw.cpvCodes ?? [],
     nutsCodes: raw.nutsCodes,
     pdfUrl: raw.links?.pdf?.href ? `https://www.tenderned.nl${raw.links.pdf.href}` : undefined,
@@ -203,6 +208,55 @@ export async function searchPublications(
       if (matchesFilters(item, filters)) matches.push(item)
     })
 
+    if (matches.length >= targetMatches) break
+    if (page >= result.totalPages - 1) break
+  }
+
+  return { items: matches, scannedPages, totalElements }
+}
+
+/**
+ * Snelle relevantie-scan: doorloopt de catalogus, houdt alleen openstaande
+ * publicaties over en matcht de CPV-codes (per pagina bijgeladen) tegen de
+ * bedrijfs-CPV-codes. Dit is de één-klik-functie "Haal relevante tenders op".
+ */
+export async function searchCompanyRelevantPublications(
+  companyCodes: Array<{ code: string }>,
+  options: {
+    onlyOpen?: boolean
+    maxPages?: number
+    pageSize?: number
+    targetMatches?: number
+    onProgress?: (progress: { scannedPages: number; found: number }) => void
+  } = {},
+): Promise<{ items: TenderListItem[]; scannedPages: number; totalElements: number }> {
+  const maxPages = options.maxPages ?? 20
+  const pageSize = options.pageSize ?? 50
+  const targetMatches = options.targetMatches ?? 30
+  const matches: TenderListItem[] = []
+  let totalElements = 0
+  let scannedPages = 0
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const result = await fetchPublicationsPage(page, pageSize)
+    totalElements = result.totalElements
+    scannedPages += 1
+
+    // Gesloten/gegunde publicaties vóór de CPV-verrijking wegfilteren scheelt
+    // veel detail-calls; alleen openstaande tenders zijn interessant om op in
+    // te schrijven.
+    const candidates = options.onlyOpen === false
+      ? result.items
+      : result.items.filter((item) => item.aantalDagenTotSluitingsDatum >= 0)
+    const batch = await enrichWithCpv(candidates)
+
+    batch.forEach((item) => {
+      if (matches.length >= targetMatches) return
+      if (matches.some((existing) => existing.publicatieId === item.publicatieId)) return
+      if (matchesCompanyCpv(item.cpvCodes ?? [], companyCodes)) matches.push(item)
+    })
+
+    options.onProgress?.({ scannedPages, found: matches.length })
     if (matches.length >= targetMatches) break
     if (page >= result.totalPages - 1) break
   }

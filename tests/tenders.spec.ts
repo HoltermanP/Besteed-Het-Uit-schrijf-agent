@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
 
 test('TenderNed catalogus laadt publicaties', async ({ page }) => {
   await page.goto('/aanbestedingen')
-  await expect(page.getByRole('heading', { name: 'TenderNed catalogus' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Tenders ophalen' })).toBeVisible()
   await expect(page.getByText(/publicaties in TenderNed/)).toBeVisible({ timeout: 15000 })
 })
 
