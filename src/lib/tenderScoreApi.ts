@@ -11,8 +11,13 @@ import type {
 } from '../types/tenderScore'
 
 const STORAGE_KEY = 'bid-agent-tender-scores'
-const BATCH_SIZE = 10
-const MAX_COMPANY_CHARS = 12_000
+// Batchgrootte gelijk aan het servermaximum: minder aanroepen betekent minder
+// herhaalde (gecachte) bedrijfsprofiel-tokens en minder overhead per tender.
+const BATCH_SIZE = 20
+// Parallelle batches ná de eerste: de eerste batch schrijft de prompt-cache van
+// het bedrijfsprofiel; de volgende lezen die uit cache (~10% van de inputprijs).
+const PARALLEL_BATCHES = 3
+const MAX_COMPANY_CHARS = 8_000
 
 export type ScoreProgress = {
   done: number
@@ -54,6 +59,7 @@ function toScoreInput(item: TenderListItem): TenderScoreInput {
     opdrachtgeverNaam: item.opdrachtgeverNaam,
     opdrachtBeschrijving: item.opdrachtBeschrijving,
     cpvCodes: item.cpvCodes?.map((cpv) => ({ code: cpv.code, omschrijving: cpv.omschrijving })),
+    typePublicatie: item.typePublicatie,
     typeOpdracht: item.typeOpdracht,
     procedure: item.procedure,
   }
@@ -140,28 +146,48 @@ export async function scoreTendersForCompany(
   const scoredAt = new Date().toISOString()
   let scored = 0
   let failed = 0
+  let done = fromCache
 
+  const batches: TenderListItem[][] = []
   for (let index = 0; index < pending.length; index += BATCH_SIZE) {
-    const batch = pending.slice(index, index + BATCH_SIZE)
-    try {
-      const result = await scoreBatch(companyText, batch.map(toScoreInput))
-      const returned = new Set<string>()
-      for (const score of result.scores) {
-        stored[score.publicatieId] = { ...score, scoredAt, profileStamp: stamp }
-        returned.add(score.publicatieId)
-        scored += 1
-      }
-      failed += batch.filter((item) => !returned.has(item.publicatieId)).length
-      persistScores(stored)
-    } catch (error) {
-      failed += batch.length
-      // Eerste batchfout meteen doorgeven als er nog niets gelukt is (bijv.
-      // ontbrekend profiel of API-key); anders doorgaan met de rest.
-      if (!scored && index === 0) throw error
-      console.warn('Tenderbatch scoren mislukt; volgende batch wordt geprobeerd.', error)
-    }
-    options.onProgress?.({ done: fromCache + Math.min(index + BATCH_SIZE, pending.length), total: items.length, fromCache })
+    batches.push(pending.slice(index, index + BATCH_SIZE))
   }
+
+  const runBatch = async (batch: TenderListItem[]) => {
+    const result = await scoreBatch(companyText, batch.map(toScoreInput))
+    const returned = new Set<string>()
+    for (const score of result.scores) {
+      stored[score.publicatieId] = { ...score, scoredAt, profileStamp: stamp }
+      returned.add(score.publicatieId)
+      scored += 1
+    }
+    failed += batch.filter((item) => !returned.has(item.publicatieId)).length
+    persistScores(stored)
+    done += batch.length
+    options.onProgress?.({ done, total: items.length, fromCache })
+  }
+
+  // Eerste batch apart: een fout hier (ontbrekende API-key, profiel) meteen
+  // doorgeven, en de prompt-cache van het bedrijfsprofiel is daarna warm voor
+  // de parallelle vervolgbatches.
+  const [first, ...rest] = batches
+  await runBatch(first)
+
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(PARALLEL_BATCHES, rest.length) }, async () => {
+    while (cursor < rest.length) {
+      const batch = rest[cursor++]
+      try {
+        await runBatch(batch)
+      } catch (error) {
+        failed += batch.length
+        done += batch.length
+        options.onProgress?.({ done, total: items.length, fromCache })
+        console.warn('Tenderbatch scoren mislukt; volgende batch wordt geprobeerd.', error)
+      }
+    }
+  })
+  await Promise.all(workers)
 
   return { scores: stored, scored, fromCache, failed }
 }

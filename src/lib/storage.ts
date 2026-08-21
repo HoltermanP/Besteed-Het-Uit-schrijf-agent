@@ -14,6 +14,7 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null
 let flushChain: Promise<void> = Promise.resolve()
 
 const FLUSH_DELAY_MS = 800
+const KEEPALIVE_MAX_BYTES = 60_000
 const LEGACY_PREFIX = 'bid-agent-'
 
 // ── Bedrijfsscheiding ────────────────────────────────────────────────────────
@@ -147,11 +148,16 @@ async function flushNow(): Promise<void> {
   removedKeys.clear()
 
   try {
+    const body = JSON.stringify(payload)
     const response = await fetch('/api/state', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      keepalive: true,
+      body,
+      // keepalive laat de request doorlopen als het tabblad sluit, maar de
+      // browser begrenst keepalive-bodies op 64 KB en laat grotere requests
+      // falen ("Failed to fetch"). Grote payloads (voorselectie, dossiers)
+      // gaan daarom zonder keepalive; de pagehide-flush blijft best effort.
+      keepalive: body.length < KEEPALIVE_MAX_BYTES,
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
   } catch (error) {

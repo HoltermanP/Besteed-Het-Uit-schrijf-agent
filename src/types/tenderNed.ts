@@ -16,6 +16,8 @@ export type TenderListItem = {
   publicatieDatum?: string
   /** Moment waarop dit item uit de TenderNed-API is opgehaald. */
   fetchedAt?: string
+  /** Soort publicatie, bijv. "Aankondiging van een opdracht", "Marktconsultatie", "Rectificatie". */
+  typePublicatie?: string
   typeOpdracht?: string
   procedure?: string
   link?: string
@@ -86,4 +88,30 @@ export type TenderSearchFilters = {
   cpvPrefix: string
   query: string
   onlyOpen: boolean
+}
+
+/** Sorteersleutels voor de voorselectie. */
+export type TenderSortKey =
+  | 'score'
+  | 'publicatieDatum'
+  | 'sluitingsDatum'
+  | 'aanbestedingNaam'
+  | 'opdrachtgeverNaam'
+
+/**
+ * Opgeslagen voorselectie: de lijst tenders die puur op de bedrijfs-CPV-codes
+ * uit TenderNed is opgehaald (stap 1), inclusief CPV-verrijking. De AI-scores
+ * (stap 2) staan apart per publicatieId opgeslagen, zodat een nieuwe scan de
+ * al gescoorde tenders niet opnieuw hoeft te scoren.
+ */
+export type TenderPreselection = {
+  /** Moment van de CPV-scan. */
+  scannedAt: string
+  /** Bedrijfs-CPV-codes (volledige notatie) waarmee gescand is. */
+  cpvCodes: string[]
+  /** Totaal aantal treffers in TenderNed voor deze codes (kan groter zijn dan items). */
+  totalMatches: number
+  /** Alleen open inschrijvingen. */
+  onlyOpen: boolean
+  items: TenderListItem[]
 }

@@ -7,6 +7,7 @@ export type TenderScoreInput = {
   opdrachtgeverNaam: string
   opdrachtBeschrijving: string
   cpvCodes?: Array<{ code: string; omschrijving?: string }>
+  typePublicatie?: string
   typeOpdracht?: string
   procedure?: string
 }

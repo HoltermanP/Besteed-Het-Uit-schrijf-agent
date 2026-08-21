@@ -6,8 +6,8 @@ import type {
 import { completeChat, resolveAiFromRequest } from './aiClient'
 
 const MAX_TENDERS_PER_CALL = 20
-const MAX_COMPANY_CHARS = 12_000
-const MAX_DESCRIPTION_CHARS = 1_200
+const MAX_COMPANY_CHARS = 8_000
+const MAX_DESCRIPTION_CHARS = 900
 
 const SYSTEM_INSTRUCTIONS = `Je bent een Nederlandse bid/no-bid-adviseur. Je beoordeelt per aanbesteding hoe passend die is voor het hieronder beschreven bedrijf, op een schaal van 0 tot 100.
 
@@ -21,7 +21,9 @@ Hanteer deze schaal:
 Regels:
 - Beoordeel uitsluitend op basis van het bedrijfsprofiel en de aangeleverde tendergegevens; verzin geen capaciteiten die het bedrijf niet noemt.
 - Weeg CPV-codes zwaar mee als beide kanten ze hebben, maar kijk ook naar de inhoudelijke omschrijving: een CPV-match met een afwijkende scope verdient geen hoge score.
-- Geef per tender een korte toelichting van één à twee zinnen, in het Nederlands, met het belangrijkste argument voor de score.
+- Een overkoepelende CPV-code bij het bedrijf (bijv. 72000000) dekt alle onderliggende codes; kijk daarom vooral of de concrete scope (omschrijving, type opdracht) bij het bedrijf past.
+- Let op signalen die de kans drukken: raamovereenkomsten met veel percelen buiten het werkveld, eisen aan schaal of certificering die het profiel niet noemt, marktconsultaties (nog geen inschrijving mogelijk).
+- Geef per tender een toelichting van maximaal 25 woorden, in het Nederlands, met het doorslaggevende argument; geen inleiding, geen herhaling van de titel.
 - Neem elke aangeleverde publicatieId exact één keer op in het antwoord, ongewijzigd.
 Antwoord uitsluitend met geldig JSON in dit schema:
 {
@@ -46,6 +48,7 @@ function buildTenderText(request: TenderScoreRequest): string {
       `publicatieId: ${tender.publicatieId}`,
       `Naam: ${tender.aanbestedingNaam}`,
       `Opdrachtgever: ${tender.opdrachtgeverNaam}`,
+      tender.typePublicatie ? `Soort publicatie: ${tender.typePublicatie}` : '',
       tender.typeOpdracht ? `Type opdracht: ${tender.typeOpdracht}` : '',
       tender.procedure ? `Procedure: ${tender.procedure}` : '',
       tender.cpvCodes?.length
@@ -101,7 +104,9 @@ export async function scoreTenders(request: TenderScoreRequest): Promise<TenderS
     throw new Error(`Maximaal ${MAX_TENDERS_PER_CALL} tenders per aanroep; splits de selectie in batches.`)
   }
 
-  const ai = resolveAiFromRequest(request.ai, 'TENDER_SCORE_MODEL', 'analysis')
+  // Voorselectie is een triage over veel tenders: het lichte tier (snel en het
+  // goedkoopst) is hier ruim voldoende; TENDER_SCORE_MODEL kan dit overrulen.
+  const ai = resolveAiFromRequest(request.ai, 'TENDER_SCORE_MODEL', 'light')
   const content = await completeChat(
     ai,
     [
@@ -110,7 +115,8 @@ export async function scoreTenders(request: TenderScoreRequest): Promise<TenderS
     ],
     {
       jsonMode: ai.provider !== 'anthropic',
-      maxTokens: 4_000,
+      // 20 tenders × (id + score + ≤25 woorden) past ruim binnen 3.000 tokens.
+      maxTokens: 3_000,
       timeoutMs: 90_000,
       // Het bedrijfsprofiel zit in de system prompt en wordt bij batchgewijs
       // scoren over meerdere aanroepen herlezen — caching betaalt zich dan uit.

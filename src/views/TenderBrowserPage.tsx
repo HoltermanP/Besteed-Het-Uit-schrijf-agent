@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import {
   ArrowLeft,
   ArrowRight,
+  ArrowUpDown,
   BookmarkCheck,
   CheckCircle2,
   ChevronDown,
@@ -29,7 +30,6 @@ import {
   fetchPublicationDetail,
   fetchPublicationDocumentList,
   matchesFilters,
-  searchCompanyRelevantPublications,
   searchPublications,
 } from '../lib/tenderNedApi'
 import {
@@ -37,14 +37,31 @@ import {
   getSavedTenders,
   syncPendingTendersToNeon,
 } from '../lib/tenderDatabase'
+import {
+  getTenderPreselection,
+  preselectionIsStale,
+  runCpvPreselection,
+  sortTenders,
+  TENDER_SORT_OPTIONS,
+  updatePreselectionItems,
+  type PreselectionProgress,
+} from '../lib/tenderPreselection'
 import { createProjectFromTender } from '../lib/projectFactory'
 import { mapWithConcurrency } from '../lib/analyzeDocumentApi'
 import { currentProfileStamp, getTenderScores, scoreTendersForCompany } from '../lib/tenderScoreApi'
 import { cpvSignificantPrefix, matchesCompanyCpv } from '../lib/cpv'
 import { getCompanyConfig, isCompanyConfigured } from '../lib/companyConfig'
 import { getApiConfig, isWriterConfigured } from '../lib/apiConfig'
+import { loadStored, saveStored } from '../lib/storage'
 import { fetchWriterStatus } from '../lib/writeDraftApi'
-import type { SavedTender, SavedTenderDocument, TenderDocument, TenderListItem } from '../types/tenderNed'
+import type {
+  SavedTender,
+  SavedTenderDocument,
+  TenderDocument,
+  TenderListItem,
+  TenderPreselection,
+  TenderSortKey,
+} from '../types/tenderNed'
 import type { StoredTenderScore } from '../types/tenderScore'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -52,10 +69,16 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ModeToggle } from '@/components/mode-toggle'
 import { cn } from '@/lib/utils'
 
 type DocListState = TenderDocument[] | 'loading' | 'error'
+type ViewMode = 'voorselectie' | 'catalogus'
+type ScoreFilter = 'alle' | 'sterk' | 'passend' | 'ongescoord'
+
+const LIST_PAGE_SIZE = 25
+const SORT_STORAGE_KEY = 'bid-agent-tender-sort'
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -141,19 +164,55 @@ function ScoreRing({ score, size = 64 }: { score: number; size?: number }) {
   )
 }
 
+function scanProgressLabel(progress: PreselectionProgress | null): string {
+  if (!progress) return ''
+  if (progress.phase === 'lijst') return `lijst ophalen (${progress.done}${progress.total ? `/${progress.total}` : ''})`
+  return `CPV-codes bijladen (${progress.done}/${progress.total})`
+}
+
 export default function TenderBrowserPage() {
   const router = useRouter()
+  const companyConfig = useMemo(() => getCompanyConfig(), [])
+  const companyCpvCodes = companyConfig.cpvCodes
+  const companyName = companyConfig.name.trim() || 'het actieve bedrijf'
+  // Scores van een ouder bedrijfsprofiel worden verborgen; opnieuw scoren ververst ze.
+  const profileStamp = useMemo(() => currentProfileStamp(), [])
+
+  // ── Voorselectie (stap 1: CPV, stap 2: AI-score) ─────────────────────────
+  // De voorselectie staat in de werkruimte-opslag (database); bij terugkeer op
+  // deze pagina verschijnt de lijst direct, zonder opnieuw ophalen of scoren.
+  const [preselection, setPreselection] = useState<TenderPreselection | null>(() => getTenderPreselection())
+  const [mode, setMode] = useState<ViewMode>(() =>
+    getTenderPreselection() || companyCpvCodes.length ? 'voorselectie' : 'catalogus',
+  )
+  const [sortKey, setSortKeyState] = useState<TenderSortKey>(() => loadStored<TenderSortKey>(SORT_STORAGE_KEY, 'score'))
+  const setSortKey = (key: TenderSortKey) => {
+    setSortKeyState(key)
+    saveStored(SORT_STORAGE_KEY, key)
+    setListPage(0)
+  }
+  const [scoreFilter, setScoreFilter] = useState<ScoreFilter>('alle')
+  const [listPage, setListPage] = useState(0)
+  const [scanning, setScanning] = useState(false)
+  const [scanProgress, setScanProgress] = useState<PreselectionProgress | null>(null)
+
+  // ── Catalogus (vrij zoeken) ──────────────────────────────────────────────
   const [items, setItems] = useState<TenderListItem[]>([])
-  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [page, setPage] = useState(0)
   const [totalPages, setTotalPages] = useState(0)
   const [totalElements, setTotalElements] = useState(0)
   const [cpvPrefix, setCpvPrefix] = useState('')
   const [query, setQuery] = useState('')
   const [onlyOpen, setOnlyOpen] = useState(true)
+  const [scannedPages, setScannedPages] = useState(0)
+  // Relevantiefilter in de catalogus: toon alleen tenders waarvan de CPV-codes
+  // matchen met de CPV-codes van het actieve bedrijf.
+  const [onlyRelevant, setOnlyRelevant] = useState(false)
+
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
-  const [status, setStatus] = useState('Laad de TenderNed-catalogus via de publieke TNS-webservice.')
+  const [status, setStatus] = useState('')
   const [savedCount, setSavedCount] = useState(() => getSavedTenders().length)
   const [savedIds, setSavedIds] = useState<Set<string>>(
     () => new Set(getSavedTenders().map((tender) => tender.publicatieId)),
@@ -164,15 +223,14 @@ export default function TenderBrowserPage() {
   const [savedAtById, setSavedAtById] = useState<Record<string, string>>(
     () => Object.fromEntries(getSavedTenders().map((tender) => [tender.publicatieId, tender.savedAt])),
   )
-  const [scannedPages, setScannedPages] = useState(0)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [docLists, setDocLists] = useState<Record<string, DocListState>>({})
   const [scores, setScores] = useState<Record<string, StoredTenderScore>>(() => getTenderScores())
   const [scoring, setScoring] = useState(false)
-  // Automatische eerste score: zodra tenders geladen zijn krijgen ze een
-  // AI-kansrijkheidsscore met korte onderbouwing. Gaat pas aan als er een
-  // bedrijfsprofiel én een werkende AI-configuratie is (key in /admin of op de
-  // server), en schakelt zichzelf uit na een scorefout.
+
+  // Automatische AI-score (stap 2) over de voorselectie. Gaat pas aan als er
+  // een bedrijfsprofiel én een werkende AI-configuratie is (key in /admin of
+  // op de server), en schakelt zichzelf uit na een scorefout.
   const [autoScoreEnabled, setAutoScoreEnabled] = useState(false)
   useEffect(() => {
     if (!isCompanyConfigured()) return
@@ -189,15 +247,18 @@ export default function TenderBrowserPage() {
       cancelled = true
     }
   }, [])
-  // Scores van een ouder bedrijfsprofiel worden verborgen; opnieuw scoren ververst ze.
-  const profileStamp = useMemo(() => currentProfileStamp(), [])
-  // Relevantiefilter: toon alleen tenders waarvan de CPV-codes matchen met de
-  // CPV-codes van het actieve bedrijf (ingesteld in de bedrijfsconfiguratie).
-  const [onlyRelevant, setOnlyRelevant] = useState(false)
-  const companyConfig = useMemo(() => getCompanyConfig(), [])
-  const companyCpvCodes = companyConfig.cpvCodes
 
-  const cpvOptions = useMemo(() => collectCpvCodes(items), [items])
+  /** Alleen scores die bij het huidige bedrijfsprofiel horen. */
+  const validScores = useMemo(() => {
+    const result: Record<string, StoredTenderScore> = {}
+    for (const [id, score] of Object.entries(scores)) {
+      if (score.profileStamp === profileStamp) result[id] = score
+    }
+    return result
+  }, [scores, profileStamp])
+
+  const baseItems = mode === 'voorselectie' ? (preselection?.items ?? []) : items
+  const cpvOptions = useMemo(() => collectCpvCodes(baseItems), [baseItems])
 
   const refreshSaved = () => {
     const saved = getSavedTenders()
@@ -206,6 +267,54 @@ export default function TenderBrowserPage() {
     setSavedDocsById(Object.fromEntries(saved.map((tender) => [tender.publicatieId, tender.documents ?? []])))
     setSavedAtById(Object.fromEntries(saved.map((tender) => [tender.publicatieId, tender.savedAt])))
   }
+
+  /** Werkt één tender bij in zowel de catalogus- als de voorselectielijst (en de opslag). */
+  const patchItems = useCallback((updated: TenderListItem[]) => {
+    if (!updated.length) return
+    const byId = new Map(updated.map((item) => [item.publicatieId, item]))
+    setItems((current) => current.map((row) => byId.get(row.publicatieId) ?? row))
+    setPreselection((current) => {
+      if (!current) return current
+      if (!current.items.some((row) => byId.has(row.publicatieId))) return current
+      const next = { ...current, items: current.items.map((row) => byId.get(row.publicatieId) ?? row) }
+      updatePreselectionItems(updated)
+      return next
+    })
+  }, [])
+
+  // ── Stap 1: CPV-voorselectie ─────────────────────────────────────────────
+  const scanningRef = useRef(false)
+  const runPreselection = useCallback(async () => {
+    if (!companyCpvCodes.length || scanningRef.current) return
+    scanningRef.current = true
+    setScanning(true)
+    setMode('voorselectie')
+    setStatus(`Stap 1 — voorselectie op CPV-codes van ${companyName} ophalen uit TenderNed…`)
+    try {
+      const result = await runCpvPreselection(companyCpvCodes, {
+        onlyOpen: true,
+        onProgress: (progress) => {
+          setScanProgress(progress)
+          setStatus(`Stap 1 — voorselectie op CPV-codes: ${scanProgressLabel(progress)}…`)
+        },
+      })
+      setPreselection(result)
+      setListPage(0)
+      setSelected(new Set())
+      const extra = result.totalMatches > result.items.length ? ` (van ${result.totalMatches.toLocaleString('nl-NL')} treffers in TenderNed; de nieuwste ${result.items.length} zijn opgehaald)` : ''
+      setStatus(
+        result.items.length
+          ? `Stap 1 klaar: ${result.items.length} open tender(s) binnen ${result.cpvCodes.length} CPV-code(s)${extra}. Stap 2 — AI-score — volgt voor tenders zonder score.`
+          : `Geen open tenders gevonden binnen de ${result.cpvCodes.length} CPV-code(s) van ${companyName}.`,
+      )
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Voorselectie ophalen mislukt.')
+    } finally {
+      scanningRef.current = false
+      setScanning(false)
+      setScanProgress(null)
+    }
+  }, [companyCpvCodes, companyName])
 
   const loadPage = useCallback(async (targetPage = 0) => {
     setLoading(true)
@@ -226,47 +335,42 @@ export default function TenderBrowserPage() {
     }
   }, [cpvPrefix])
 
+  // Eerste lading bij mount: met CPV-codes start (of hergebruikt) de
+  // voorselectie; zonder CPV-codes toont de pagina de open catalogus.
+  const mountedRef = useRef(false)
   useEffect(() => {
-    // Initiële catalogus-lading bij mount (TNS-webservice).
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch na mount is bedoeld
-    void loadPage(0)
-  }, [loadPage])
-
-  // Eén klik: scan de catalogus op de bedrijfs-CPV-codes, houd alleen open
-  // inschrijvingen over en laat de automatische eerste score direct draaien.
-  const fetchRelevantTenders = async () => {
-    if (!companyCpvCodes.length || loading) return
-    setLoading(true)
-    setOnlyOpen(true)
-    setStatus(`Relevante tenders ophalen voor ${companyConfig.name.trim() || 'het actieve bedrijf'}…`)
-    try {
-      const result = await searchCompanyRelevantPublications(companyCpvCodes, {
-        onlyOpen: true,
-        maxPages: 20,
-        pageSize: 50,
-        targetMatches: 30,
-        onProgress: ({ scannedPages: scanned, found }) =>
-          setStatus(`Catalogus scannen… ${scanned} pagina('s), ${found} relevante tender(s) gevonden.`),
-      })
-      setItems(result.items)
-      setTotalElements(result.totalElements)
-      setScannedPages(result.scannedPages)
-      setTotalPages(Math.ceil(result.totalElements / 25))
-      setPage(0)
-      setSelected(new Set())
-      setStatus(
-        result.items.length
-          ? `${result.items.length} relevante open tender(s) opgehaald na ${result.scannedPages} pagina('s); eerste score volgt automatisch.`
-          : `Geen open tenders gevonden die matchen met de bedrijfs-CPV-codes (${result.scannedPages} pagina('s) gescand).`,
-      )
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Relevante tenders ophalen mislukt.')
-    } finally {
-      setLoading(false)
+    if (mountedRef.current) return
+    mountedRef.current = true
+    if (mode === 'voorselectie') {
+      const stored = getTenderPreselection()
+      if (!stored || preselectionIsStale(stored, companyCpvCodes)) {
+        void runPreselection()
+      } else {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- eenmalige init na mount
+        setStatus(
+          `Voorselectie uit de database: ${stored.items.length} open tender(s) binnen ${stored.cpvCodes.length} CPV-code(s), gescand op ${formatDateTime(stored.scannedAt)}.`,
+        )
+      }
+    } else {
+      void loadPage(0)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bewust alleen bij mount
+  }, [])
+
+  const openCatalog = () => {
+    setMode('catalogus')
+    setSelected(new Set())
+    if (!items.length) void loadPage(0)
+  }
+
+  const openPreselection = () => {
+    setMode('voorselectie')
+    setSelected(new Set())
+    if (!preselection && companyCpvCodes.length) void runPreselection()
   }
 
   const runFilteredSearch = async () => {
+    setMode('catalogus')
     setLoading(true)
     setStatus('Zoeken met CPV/tekstfilter...')
     try {
@@ -289,13 +393,12 @@ export default function TenderBrowserPage() {
     }
   }
 
-  // CPV-codes staan niet op lijstitems; bij het relevantiefilter worden ze per
-  // item bijgeladen via de detail-endpoint (beperkte parallelliteit, en de ref
-  // voorkomt herhaalde pogingen). Items zonder CPV-registratie krijgen na de
-  // poging een lege lijst, zodat de laadteller niet blijft hangen.
+  // CPV-codes staan niet op catalogus-lijstitems; bij het relevantiefilter
+  // worden ze per item bijgeladen via de detail-endpoint (beperkte
+  // parallelliteit, en de ref voorkomt herhaalde pogingen).
   const cpvAttemptedRef = useRef<Set<string>>(new Set())
   useEffect(() => {
-    if (!onlyRelevant) return
+    if (mode !== 'catalogus' || !onlyRelevant) return
     const missing = items.filter(
       (item) => !item.cpvCodes && !cpvAttemptedRef.current.has(item.publicatieId),
     )
@@ -304,35 +407,68 @@ export default function TenderBrowserPage() {
     void mapWithConcurrency(missing, 4, async (item) => {
       try {
         const detail = await fetchPublicationDetail(item.publicatieId)
-        setItems((current) =>
-          current.map((row) =>
-            row.publicatieId === item.publicatieId ? { ...row, cpvCodes: detail.cpvCodes ?? [] } : row,
-          ),
-        )
+        patchItems([{ ...item, cpvCodes: detail.cpvCodes ?? [] }])
       } catch {
-        setItems((current) =>
-          current.map((row) => (row.publicatieId === item.publicatieId ? { ...row, cpvCodes: [] } : row)),
-        )
+        patchItems([{ ...item, cpvCodes: [] }])
       }
     })
-  }, [items, onlyRelevant])
+  }, [items, mode, onlyRelevant, patchItems])
 
   const pendingCpvCount = useMemo(
-    () => (onlyRelevant ? items.filter((item) => !item.cpvCodes).length : 0),
-    [items, onlyRelevant],
+    () => (mode === 'catalogus' && onlyRelevant ? items.filter((item) => !item.cpvCodes).length : 0),
+    [items, mode, onlyRelevant],
   )
 
-  const visibleItems = useMemo(
-    () =>
-      items.filter((item) => {
+  // ── Zichtbare lijst: filteren, sorteren, pagineren ───────────────────────
+  const filteredItems = useMemo(() => {
+    if (mode === 'catalogus') {
+      return items.filter((item) => {
         if (!matchesFilters(item, { cpvPrefix: '', query: '', onlyOpen })) return false
         if (onlyRelevant && companyCpvCodes.length) {
           return matchesCompanyCpv(item.cpvCodes ?? [], companyCpvCodes)
         }
         return true
-      }),
-    [items, onlyOpen, onlyRelevant, companyCpvCodes],
+      })
+    }
+    const list = preselection?.items ?? []
+    if (scoreFilter === 'alle') return list
+    return list.filter((item) => {
+      const score = validScores[item.publicatieId]
+      if (scoreFilter === 'ongescoord') return !score
+      if (!score) return false
+      return score.score >= (scoreFilter === 'sterk' ? 70 : 40)
+    })
+  }, [mode, items, onlyOpen, onlyRelevant, companyCpvCodes, preselection, scoreFilter, validScores])
+
+  const sortedItems = useMemo(
+    () => (mode === 'voorselectie' ? sortTenders(filteredItems, sortKey, validScores) : filteredItems),
+    [mode, filteredItems, sortKey, validScores],
   )
+
+  const listPageCount = Math.max(1, Math.ceil(sortedItems.length / LIST_PAGE_SIZE))
+  const safeListPage = Math.min(listPage, listPageCount - 1)
+  const visibleItems = useMemo(
+    () =>
+      mode === 'voorselectie'
+        ? sortedItems.slice(safeListPage * LIST_PAGE_SIZE, (safeListPage + 1) * LIST_PAGE_SIZE)
+        : sortedItems,
+    [mode, sortedItems, safeListPage],
+  )
+
+  const scoreSummary = useMemo(() => {
+    const list = preselection?.items ?? []
+    let scored = 0
+    let strong = 0
+    let partial = 0
+    for (const item of list) {
+      const score = validScores[item.publicatieId]
+      if (!score) continue
+      scored += 1
+      if (score.score >= 70) strong += 1
+      else if (score.score >= 40) partial += 1
+    }
+    return { total: list.length, scored, strong, partial, unscored: list.length - scored }
+  }, [preselection, validScores])
 
   const toggleSelect = (id: string) => {
     setSelected((current) => {
@@ -364,17 +500,17 @@ export default function TenderBrowserPage() {
     }
   }, [])
 
-  // Documentenlijsten automatisch ophalen zodra publicaties geladen zijn, zodat
-  // per kaart direct zichtbaar is hoeveel en welke documenten erbij horen.
+  // Documentenlijsten automatisch ophalen voor de zichtbare pagina, zodat per
+  // kaart direct zichtbaar is hoeveel en welke documenten erbij horen.
   // Beperkte parallelliteit om de TenderNed-proxy niet te overvragen; de ref
   // voorkomt dubbele requests wanneer items opnieuw renderen.
   const requestedDocListsRef = useRef<Set<string>>(new Set())
   useEffect(() => {
-    const missing = items.filter((item) => !requestedDocListsRef.current.has(item.publicatieId))
+    const missing = visibleItems.filter((item) => !requestedDocListsRef.current.has(item.publicatieId))
     if (!missing.length) return
     missing.forEach((item) => requestedDocListsRef.current.add(item.publicatieId))
     void mapWithConcurrency(missing, 4, (item) => loadDocList(item.publicatieId))
-  }, [items, loadDocList])
+  }, [visibleItems, loadDocList])
 
   const toggleExpand = (id: string) => {
     setExpanded((current) => {
@@ -449,61 +585,74 @@ export default function TenderBrowserPage() {
     }
   }
 
-  const runScoring = useCallback(async (targets: TenderListItem[], options: { auto?: boolean } = {}) => {
-    if (!targets.length) return
-    const label = options.auto ? 'Eerste kansrijkheidsscore bepalen' : 'AI-score berekenen'
-    setScoring(true)
-    setStatus(`${label}…`)
-    try {
-      // CPV-codes zijn het belangrijkste matchsignaal, maar ontbreken op
-      // lijstitems; eerst bijladen via de detail-endpoint.
-      const enriched = await enrichWithCpv(targets)
-      const byId = new Map(enriched.map((item) => [item.publicatieId, item]))
-      setItems((current) => current.map((row) => byId.get(row.publicatieId) ?? row))
+  // ── Stap 2: AI-score ─────────────────────────────────────────────────────
+  const runScoring = useCallback(
+    async (targets: TenderListItem[], options: { auto?: boolean; force?: boolean } = {}) => {
+      if (!targets.length) return
+      const label = options.auto ? 'Stap 2 — AI-score bepalen' : 'AI-score berekenen'
+      setScoring(true)
+      setStatus(`${label}…`)
+      try {
+        // CPV-codes zijn het belangrijkste matchsignaal; in de voorselectie
+        // zijn ze al bijgeladen, bij catalogus-items gebeurt dat hier.
+        const enriched = await enrichWithCpv(targets)
+        patchItems(enriched.filter((item, index) => item !== targets[index]))
 
-      const result = await scoreTendersForCompany(enriched, {
-        onProgress: ({ done, total }) => setStatus(`${label}… ${done}/${total} tenders.`),
-      })
-      setScores({ ...result.scores })
-      const parts = [`${result.scored} gescoord`]
-      if (result.fromCache) parts.push(`${result.fromCache} uit cache`)
-      if (result.failed) parts.push(`${result.failed} mislukt`)
-      setStatus(`${options.auto ? 'Eerste score' : 'AI-score'} klaar: ${parts.join(', ')}.`)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : `${label} mislukt.`
-      if (options.auto) {
-        // Niet blijven proberen (en de gebruiker niet spammen) als bijv. de
-        // API-key of het bedrijfsprofiel ontbreekt.
-        setAutoScoreEnabled(false)
-        setStatus(`Automatisch scoren gepauzeerd: ${message}`)
-      } else {
-        setStatus(message)
+        const result = await scoreTendersForCompany(enriched, {
+          force: options.force,
+          onProgress: ({ done, total }) => setStatus(`${label}… ${done}/${total} tenders.`),
+        })
+        setScores({ ...result.scores })
+        const parts = [`${result.scored} gescoord`]
+        if (result.fromCache) parts.push(`${result.fromCache} al bekend`)
+        if (result.failed) parts.push(`${result.failed} mislukt`)
+        setStatus(`${options.auto ? 'Stap 2 klaar' : 'AI-score klaar'}: ${parts.join(', ')}. Scores zijn opgeslagen.`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : `${label} mislukt.`
+        if (options.auto) {
+          // Niet blijven proberen (en de gebruiker niet spammen) als bijv. de
+          // API-key of het bedrijfsprofiel ontbreekt.
+          setAutoScoreEnabled(false)
+          setStatus(`Automatisch scoren gepauzeerd: ${message}`)
+        } else {
+          setStatus(message)
+        }
+      } finally {
+        setScoring(false)
       }
-    } finally {
-      setScoring(false)
-    }
-  }, [])
+    },
+    [patchItems],
+  )
 
-  // Eerste score automatisch bepalen voor zichtbare tenders zonder geldige
-  // score; de ref voorkomt herhaalde pogingen voor hetzelfde item.
+  // Stap 2 start pas als stap 1 (de CPV-voorselectie) klaar is, en alleen voor
+  // tenders uit de voorselectie zonder geldige score. De ref voorkomt
+  // herhaalde pogingen voor hetzelfde item. De catalogus wordt nooit
+  // automatisch gescoord — dat kost onnodig AI-credits.
   const autoScoreAttemptedRef = useRef<Set<string>>(new Set())
   useEffect(() => {
-    if (!autoScoreEnabled || scoring || loading) return
-    const targets = visibleItems
-      .filter((item) => {
-        if (autoScoreAttemptedRef.current.has(item.publicatieId)) return false
-        const cached = scores[item.publicatieId]
-        return !(cached && cached.profileStamp === profileStamp)
-      })
-      .slice(0, 30)
+    if (mode !== 'voorselectie' || !autoScoreEnabled || scoring || scanning || loading || !preselection) return
+    const targets = preselection.items.filter((item) => {
+      if (autoScoreAttemptedRef.current.has(item.publicatieId)) return false
+      return !validScores[item.publicatieId]
+    })
     if (!targets.length) return
     targets.forEach((item) => autoScoreAttemptedRef.current.add(item.publicatieId))
     void runScoring(targets, { auto: true })
-  }, [visibleItems, autoScoreEnabled, scoring, loading, scores, profileStamp, runScoring])
+  }, [mode, preselection, autoScoreEnabled, scoring, scanning, loading, validScores, runScoring])
 
   const scoreSelected = async () => {
     if (!selected.size || scoring) return
-    const targets = items.filter((item) => selected.has(item.publicatieId))
+    const targets = baseItems.filter((item) => selected.has(item.publicatieId))
+    await runScoring(targets, { force: true })
+  }
+
+  const scoreMissing = async () => {
+    if (!preselection || scoring) return
+    const targets = preselection.items.filter((item) => !validScores[item.publicatieId])
+    if (!targets.length) {
+      setStatus('Alle tenders in de voorselectie hebben al een score.')
+      return
+    }
     await runScoring(targets)
   }
 
@@ -517,9 +666,8 @@ export default function TenderBrowserPage() {
     setBusyIds((current) => new Set(current).add(id))
     try {
       const detail = await fetchPublicationDetail(id)
-      setItems((current) =>
-        current.map((row) => (row.publicatieId === id ? { ...row, cpvCodes: detail.cpvCodes } : row)),
-      )
+      const current = baseItems.find((row) => row.publicatieId === id)
+      if (current) patchItems([{ ...current, cpvCodes: detail.cpvCodes }])
     } finally {
       setBusyIds((current) => {
         const next = new Set(current)
@@ -528,6 +676,8 @@ export default function TenderBrowserPage() {
       })
     }
   }
+
+  const busy = loading || scanning
 
   return (
     <main className="min-h-screen bg-background p-4 text-foreground sm:p-6">
@@ -545,13 +695,19 @@ export default function TenderBrowserPage() {
           <div className="min-w-0 leading-tight">
             <h1 className="truncate font-semibold">Tenders ophalen</h1>
             <div className="truncate text-sm text-muted-foreground">
-              Relevante tenders vinden, scoren en downloaden incl. documenten (TenderNed TNS)
+              Voorselectie op CPV-codes, AI-score en downloaden incl. documenten (TenderNed TNS)
             </div>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Button variant="outline" onClick={() => loadPage(0)} disabled={loading}>
-            <RefreshCw size={16} /> <span className="sr-only sm:not-sr-only">Ververs lijst</span>
+          <Button
+            variant="outline"
+            onClick={() => (mode === 'voorselectie' ? runPreselection() : loadPage(0))}
+            disabled={busy || (mode === 'voorselectie' && !companyCpvCodes.length)}
+            title={mode === 'voorselectie' ? 'Voorselectie opnieuw ophalen uit TenderNed (al gescoorde tenders houden hun score)' : 'Catalogus opnieuw laden'}
+          >
+            {scanning ? <LoaderCircle size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+            <span className="sr-only sm:not-sr-only">{mode === 'voorselectie' ? 'Ververs voorselectie' : 'Ververs lijst'}</span>
           </Button>
           <Button variant="outline" onClick={syncNeon}>
             <Database size={16} /> <span className="sr-only sm:not-sr-only">Sync Neon</span> ({savedCount})
@@ -572,92 +728,45 @@ export default function TenderBrowserPage() {
         {' '}via de publieke TNS-webservice.
       </p>
 
+      {/* ── Voorselectie-paneel ─────────────────────────────────────────── */}
       <Card className="mb-3.5">
         <CardContent className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Filter size={17} />
-            <h2 className="text-lg font-semibold">Zoeken &amp; voorselectie</h2>
-          </div>
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
-            <div className="space-y-2">
-              <Label htmlFor="cpv-prefix">CPV-code (prefix)</Label>
-              <Input
-                id="cpv-prefix"
-                placeholder="bijv. 45210000"
-                value={cpvPrefix}
-                onChange={(event) => setCpvPrefix(event.target.value)}
-                onKeyDown={(event) => event.key === 'Enter' && runFilteredSearch()}
-              />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Sparkles size={17} />
+              <h2 className="text-lg font-semibold">Voorselectie voor {companyName}</h2>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="query">Zoekterm</Label>
-              <Input
-                id="query"
-                placeholder="Titel, opdrachtgever, omschrijving"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => event.key === 'Enter' && runFilteredSearch()}
-              />
-            </div>
-            <div className="flex flex-col gap-2 md:pb-2.5">
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={onlyOpen}
-                  onCheckedChange={(checked) => setOnlyOpen(checked === true)}
-                />
-                Alleen openstaande inschrijvingen
-              </label>
-              <label
-                className={cn(
-                  'flex items-center gap-2 text-sm',
-                  !companyCpvCodes.length && 'cursor-not-allowed opacity-60',
-                )}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant={mode === 'voorselectie' ? 'default' : 'outline'}
+                size="sm"
+                onClick={openPreselection}
+                disabled={!companyCpvCodes.length && !preselection}
                 title={
                   companyCpvCodes.length
-                    ? `Toont alleen tenders waarvan de CPV-codes matchen met de ${companyCpvCodes.length} CPV-code(s) van ${companyConfig.name || 'het actieve bedrijf'}.`
-                    : 'Stel eerst CPV-codes in bij Configuratie → CPV-codes om op relevantie te filteren.'
+                    ? 'Toon de voorselectie op basis van de bedrijfs-CPV-codes'
+                    : 'Stel eerst CPV-codes in bij Configuratie → CPV-codes.'
                 }
               >
-                <Checkbox
-                  checked={onlyRelevant}
-                  disabled={!companyCpvCodes.length}
-                  onCheckedChange={(checked) => setOnlyRelevant(checked === true)}
-                />
-                Alleen relevant voor {companyConfig.name.trim() || 'mijn bedrijf'}
-              </label>
+                <Sparkles size={15} /> Voorselectie
+              </Button>
+              <Button variant={mode === 'catalogus' ? 'default' : 'outline'} size="sm" onClick={openCatalog}>
+                <Search size={15} /> Vrij zoeken in catalogus
+              </Button>
             </div>
           </div>
-          {onlyRelevant && pendingCpvCount > 0 ? (
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <LoaderCircle size={13} className="animate-spin" /> CPV-codes laden voor {pendingCpvCount}{' '}
-              aanbesteding(en) — de lijst vult zich terwijl dit loopt.
-            </p>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={fetchRelevantTenders}
-              disabled={loading || !companyCpvCodes.length}
-              title={
-                companyCpvCodes.length
-                  ? 'Scant de catalogus op de bedrijfs-CPV-codes, toont alleen open inschrijvingen en bepaalt direct een eerste kansrijkheidsscore.'
-                  : 'Stel eerst CPV-codes in bij Configuratie → CPV-codes.'
-              }
-            >
-              {loading ? <LoaderCircle size={16} className="animate-spin" /> : <Sparkles size={16} />}
-              Haal relevante tenders op
-            </Button>
-            <Button variant="outline" onClick={runFilteredSearch} disabled={loading}>
-              <Search size={16} />
-              Zoek in catalogus
-            </Button>
-            <Button variant="outline" onClick={() => loadPage(page)} disabled={loading}>
-              Toon pagina {page + 1}
-            </Button>
-          </div>
+
+          <p className="text-sm text-muted-foreground">
+            <strong className="text-foreground">Stap 1</strong> haalt puur op CPV-codes alle open tenders uit TenderNed
+            (geen AI). <strong className="text-foreground">Stap 2</strong> geeft elke tender uit die lijst een
+            AI-score (0-100) met onderbouwing. Beide resultaten worden in de database bewaard, dus terugkeren en
+            bladeren is direct en kost geen nieuwe AI-credits.
+          </p>
+
           {companyCpvCodes.length ? (
             <div className="space-y-1">
               <p className="text-xs font-semibold text-muted-foreground">
-                CPV-codes van {companyConfig.name.trim() || 'jouw bedrijf'} — klik om ermee te zoeken (inclusief onderliggende codes):
+                CPV-codes van {companyName} (inclusief onderliggende codes):
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {companyCpvCodes.map((cpv) => (
@@ -669,8 +778,11 @@ export default function TenderBrowserPage() {
                         ? 'border-primary bg-primary/10 font-medium text-primary'
                         : 'border-primary/40 bg-primary/5 text-primary hover:bg-primary/10',
                     )}
-                    title={`Zoek op ${cpv.code} en alle onderliggende codes`}
-                    onClick={() => setCpvPrefix(cpv.code.slice(0, 8))}
+                    title={`Zoek in de catalogus op ${cpv.code} en alle onderliggende codes`}
+                    onClick={() => {
+                      setCpvPrefix(cpv.code.slice(0, 8))
+                      setMode('catalogus')
+                    }}
                   >
                     {cpv.code}
                     {cpv.omschrijving ? ` — ${cpv.omschrijving}` : ''}
@@ -678,26 +790,225 @@ export default function TenderBrowserPage() {
                 ))}
               </div>
             </div>
-          ) : null}
-          {cpvOptions.length > 0 ? (
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">Codes uit de geladen resultaten (ter oriëntatie):</p>
-              <div className="flex flex-wrap gap-1.5">
-                {cpvOptions.slice(0, 12).map((cpv) => (
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Er zijn nog geen CPV-codes ingesteld voor {companyName}. Ga naar{' '}
+              <Link className="underline underline-offset-2 hover:text-foreground" href="/configuratie">
+                Configuratie → CPV-codes
+              </Link>{' '}
+              om de voorselectie te kunnen draaien; tot die tijd kun je vrij zoeken in de catalogus.
+            </p>
+          )}
+
+          {mode === 'voorselectie' ? (
+            <>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-lg border bg-muted/40 p-2.5">
+                  <div className="text-xs text-muted-foreground">Stap 1 · CPV-voorselectie</div>
+                  <div className="text-lg font-semibold tabular-nums">
+                    {scanning ? <LoaderCircle size={18} className="inline animate-spin" /> : scoreSummary.total}
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">open tender(s)</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {preselection ? `gescand ${formatDateTime(preselection.scannedAt)}` : scanning ? scanProgressLabel(scanProgress) || 'bezig…' : 'nog niet gescand'}
+                  </div>
+                </div>
+                <div className="rounded-lg border bg-muted/40 p-2.5">
+                  <div className="text-xs text-muted-foreground">Stap 2 · AI-score</div>
+                  <div className="text-lg font-semibold tabular-nums">
+                    {scoreSummary.scored}
+                    <span className="text-xs font-normal text-muted-foreground"> / {scoreSummary.total} gescoord</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {scoring ? (
+                      <span className="inline-flex items-center gap-1"><LoaderCircle size={12} className="animate-spin" /> bezig…</span>
+                    ) : scoreSummary.unscored ? (
+                      `${scoreSummary.unscored} nog zonder score`
+                    ) : scoreSummary.total ? (
+                      'compleet'
+                    ) : (
+                      '—'
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5">
+                  <div className="text-xs text-muted-foreground">Sterke match (≥ 70)</div>
+                  <div className="text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{scoreSummary.strong}</div>
                   <button
-                    key={cpv.code}
-                    className="max-w-full break-words rounded-full border bg-muted px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent"
-                    onClick={() => setCpvPrefix(cpv.code.slice(0, 8))}
+                    className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                    onClick={() => {
+                      setScoreFilter(scoreFilter === 'sterk' ? 'alle' : 'sterk')
+                      setListPage(0)
+                    }}
                   >
-                    {cpv.code} — {cpv.omschrijving}
+                    {scoreFilter === 'sterk' ? 'filter uitzetten' : 'alleen deze tonen'}
                   </button>
-                ))}
+                </div>
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5">
+                  <div className="text-xs text-muted-foreground">Deels passend (40-69)</div>
+                  <div className="text-lg font-semibold tabular-nums text-amber-600 dark:text-amber-400">{scoreSummary.partial}</div>
+                  <button
+                    className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                    onClick={() => {
+                      setScoreFilter(scoreFilter === 'passend' ? 'alle' : 'passend')
+                      setListPage(0)
+                    }}
+                  >
+                    {scoreFilter === 'passend' ? 'filter uitzetten' : 'toon ≥ 40'}
+                  </button>
+                </div>
               </div>
-            </div>
+
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="tender-sort" className="flex items-center gap-1 text-xs">
+                    <ArrowUpDown size={13} /> Sorteren op
+                  </Label>
+                  <Select value={sortKey} onValueChange={(value) => setSortKey(value as TenderSortKey)}>
+                    <SelectTrigger id="tender-sort" className="w-[260px]" aria-label="Sorteren op">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TENDER_SORT_OPTIONS.map((option) => (
+                        <SelectItem key={option.key} value={option.key}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="tender-score-filter" className="text-xs">Toon</Label>
+                  <Select
+                    value={scoreFilter}
+                    onValueChange={(value) => {
+                      setScoreFilter(value as ScoreFilter)
+                      setListPage(0)
+                    }}
+                  >
+                    <SelectTrigger id="tender-score-filter" className="w-[200px]" aria-label="Scorefilter">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="alle">Alle tenders</SelectItem>
+                      <SelectItem value="sterk">Sterke match (≥ 70)</SelectItem>
+                      <SelectItem value="passend">Passend (≥ 40)</SelectItem>
+                      <SelectItem value="ongescoord">Nog zonder score</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={scoreMissing}
+                  disabled={scoring || busy || !scoreSummary.unscored}
+                  title="Scoor alleen de tenders die nog geen score hebben"
+                >
+                  {scoring ? <LoaderCircle size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                  Scoor {scoreSummary.unscored ? `${scoreSummary.unscored} ` : ''}ontbrekende
+                </Button>
+              </div>
+            </>
           ) : null}
-          <p className="text-sm text-muted-foreground">{status}{scannedPages ? ` (${scannedPages} pagina('s) gescand)` : ''}</p>
+
+          <p className="text-sm text-muted-foreground">{status}</p>
         </CardContent>
       </Card>
+
+      {/* ── Catalogus: vrij zoeken ───────────────────────────────────────── */}
+      {mode === 'catalogus' ? (
+        <Card className="mb-3.5">
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Filter size={17} />
+              <h2 className="text-lg font-semibold">Vrij zoeken in de catalogus</h2>
+            </div>
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+              <div className="space-y-2">
+                <Label htmlFor="cpv-prefix">CPV-code (prefix)</Label>
+                <Input
+                  id="cpv-prefix"
+                  placeholder="bijv. 45210000"
+                  value={cpvPrefix}
+                  onChange={(event) => setCpvPrefix(event.target.value)}
+                  onKeyDown={(event) => event.key === 'Enter' && runFilteredSearch()}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="query">Zoekterm</Label>
+                <Input
+                  id="query"
+                  placeholder="Titel, opdrachtgever, omschrijving"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => event.key === 'Enter' && runFilteredSearch()}
+                />
+              </div>
+              <div className="flex flex-col gap-2 md:pb-2.5">
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={onlyOpen}
+                    onCheckedChange={(checked) => setOnlyOpen(checked === true)}
+                  />
+                  Alleen openstaande inschrijvingen
+                </label>
+                <label
+                  className={cn(
+                    'flex items-center gap-2 text-sm',
+                    !companyCpvCodes.length && 'cursor-not-allowed opacity-60',
+                  )}
+                  title={
+                    companyCpvCodes.length
+                      ? `Toont alleen tenders waarvan de CPV-codes matchen met de ${companyCpvCodes.length} CPV-code(s) van ${companyName}.`
+                      : 'Stel eerst CPV-codes in bij Configuratie → CPV-codes om op relevantie te filteren.'
+                  }
+                >
+                  <Checkbox
+                    checked={onlyRelevant}
+                    disabled={!companyCpvCodes.length}
+                    onCheckedChange={(checked) => setOnlyRelevant(checked === true)}
+                  />
+                  Alleen relevant voor {companyName}
+                </label>
+              </div>
+            </div>
+            {onlyRelevant && pendingCpvCount > 0 ? (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <LoaderCircle size={13} className="animate-spin" /> CPV-codes laden voor {pendingCpvCount}{' '}
+                aanbesteding(en) — de lijst vult zich terwijl dit loopt.
+              </p>
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={runFilteredSearch} disabled={busy}>
+                <Search size={16} />
+                Zoek in catalogus
+              </Button>
+              <Button variant="outline" onClick={() => loadPage(page)} disabled={busy}>
+                Toon pagina {page + 1}
+              </Button>
+            </div>
+            {cpvOptions.length > 0 ? (
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Codes uit de geladen resultaten (ter oriëntatie):</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {cpvOptions.slice(0, 12).map((cpv) => (
+                    <button
+                      key={cpv.code}
+                      className="max-w-full break-words rounded-full border bg-muted px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent"
+                      onClick={() => setCpvPrefix(cpv.code.slice(0, 8))}
+                    >
+                      {cpv.code} — {cpv.omschrijving}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <p className="text-xs text-muted-foreground">
+              In de catalogus wordt niet automatisch gescoord; selecteer tenders en kies &ldquo;Scoor met AI&rdquo;.
+              {scannedPages ? ` (${scannedPages} pagina('s) gescand)` : ''}
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <section className="sticky top-0 z-[5] mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-4">
@@ -711,26 +1022,29 @@ export default function TenderBrowserPage() {
           </label>
           <span className="text-sm text-muted-foreground">
             <strong>{selected.size}</strong> geselecteerd · <strong>{visibleItems.length}</strong> zichtbaar
+            {mode === 'voorselectie' && sortedItems.length > visibleItems.length
+              ? ` van ${sortedItems.length}`
+              : ''}
           </span>
         </div>
         <div className="flex flex-wrap gap-2">
           {selected.size > 0 ? (
-            <Button variant="ghost" onClick={() => setSelected(new Set())} disabled={loading}>
+            <Button variant="ghost" onClick={() => setSelected(new Set())} disabled={busy}>
               <X size={15} /> Wis selectie
             </Button>
           ) : null}
           <Button
             variant="outline"
             onClick={scoreSelected}
-            disabled={!selected.size || scoring || loading}
-            title="Laat AI per geselecteerde tender scoren (0-100) hoe goed die past bij het bedrijfsprofiel"
+            disabled={!selected.size || scoring || busy}
+            title="Laat AI de geselecteerde tenders (opnieuw) scoren (0-100) op hoe goed ze bij het bedrijfsprofiel passen"
           >
             {scoring ? <LoaderCircle size={16} className="animate-spin" /> : <Sparkles size={16} />}
             Scoor {selected.size > 0 ? `${selected.size} ` : ''}met AI
           </Button>
           <Button
             onClick={downloadSelected}
-            disabled={!selected.size || loading}
+            disabled={!selected.size || busy}
             title="Downloadt de geselecteerde tenders inclusief álle bijbehorende documenten (met tekstextractie) naar de lokale database"
           >
             {loading ? <LoaderCircle size={16} className="animate-spin" /> : <Download size={16} />}
@@ -747,8 +1061,7 @@ export default function TenderBrowserPage() {
           const isExpanded = expanded.has(item.publicatieId)
           const docState = docLists[item.publicatieId]
           const isOpen = item.aantalDagenTotSluitingsDatum >= 0
-          const rawScore = scores[item.publicatieId]
-          const score = rawScore && rawScore.profileStamp === profileStamp ? rawScore : undefined
+          const score = validScores[item.publicatieId]
           return (
             <Card
               key={item.publicatieId}
@@ -787,6 +1100,11 @@ export default function TenderBrowserPage() {
                     {item.publicatieDatum ? ` · gepubliceerd ${formatDate(item.publicatieDatum)}` : ''}
                     {` · sluit ${formatDate(item.sluitingsDatum)}`}
                   </span>
+                  {item.typePublicatie && !/aankondiging van een opdracht/i.test(item.typePublicatie) ? (
+                    <Badge variant="outline" className="ml-2 rounded-full text-xs font-normal">
+                      {item.typePublicatie}
+                    </Badge>
+                  ) : null}
                   {Array.isArray(docState) ? (
                     <Badge variant="outline" className="ml-2 gap-1 rounded-full text-xs font-normal">
                       <FileText size={12} /> {docState.length} document{docState.length === 1 ? '' : 'en'}
@@ -819,6 +1137,7 @@ export default function TenderBrowserPage() {
                       'mt-2.5 flex items-start gap-2 rounded-lg border p-2.5 text-xs leading-relaxed',
                       scoreTier(score.score).panel,
                     )}
+                    title={`Gescoord op ${formatDateTime(score.scoredAt)}`}
                   >
                     <Sparkles size={14} className={cn('mt-0.5 shrink-0', scoreTier(score.score).text)} />
                     <span className="min-w-0 break-words">
@@ -844,7 +1163,7 @@ export default function TenderBrowserPage() {
                           )}
                           title={
                             matchesCompany
-                              ? `Valt binnen de CPV-codes van ${companyConfig.name.trim() || 'jouw bedrijf'}`
+                              ? `Valt binnen de CPV-codes van ${companyName}`
                               : cpv.omschrijving
                           }
                         >
@@ -1011,17 +1330,47 @@ export default function TenderBrowserPage() {
             </Card>
           )
         })}
-        {!visibleItems.length && !loading ? <p className="text-sm text-muted-foreground">Geen resultaten. Pas CPV-filter aan of laad een pagina.</p> : null}
+        {!visibleItems.length && !busy ? (
+          <p className="text-sm text-muted-foreground">
+            {mode === 'voorselectie'
+              ? scoreFilter !== 'alle'
+                ? 'Geen tenders binnen dit scorefilter. Zet het filter op "Alle tenders".'
+                : companyCpvCodes.length
+                  ? 'Geen open tenders in de voorselectie. Ververs de voorselectie of controleer de CPV-codes bij Configuratie.'
+                  : 'Stel CPV-codes in bij Configuratie om een voorselectie te maken.'
+              : 'Geen resultaten. Pas CPV-filter aan of laad een pagina.'}
+          </p>
+        ) : null}
       </section>
 
       <footer className="mt-4 flex items-center justify-center gap-3.5">
-        <Button variant="outline" disabled={page <= 0 || loading} onClick={() => loadPage(page - 1)}>
-          Vorige
-        </Button>
-        <span className="text-sm text-muted-foreground">{totalElements ? `${totalElements.toLocaleString('nl-NL')} totaal · ` : ''}Pagina {page + 1} / {totalPages.toLocaleString('nl-NL') || '?'}</span>
-        <Button variant="outline" disabled={page >= totalPages - 1 || loading} onClick={() => loadPage(page + 1)}>
-          Volgende
-        </Button>
+        {mode === 'voorselectie' ? (
+          <>
+            <Button variant="outline" disabled={safeListPage <= 0} onClick={() => setListPage(safeListPage - 1)}>
+              Vorige
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              {sortedItems.length} tender(s) · Pagina {safeListPage + 1} / {listPageCount}
+            </span>
+            <Button
+              variant="outline"
+              disabled={safeListPage >= listPageCount - 1}
+              onClick={() => setListPage(safeListPage + 1)}
+            >
+              Volgende
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button variant="outline" disabled={page <= 0 || busy} onClick={() => loadPage(page - 1)}>
+              Vorige
+            </Button>
+            <span className="text-sm text-muted-foreground">{totalElements ? `${totalElements.toLocaleString('nl-NL')} totaal · ` : ''}Pagina {page + 1} / {totalPages.toLocaleString('nl-NL') || '?'}</span>
+            <Button variant="outline" disabled={page >= totalPages - 1 || busy} onClick={() => loadPage(page + 1)}>
+              Volgende
+            </Button>
+          </>
+        )}
       </footer>
     </main>
   )

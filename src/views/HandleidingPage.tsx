@@ -201,7 +201,9 @@ export default function HandleidingPage() {
               <Term>Bronmatrix</Term> zie je of alle bronnen van voldoende kwaliteit zijn.
             </Step>
             <Step n={5} title="Genereer het bronzen concept">
-              Kies het stadium <Term>Brons</Term> en klik op <Term>Genereer</Term>. De agent schrijft een eerste
+              Zolang er nog geen concept is, toont het tekstveld alleen een korte samenvatting van de
+              aanbesteding. Kies het stadium <Term>Brons</Term> en klik op <Term>Start schrijfagent</Term>{' '}
+              (daarna heet die knop <Term>Genereer</Term>). De agent schrijft een eerste
               concept op basis van al je bronnen, je bedrijfsprofiel en relevante leerpunten.
             </Step>
             <Step n={6} title="Review, verbeter en exporteer">
@@ -282,14 +284,21 @@ export default function HandleidingPage() {
           intro="Via de TenderNed-koppeling haal je een publicatie met alle bijbehorende documenten in één keer binnen."
         >
           <ol className="space-y-4">
-            <Step n={1} title="Open de catalogus">
+            <Step n={1} title="Open de voorselectie">
               Klik op het projectenoverzicht op <Term>TenderNed scannen</Term> (of in een project op{' '}
-              <Term>Zoek &amp; download aanbestedingen</Term>). Je komt in de pagina{' '}
-              <strong>Aanbestedingen</strong> met zoeken &amp; voorselectie.
+              <Term>Zoek &amp; download aanbestedingen</Term>). Heb je bij <strong>Configuratie → CPV-codes</strong>{' '}
+              codes ingesteld, dan draait de voorselectie in twee stappen: <strong>stap 1</strong> haalt puur op die
+              CPV-codes alle open tenders uit TenderNed (zonder AI), <strong>stap 2</strong> geeft elke tender uit
+              die lijst een AI-score (0-100) met korte onderbouwing. Beide resultaten staan in de database: kom je
+              terug of blader je door de lijst, dan is alles direct zichtbaar zonder opnieuw ophalen of scoren.
             </Step>
-            <Step n={2} title="Zoek gericht">
-              Zoek op <strong>CPV-code</strong> (bijv. 45210000), of op titel, opdrachtgever of omschrijving. Met{' '}
-              <Term>Ververs lijst</Term> haal je de nieuwste publicaties op.
+            <Step n={2} title="Sorteer, filter en ververs">
+              Sorteer op <strong>AI-score</strong>, <strong>publicatiedatum</strong>, sluitingsdatum, naam of
+              opdrachtgever en filter op sterke (≥ 70) of passende (≥ 40) matches. Met{' '}
+              <Term>Ververs voorselectie</Term> haal je nieuwe publicaties op; al gescoorde tenders houden hun
+              score. Wil je buiten je CPV-codes kijken, kies dan <Term>Vrij zoeken in catalogus</Term> en zoek op een
+              CPV-code (bijv. 45210000), titel, opdrachtgever of omschrijving — daar wordt pas gescoord als je dat
+              zelf kiest.
             </Step>
             <Step n={3} title="Maak er een project van">
               Kies bij een publicatie <Term>Maak project</Term>: alle documenten worden gedownload, de aanbesteding
@@ -514,8 +523,21 @@ export default function HandleidingPage() {
         >
           <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
             <li>
+              <strong>Klik op een kopje</strong> (Schrijfregels, Schrijfwijze, Kwaliteit) om de volledige uitwerking te
+              zien: de ingebouwde basis, je vastgelegde regels en je eigen aanpassingen — precies zoals de agent ze
+              krijgt.
+            </li>
+            <li>
               Per sectie schrijf je regels direct in, óf je uploadt een document en laat de AI daar relevante regels
               uit destilleren.
+            </li>
+            <li>
+              <strong>Handmatige aanpassingen:</strong> in elke sectie (en bovenaan voor algemene accenten) typ je in
+              gewone taal wat anders moet. Die aanpassingen hebben de hoogste prioriteit na de leidraad en gaan bij elk
+              project mee naar de schrijfagent, de AI-review en het herschrijven van fragmenten.
+            </li>
+            <li>
+              Met <Term>Wat de schrijfagent ontvangt</Term> zie je letterlijk de tekst die als bron wordt meegegeven.
             </li>
             <li>
               De vierde sectie, <strong>Eerdere aanbestedingen &amp; achtergrond</strong>, destilleert eerdere

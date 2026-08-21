@@ -6,9 +6,23 @@ import type {
   TenderListItem,
   TenderSearchFilters,
 } from '../types/tenderNed'
-import { cpvSignificantPrefix, matchesCompanyCpv } from './cpv'
+import { cpvSignificantPrefix, cpvWithCheckDigit } from './cpv'
+import { mapWithConcurrency } from './analyzeDocumentApi'
 
 const API_BASE = '/api/tenderned'
+
+/**
+ * TenderNed geeft bij pieken incidenteel een 5xx/429 terug; één herhaalde
+ * poging na korte pauze vangt dat op zonder de gebruiker te storen.
+ */
+async function fetchTenderNed(url: string, retries = 2): Promise<Response> {
+  let response = await fetch(url)
+  for (let attempt = 0; attempt < retries && (response.status >= 500 || response.status === 429); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1_500 * (attempt + 1)))
+    response = await fetch(url)
+  }
+  return response
+}
 
 type RawPublication = {
   publicatieId: string
@@ -16,9 +30,10 @@ type RawPublication = {
   aanbestedingNaam: string
   opdrachtgeverNaam: string
   sluitingsDatum: string
-  aantalDagenTotSluitingsDatum: number
+  aantalDagenTotSluitingsDatum: number | null
   publicatieDatum?: string
   opdrachtBeschrijving?: string
+  typePublicatie?: { code?: string; omschrijving?: string }
   typeOpdracht?: { omschrijving: string }
   procedure?: { omschrijving: string }
   link?: { href: string }
@@ -45,14 +60,24 @@ type RawDetail = {
   links?: { pdf?: { href: string } }
 }
 
+/** Dagen tot sluiting; TenderNed laat het veld soms leeg (bijv. marktconsultaties), dan zelf uit de datum afleiden. */
+function daysUntil(sluitingsDatum: string | undefined, fallback: number | null | undefined): number {
+  if (typeof fallback === 'number') return fallback
+  if (!sluitingsDatum) return 0
+  const closing = new Date(sluitingsDatum).getTime()
+  if (Number.isNaN(closing)) return 0
+  return Math.ceil((closing - Date.now()) / 86_400_000)
+}
+
 function mapListItem(raw: RawPublication, fetchedAt: string): TenderListItem {
   return {
-    publicatieId: raw.publicatieId,
+    publicatieId: String(raw.publicatieId),
     kenmerk: raw.kenmerk,
     aanbestedingNaam: raw.aanbestedingNaam,
     opdrachtgeverNaam: raw.opdrachtgeverNaam,
     sluitingsDatum: raw.sluitingsDatum,
-    aantalDagenTotSluitingsDatum: raw.aantalDagenTotSluitingsDatum,
+    aantalDagenTotSluitingsDatum: daysUntil(raw.sluitingsDatum, raw.aantalDagenTotSluitingsDatum),
+    typePublicatie: raw.typePublicatie?.omschrijving,
     publicatieDatum: raw.publicatieDatum,
     fetchedAt,
     opdrachtBeschrijving: raw.opdrachtBeschrijving ?? '',
@@ -89,7 +114,7 @@ export async function fetchPublicationsPage(page = 0, size = 20): Promise<{
   totalPages: number
   page: number
 }> {
-  const response = await fetch(`${API_BASE}/v2/publicaties?page=${page}&size=${size}`)
+  const response = await fetchTenderNed(`${API_BASE}/v2/publicaties?page=${page}&size=${size}`)
   if (!response.ok) throw new Error(`TenderNed laden mislukt (${response.status})`)
   const data = (await response.json()) as RawPage
   const fetchedAt = new Date().toISOString()
@@ -102,7 +127,7 @@ export async function fetchPublicationsPage(page = 0, size = 20): Promise<{
 }
 
 export async function fetchPublicationDetail(publicatieId: string): Promise<TenderDetail> {
-  const response = await fetch(`${API_BASE}/v2/publicaties/${publicatieId}`)
+  const response = await fetchTenderNed(`${API_BASE}/v2/publicaties/${publicatieId}`)
   if (!response.ok) throw new Error(`Detail ${publicatieId} laden mislukt (${response.status})`)
   const raw = (await response.json()) as RawDetail
   const tendernedUrl = `https://www.tenderned.nl/aankondigingen/overzicht/${publicatieId}`
@@ -151,7 +176,7 @@ function mapDocument(raw: RawDocument): TenderDocument {
 
 /** Lichtgewicht metadata-lijst van alle documenten bij een publicatie (zonder download/extractie). */
 export async function fetchPublicationDocumentList(publicatieId: string): Promise<TenderDocument[]> {
-  const response = await fetch(`${API_BASE}/v2/publicaties/${publicatieId}/documenten`)
+  const response = await fetchTenderNed(`${API_BASE}/v2/publicaties/${publicatieId}/documenten`)
   if (!response.ok) throw new Error(`Documentenlijst ${publicatieId} laden mislukt (${response.status})`)
   const data = (await response.json()) as { documenten?: RawDocument[] }
   return (data.documenten ?? []).map(mapDocument)
@@ -167,9 +192,18 @@ export async function fetchTenderDocumentBundle(publicatieId: string): Promise<T
   return data
 }
 
-export async function enrichWithCpv(items: TenderListItem[]): Promise<TenderListItem[]> {
-  const enriched = await Promise.all(
-    items.map(async (item) => {
+/**
+ * Laadt de CPV-codes per item bij via de detail-endpoint (lijstitems hebben ze
+ * niet). Begrensde parallelliteit om de TenderNed-proxy niet te overvragen.
+ */
+export async function enrichWithCpv(
+  items: TenderListItem[],
+  options: { concurrency?: number; onProgress?: (done: number, total: number) => void } = {},
+): Promise<TenderListItem[]> {
+  return mapWithConcurrency(
+    items,
+    options.concurrency ?? 6,
+    async (item) => {
       if (item.cpvCodes?.length) return item
       try {
         const detail = await fetchPublicationDetail(item.publicatieId)
@@ -177,9 +211,9 @@ export async function enrichWithCpv(items: TenderListItem[]): Promise<TenderList
       } catch {
         return item
       }
-    }),
+    },
+    options.onProgress,
   )
-  return enriched
 }
 
 /** Scan meerdere pagina's en filter op CPV/tekst (TNS heeft ~144k publicaties). */
@@ -215,53 +249,91 @@ export async function searchPublications(
   return { items: matches, scannedPages, totalElements }
 }
 
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
 /**
- * Snelle relevantie-scan: doorloopt de catalogus, houdt alleen openstaande
- * publicaties over en matcht de CPV-codes (per pagina bijgeladen) tegen de
- * bedrijfs-CPV-codes. Dit is de één-klik-functie "Haal relevante tenders op".
+ * Eén pagina uit TenderNed, server-side gefilterd op CPV-codes (hiërarchisch:
+ * "72000000-5" dekt de hele afdeling 72) en optioneel op sluitingsdatum.
+ * TenderNed verwacht de volledige notatie met controlecijfer; ongeldige codes
+ * worden overgeslagen.
+ */
+export async function fetchPublicationsByCpv(
+  companyCodes: Array<{ code: string }>,
+  options: { page?: number; size?: number; onlyOpen?: boolean; publishedSince?: string } = {},
+): Promise<{ items: TenderListItem[]; totalElements: number; totalPages: number; page: number }> {
+  const codes = [...new Set(companyCodes.map((cpv) => cpvWithCheckDigit(cpv.code)).filter((code): code is string => Boolean(code)))]
+  if (!codes.length) throw new Error('Geen geldige CPV-codes om op te filteren.')
+
+  const params = new URLSearchParams()
+  params.set('page', String(options.page ?? 0))
+  params.set('size', String(options.size ?? 100))
+  codes.forEach((code) => params.append('cpvCodes', code))
+  if (options.onlyOpen !== false) params.set('sluitingsDatumVanaf', todayIso())
+  if (options.publishedSince) params.set('publicatieDatumVanaf', options.publishedSince)
+
+  const response = await fetchTenderNed(`${API_BASE}/v2/publicaties?${params.toString()}`)
+  if (!response.ok) throw new Error(`TenderNed CPV-filter mislukt (${response.status})`)
+  const data = (await response.json()) as RawPage
+  const fetchedAt = new Date().toISOString()
+  return {
+    items: data.content.map((raw) => mapListItem(raw, fetchedAt)),
+    totalElements: data.totalElements,
+    totalPages: data.totalPages,
+    page: data.number,
+  }
+}
+
+/**
+ * Stap 1 van de voorselectie — puur op CPV-codes, zonder AI: haalt via het
+ * server-side CPV-filter van TenderNed alle (open) publicaties op die binnen
+ * de bedrijfs-CPV-codes vallen, ontdubbelt rectificaties op aanbestedingskenmerk
+ * en laadt daarna de CPV-codes per tender bij (nodig voor weergave en voor
+ * de AI-score in stap 2).
  */
 export async function searchCompanyRelevantPublications(
   companyCodes: Array<{ code: string }>,
   options: {
     onlyOpen?: boolean
-    maxPages?: number
+    maxItems?: number
     pageSize?: number
-    targetMatches?: number
-    onProgress?: (progress: { scannedPages: number; found: number }) => void
+    onProgress?: (progress: { phase: 'lijst' | 'cpv'; done: number; total: number }) => void
   } = {},
 ): Promise<{ items: TenderListItem[]; scannedPages: number; totalElements: number }> {
-  const maxPages = options.maxPages ?? 20
-  const pageSize = options.pageSize ?? 50
-  const targetMatches = options.targetMatches ?? 30
+  const maxItems = options.maxItems ?? 200
+  const pageSize = options.pageSize ?? 100
+  const seenIds = new Set<string>()
+  const seenKenmerk = new Set<number>()
   const matches: TenderListItem[] = []
   let totalElements = 0
   let scannedPages = 0
 
-  for (let page = 0; page < maxPages; page += 1) {
-    const result = await fetchPublicationsPage(page, pageSize)
+  for (let page = 0; matches.length < maxItems; page += 1) {
+    const result = await fetchPublicationsByCpv(companyCodes, { page, size: pageSize, onlyOpen: options.onlyOpen })
     totalElements = result.totalElements
     scannedPages += 1
-
-    // Gesloten/gegunde publicaties vóór de CPV-verrijking wegfilteren scheelt
-    // veel detail-calls; alleen openstaande tenders zijn interessant om op in
-    // te schrijven.
-    const candidates = options.onlyOpen === false
-      ? result.items
-      : result.items.filter((item) => item.aantalDagenTotSluitingsDatum >= 0)
-    const batch = await enrichWithCpv(candidates)
-
-    batch.forEach((item) => {
-      if (matches.length >= targetMatches) return
-      if (matches.some((existing) => existing.publicatieId === item.publicatieId)) return
-      if (matchesCompanyCpv(item.cpvCodes ?? [], companyCodes)) matches.push(item)
-    })
-
-    options.onProgress?.({ scannedPages, found: matches.length })
-    if (matches.length >= targetMatches) break
-    if (page >= result.totalPages - 1) break
+    for (const item of result.items) {
+      if (matches.length >= maxItems) break
+      if (seenIds.has(item.publicatieId)) continue
+      // Rectificaties en vervolgpublicaties delen het kenmerk van de
+      // aanbesteding; de nieuwste publicatie (TenderNed sorteert nieuw → oud)
+      // wint, zodat dezelfde tender niet twee keer in de lijst staat.
+      if (item.kenmerk && seenKenmerk.has(item.kenmerk)) continue
+      seenIds.add(item.publicatieId)
+      if (item.kenmerk) seenKenmerk.add(item.kenmerk)
+      matches.push(item)
+    }
+    options.onProgress?.({ phase: 'lijst', done: matches.length, total: Math.min(maxItems, totalElements) })
+    if (page >= result.totalPages - 1 || !result.items.length) break
   }
 
-  return { items: matches, scannedPages, totalElements }
+  const enriched = await enrichWithCpv(matches, {
+    concurrency: 6,
+    onProgress: (done, total) => options.onProgress?.({ phase: 'cpv', done, total }),
+  })
+
+  return { items: enriched, scannedPages, totalElements }
 }
 
 export function collectCpvCodes(items: TenderListItem[]): CpvCode[] {

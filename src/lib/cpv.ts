@@ -36,3 +36,23 @@ export function matchesCompanyCpv(
     return prefixes.some((prefix) => clean.startsWith(prefix))
   })
 }
+
+/**
+ * Controlecijfer van een CPV-code (8 cijfers): gewogen som met de gewichten
+ * 3-7-1-3-7-1-3-7, modulo 10. TenderNed verwacht bij filteren de volledige
+ * notatie "12345678-9".
+ */
+export function cpvCheckDigit(code: string): number | null {
+  const digits = code.replace(/\s/g, '').slice(0, 8)
+  if (!/^\d{8}$/.test(digits)) return null
+  const weights = [3, 7, 1, 3, 7, 1, 3, 7]
+  const sum = digits.split('').reduce((total, digit, index) => total + Number(digit) * weights[index], 0)
+  return sum % 10
+}
+
+/** Geeft de CPV-code in de volledige notatie "12345678-9" (controlecijfer wordt berekend of gecorrigeerd). */
+export function cpvWithCheckDigit(code: string): string | null {
+  const check = cpvCheckDigit(code)
+  if (check == null) return null
+  return `${code.replace(/\s/g, '').slice(0, 8)}-${check}`
+}
