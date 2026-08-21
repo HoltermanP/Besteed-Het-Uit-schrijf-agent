@@ -2,6 +2,7 @@ import { completeChat, resolveAiFromRequest, streamChat, type AiRuntimeConfig, t
 import type { WriteDraftDocument, WriteDraftRequest, WriteDraftResponse } from '../../src/types/writeDraft'
 import type { RequestedDocument, TenderAnalysis } from '../../src/types/tenderAnalysis'
 import { requestedDocumentKindLabels, scopeAnalysisToDocument } from '../../src/lib/requestedDocuments'
+import { requirementsForDocument } from '../../src/lib/requirements'
 
 const stageInstructions: Record<WriteDraftRequest['stage'], string> = {
   brons:
@@ -379,7 +380,16 @@ function formatUnderlyingIntent(analysis: TenderAnalysis): string {
   return lines.join('\n')
 }
 
-function buildStructureInstruction(analysis: TenderAnalysis | null | undefined): string {
+/** Eisen uit het register die de reviewer straks aan de tekst van dit stuk toetst. */
+function formatRequirementRegister(analysis: TenderAnalysis, targetDocument?: RequestedDocument): string {
+  const requirements = requirementsForDocument(analysis, targetDocument).slice(0, 40)
+  if (!requirements.length) return '- (geen aanvullende eisen in het register)'
+  return requirements
+    .map((req) => `- [${req.category}${req.mandatory ? ', verplicht' : ', wens'}] ${req.text} [${req.source}]`)
+    .join('\n')
+}
+
+function buildStructureInstruction(analysis: TenderAnalysis | null | undefined, targetDocument?: RequestedDocument): string {
   if (!analysis) {
     return `STRUCTUUR
 - Leid koppen en secties af uit de aanbestedingsbronnen
@@ -407,6 +417,9 @@ ${formatUnderlyingIntent(analysis)}
 
 Specifieke eisen aan de inschrijving (respecteer vanaf deze versie — vorm, opmaak, indiening, geschiktheid):
 ${formatSubmissionRequirements(analysis)}
+
+Eisenregister voor dit stuk (toetsbaar — de reviewer controleert elk punt; voldoe er zichtbaar aan, alleen voor zover van toepassing op dít stuk):
+${formatRequirementRegister(analysis, targetDocument)}
 
 Verwachte bijlagen (inhoudelijk verwerken waar het plan van aanpak dat vraagt; niet als losse lijst dumpen):
 ${formatDocumentRequirements(analysis)}`
@@ -534,7 +547,7 @@ ${buildDocumentBrief(request)}
 
 ${buildAnalysisBlock(request.analysis)}
 
-${buildStructureInstruction(request.analysis)}
+${buildStructureInstruction(request.analysis, request.targetDocument)}
 
 De bronnen staan in het vorige bericht.
 

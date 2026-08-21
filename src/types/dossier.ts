@@ -1,4 +1,10 @@
-import type { DocumentDistillate, DocumentExtract, RequestedDocument, TenderAnalysis } from './tenderAnalysis'
+import type {
+  DocumentDistillate,
+  DocumentExtract,
+  RequestedDocument,
+  RequirementStatusEntry,
+  TenderAnalysis,
+} from './tenderAnalysis'
 import type { SavedTenderDocument } from './tenderNed'
 
 // Gedeelde types voor de projectomgeving. Een "dossier" is de volledige werkruimte
@@ -83,5 +89,7 @@ export type DossierSnapshot = {
   analysis: TenderAnalysis | null
   /** Vingerafdruk van de bronnen waarop de laatste AI-analyse is gebaseerd. */
   analysisSource?: string | null
+  /** Status per eis uit het eisenregister (analysis.requirements), op eis-id. */
+  requirementStatuses?: Record<string, RequirementStatusEntry>
   updatedAt: string
 }

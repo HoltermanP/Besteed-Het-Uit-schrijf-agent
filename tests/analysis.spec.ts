@@ -50,6 +50,40 @@ test('toont per stuk een eigen concept en schrijft het gekozen stuk', async ({ p
   await expect(page.getByText('Nog geen concept geschreven')).toBeVisible()
 })
 
+test('toont het eisenregister en laat een eis afvinken', async ({ page }) => {
+  await page.getByRole('button', { name: 'Leidraadanalyse' }).click()
+  await page.getByRole('button', { name: 'Analyseer dossier' }).click()
+  await expect(page.getByRole('dialog', { name: 'Leidraadanalyse' }).getByText(/\d+ eisen in het register/)).toBeVisible()
+  await page.keyboard.press('Escape')
+
+  // De rechterkolom toont de voortgang op de eisen en de open punten met vraag aan het bidteam.
+  const card = page.getByRole('region', { name: 'Eisen aan de inschrijving' })
+  await expect(card).toBeVisible()
+  const progress = card.getByTestId('requirements-progress')
+  const before = (await progress.textContent()) ?? ''
+  expect(before).toMatch(/^\d+\/\d+ afgedekt$/)
+
+  // Het volledige register groepeert per categorie; de referentielijst uit de leidraad is een in te dienen stuk.
+  await card.getByRole('button', { name: /^Alle eisen/ }).click()
+  const dialog = page.getByRole('dialog', { name: 'Eisenregister' })
+  await expect(dialog.getByRole('heading', { name: /In te dienen stukken/ })).toBeVisible()
+  // Filter "Alle", zodat de rij na het afvinken zichtbaar blijft (standaard staat het filter op "Open").
+  await dialog.getByRole('button', { name: /^Alle \(/ }).click()
+  const row = dialog.getByTestId('requirement-row').filter({ hasText: /referentielijst/i }).first()
+  await expect(row).toBeVisible()
+  await row.getByRole('button', { name: /^Markeer voldaan/ }).click()
+  await expect(row).toHaveAttribute('data-status', 'voldaan')
+  await page.keyboard.press('Escape')
+
+  // Afvinken telt mee in de voortgang en blijft bewaard na herladen.
+  await expect(progress).not.toHaveText(before)
+  const after = (await progress.textContent()) ?? ''
+  // De werkruimte-opslag schrijft gebundeld weg (zie storage.ts); geef de flush de tijd.
+  await page.waitForTimeout(1500)
+  await page.reload()
+  await expect(page.getByRole('region', { name: 'Eisen aan de inschrijving' }).getByTestId('requirements-progress')).toHaveText(after)
+})
+
 test('genereert concept met leidraadanalyse-sectie', async ({ page }) => {
   await page.getByRole('button', { name: 'Start schrijfagent' }).first().click()
   await expect(page.getByText('0. Leidraadanalyse en schrijfstijl')).toBeVisible()

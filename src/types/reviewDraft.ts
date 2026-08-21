@@ -1,5 +1,5 @@
 import type { AiProvider } from './apiConfig'
-import type { RequestedDocument, SourceDocument, TenderAnalysis } from './tenderAnalysis'
+import type { RequestedDocument, RequirementCheck, SourceDocument, TenderAnalysis } from './tenderAnalysis'
 
 export type ReviewPriority = 'kritiek' | 'hoog' | 'normaal'
 
@@ -50,6 +50,8 @@ export type ReviewDraftResponse = {
   model: string
   /** true wanneer een AI-reviewagent de baseline heeft aangevuld. */
   enriched: boolean
+  /** Oordeel per agent-toetsbare eis uit het eisenregister (analysis.requirements) voor dit stuk. */
+  requirementChecks?: RequirementCheck[]
 }
 
 export type ReviewDraftError = {

@@ -14,6 +14,7 @@ import type {
 } from '../../src/types/tenderAnalysis'
 import { completeChat, resolveAiFromRequest } from './aiClient'
 import { dedupeRequestedDocuments, normalizeRequestedDocuments } from '../../src/lib/requestedDocuments'
+import { buildRequirementRegister } from '../../src/lib/requirements'
 
 // Leidraden volledig meegeven: afkappen laat de analyse eisen missen die de rest
 // van de pijplijn daarna nooit meer ziet.
@@ -213,16 +214,14 @@ function parseAnalysisJson(content: string, baseline: TenderAnalysis): TenderAna
 
   const gaps = [...new Set([...normalizeStringList(parsed.gaps, []), ...baseline.gaps])]
 
-  return {
+  const parsedDocs = normalizeRequestedDocuments(parsed.requestedDocuments, baseline.leidraadSource ?? 'leidraad')
+  const merged: TenderAnalysis = {
     ...baseline,
     summary: str(parsed.summary) || baseline.summary,
     wordLimits: normalizeWordLimits(parsed.wordLimits, baseline.wordLimits),
     contentRequirements: normalizeContentRequirements(parsed.contentRequirements, baseline.contentRequirements),
     documentRequirements: normalizeDocumentRequirements(parsed.documentRequirements, baseline.documentRequirements),
-    requestedDocuments: (() => {
-      const parsedDocs = normalizeRequestedDocuments(parsed.requestedDocuments, baseline.leidraadSource ?? 'leidraad')
-      return parsedDocs.length ? parsedDocs : baseline.requestedDocuments ?? []
-    })(),
+    requestedDocuments: parsedDocs.length ? parsedDocs : baseline.requestedDocuments ?? [],
     submissionRequirements: normalizeSubmissionRequirements(
       parsed.submissionRequirements,
       baseline.submissionRequirements,
@@ -234,6 +233,9 @@ function parseAnalysisJson(content: string, baseline: TenderAnalysis): TenderAna
     targetWordCount: posInt(parsed.targetWordCount) ?? baseline.targetWordCount,
     targetCharCount: posInt(parsed.targetCharCount) ?? baseline.targetCharCount,
   }
+  // Eén-call-pad kent geen aparte eisen-extractie: het register wordt afgeleid uit de
+  // (door de AI aangescherpte) analysevelden.
+  return { ...merged, requirements: buildRequirementRegister(merged, []) }
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +331,15 @@ function mergeExtracts(baseline: TenderAnalysis, extracts: TenderDocumentExtract
 
   const leidraadFound = Boolean(leidraadDoc) || baseline.leidraadFound
 
+  // Eisenregister: de aparte eisen-extractie per stuk is leidend (leidraad eerst, NvI
+  // daarna zodat gewijzigde eisen als aparte, latere items zichtbaar blijven); de
+  // afgeleide eisen vullen aan waar die pass niets leverde of niet draaide.
+  const aiRequirements = ordered.flatMap((item) => item.extract.requirements ?? [])
+  const requirements = buildRequirementRegister(
+    { wordLimits, contentRequirements, documentRequirements, requestedDocuments, submissionRequirements },
+    aiRequirements,
+  )
+
   return {
     ...baseline,
     leidraadFound,
@@ -338,6 +349,7 @@ function mergeExtracts(baseline: TenderAnalysis, extracts: TenderDocumentExtract
     documentRequirements,
     requestedDocuments,
     submissionRequirements,
+    requirements,
     evaluationCriteria,
     gaps,
     targetWordCount: strictestMax(wordLimits, 'woorden') ?? baseline.targetWordCount,

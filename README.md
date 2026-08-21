@@ -8,6 +8,7 @@ Werkende Next.js-app (App Router) voor het analyseren van aanbestedingsstukken e
 - TenderNed-importstub die een dossier als bron toevoegt.
 - Neon-configuratieveld met syncstatus voor de toekomstige databasekoppeling.
 - Upload en handmatige invoer voor aanbestedingsstukken, bedrijfsinformatie, rules en schrijftraining.
+- Eisenregister per project: de analyse haalt alle toetsbare eisen aan inschrijving en inschrijver uit de stukken (aparte, goedkope extractie op het `light`-tier; zonder AI deterministisch afgeleid), de reviewer toetst de tekstuele eisen per stuk en de gebruiker vinkt af wat het bidteam zelf moet aanleveren.
 - Brons-zilver-goud schrijfworkflow met gegenereerde HTML-inschrijving.
 - Menselijke review via tekstselectie en opmerkingen.
 - AI-reviewagent met prioriteiten en concrete verbeterrichting.

@@ -433,6 +433,15 @@ export default function HandleidingPage() {
               documenten, specifieke inschrijvingseisen en eventuele gaten in je dossier.
             </li>
             <li>
+              <strong>Eisen aan de inschrijving</strong> (rechterkolom): het eisenregister dat de analyse uit de
+              stukken haalt — geschiktheid, uitsluitingsgronden, in te dienen stukken, inhoud, vorm, indiening en
+              voorwaarden — elk met bron en verplicht/wens. Schrijfstukken worden automatisch afgevinkt zodra ze
+              geschreven zijn, de AI-review toetst de tekstuele eisen per stuk en zet ze op <em>voldaan</em> of{' '}
+              <em>aandacht</em>; wat het bidteam zelf moet aanleveren (certificaten, referenties, ondertekening)
+              staat als gerichte vraag klaar en vink je zelf af, met een toelichting waar het bewijs staat.
+              Via <Term>Alle eisen</Term> open je het volledige register per categorie.
+            </li>
+            <li>
               <strong>AI-review agent</strong> (<Term>Review uitvoeren</Term>): beoordeelt het concept en geeft
               bevindingen met prioriteit <Badge className="bg-red-600 text-white">kritiek</Badge>{' '}
               <Badge className="bg-amber-500 text-white">hoog</Badge> <Badge variant="secondary">normaal</Badge>, elk

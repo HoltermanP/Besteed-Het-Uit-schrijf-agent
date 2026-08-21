@@ -19,6 +19,8 @@ export type DocumentExtract = {
   requestedDocuments?: RequestedDocument[]
   submissionRequirements: SubmissionRequirement[]
   evaluationCriteria: string[]
+  /** Eisenregister uit de aparte (goedkope) eisen-extractie; ontbreekt als die pass niet draaide. */
+  requirements?: Requirement[]
   /** Alleen bij Nota van Inlichtingen: wijzigingen die eerdere eisen overrulen. */
   modifications: string[]
   /** Feiten, cijfers en constraints die relevant zijn om conform te schrijven (m.n. bijlagen). */
@@ -126,6 +128,75 @@ export type SubmissionRequirement = {
   source: string
 }
 
+/**
+ * Categorie van een eis in het eisenregister. Sluit aan op SubmissionRequirementCategory en
+ * voegt de categorieën toe die elders in de analyse verspreid zaten (stukken, inhoud, omvang)
+ * plus contractvoorwaarden waarmee de inschrijver akkoord moet gaan.
+ */
+export type RequirementCategory =
+  | 'geschiktheid'
+  | 'uitsluiting'
+  | 'document'
+  | 'inhoud'
+  | 'omvang'
+  | 'vorm'
+  | 'opmaak'
+  | 'indiening'
+  | 'proces'
+  | 'contract'
+  | 'overig'
+
+/**
+ * Wie een eis kan toetsen:
+ * - agent: aan de tekst van een schrijfstuk te controleren (inhoud, omvang, taal, anonimiteit, opmaak)
+ * - gebruiker: vraagt iets buiten de tekst (bewijsstuk, certificaat, ondertekening, upload, akkoord)
+ */
+export type RequirementCheckBy = 'agent' | 'gebruiker'
+
+/**
+ * Eén atomaire, toetsbare eis waaraan de inschrijving of de inschrijver moet voldoen.
+ * Het eisenregister is de basis waarop schrijfagent, reviewer en gebruiker afvinken.
+ */
+export type Requirement = {
+  /** Stabiele sleutel (categorie + tekst) zodat een heranalyse dezelfde eis en status terugvindt. */
+  id: string
+  category: RequirementCategory
+  /** De concrete, toetsbare eis. */
+  text: string
+  /** true = verplicht/knock-out; false = wens of aanbeveling. */
+  mandatory: boolean
+  /** Bestandsnaam van de bron. */
+  source: string
+  /** Paragraaf-, artikel- of bijlagenummer binnen de bron. */
+  reference?: string
+  /** Titel van het in te dienen stuk waarop de eis specifiek slaat (leeg = hele inschrijving). */
+  documentTitle?: string
+  /** Id van het gekoppelde RequestedDocument (gelegd in de reduce-fase). */
+  documentId?: string
+  checkBy: RequirementCheckBy
+  /** Gerichte vraag aan het bidteam om de eis af te dekken (alleen bij checkBy 'gebruiker'). */
+  question?: string
+  /** 'ai' = uit de eisen-extractie; 'afgeleid' = deterministisch uit andere analysevelden. */
+  origin?: 'ai' | 'afgeleid'
+}
+
+export type RequirementStatus = 'open' | 'voldaan' | 'aandacht' | 'nvt'
+
+/** Per project bijgehouden status van een eis (door de gebruiker of door een agent gezet). */
+export type RequirementStatusEntry = {
+  status: RequirementStatus
+  note?: string
+  by: 'gebruiker' | 'agent'
+  updatedAt: string
+}
+
+/** Oordeel van een agent over één eis; met = null betekent "niet van toepassing op dit stuk". */
+export type RequirementCheck = {
+  id: string
+  met: boolean | null
+  note?: string
+}
+
 export type StyleProfile = {
   companyName: string
   buyerName: string
@@ -161,6 +232,11 @@ export type TenderAnalysis = {
   requestedDocuments: RequestedDocument[]
   /** Specifieke eisen aan de inschrijving zelf (vorm, opmaak, indiening, geschiktheid) */
   submissionRequirements: SubmissionRequirement[]
+  /**
+   * Eisenregister: alle toetsbare eisen aan inschrijving en inschrijver, de basis voor de
+   * checks door schrijfagent, reviewer en gebruiker. Ontbreekt bij oudere analyses (dan afgeleid).
+   */
+  requirements?: Requirement[]
   evaluationCriteria: string[]
   styleProfile: StyleProfile
   underlyingIntent?: UnderlyingIntent

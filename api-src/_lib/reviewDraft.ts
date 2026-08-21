@@ -5,11 +5,14 @@ import type {
   ReviewFindingItem,
   ReviewPriority,
 } from '../../src/types/reviewDraft'
-import type { TenderAnalysis } from '../../src/types/tenderAnalysis'
+import type { Requirement, RequirementCheck, TenderAnalysis } from '../../src/types/tenderAnalysis'
+import { normalizeRequirementChecks, requirementsForDocument } from '../../src/lib/requirements'
 
 const DOC_CHAR_LIMIT = 40_000
 const DRAFT_CHAR_LIMIT = 120_000
 const MAX_FINDINGS = 14
+// Eisen die de reviewer per stuk toetst; meer dan dit maakt de JSON-output onbetrouwbaar.
+const MAX_REQUIREMENT_CHECKS = 40
 
 const PRIORITY_RANK: Record<ReviewPriority, number> = {
   kritiek: 0,
@@ -38,6 +41,13 @@ WAAR JE OP LET
 - Consistentie en concreetheid: vage passages, herhaling, ontbrekende rollen/planning.
 - Schrijfkader-naleving: toets het concept aan de bronnen met de kop [SCHRIJFKADER · …] (schrijfregels, schrijfwijze, kwaliteitseisen en de handmatige/algemene aanpassingen van de inschrijver). Handmatige aanpassingen gaan vóór vastgelegde regels, die gaan vóór basisregels. Een overtreding van een verplichte schrijfregel of een handmatige aanpassing is minimaal "hoog"; citeer het fragment en benoem de geschonden regel. Let ook op stijlverval verderop in het document (eerste secties wel, latere secties niet conform).
 
+EISENREGISTER
+Je krijgt een lijst eisen (elk met een id) die aan de tekst van dit stuk toetsbaar zijn. Beoordeel ELKE eis uit die lijst:
+- met = true: het concept voldoet er aantoonbaar aan
+- met = false: niet of onvoldoende voldaan — zet in note kort wat ontbreekt
+- met = null: de eis is niet van toepassing op dít stuk (hoort bij een ander stuk van de inschrijving)
+Gebruik uitsluitend de gegeven ids. Een niet-voldane verplichte eis is ook een bevinding ("kritiek").
+
 PRIORITEITEN
 - "kritiek": diskwalificerend of een hard criterium dat ontbreekt/geschonden is
 - "hoog": kost aantoonbaar punten of verzwakt de score
@@ -54,6 +64,9 @@ Antwoord uitsluitend met geldig JSON in exact deze vorm:
 {
   "findings": [
     { "priority": "kritiek|hoog|normaal", "title": "", "detail": "" }
+  ],
+  "requirementChecks": [
+    { "id": "", "met": true, "note": "" }
   ]
 }`
 
@@ -103,6 +116,22 @@ function formatTargetDocument(request: ReviewDraftRequest): string {
   if (doc.format) lines.push(`- Vorm/format: ${doc.format}`)
   lines.push('- Let ook op: vaste documentopbouw (header met kern-antwoord, genummerde secties per deelvraag met "Beoordeeld op", slotsectie met toezeggingen) en consistente stem/terminologie met de andere stukken.')
   return `${lines.join('\n')}\n\n`
+}
+
+/** De eisen die de reviewer voor dít stuk toetst (agent-toetsbaar; stukgebonden + inschrijvingsbreed). */
+function reviewableRequirements(request: ReviewDraftRequest): Requirement[] {
+  if (!request.analysis) return []
+  return requirementsForDocument(request.analysis, request.targetDocument).slice(0, MAX_REQUIREMENT_CHECKS)
+}
+
+function formatRequirements(requirements: Requirement[]): string {
+  if (!requirements.length) return '- (geen toetsbare eisen in het register)'
+  return requirements
+    .map(
+      (req) =>
+        `- id=${req.id} [${req.category}${req.mandatory ? ', verplicht' : ', wens'}] ${req.text}${req.reference ? ` (${req.reference})` : ''}`,
+    )
+    .join('\n')
 }
 
 function formatAnalysis(analysis: TenderAnalysis | null): string {
@@ -169,6 +198,9 @@ Project:
 ${formatTargetDocument(request)}Leidraadanalyse:
 ${formatAnalysis(request.analysis)}
 
+Eisenregister — toets elke eis (requirementChecks):
+${formatRequirements(reviewableRequirements(request))}
+
 Heuristische baseline (al gesignaleerd — NIET herhalen, wel aanvullen):
 ${formatBaseline(request.baseline)}
 
@@ -187,25 +219,47 @@ function normalizePriority(value: unknown): ReviewPriority {
   return value === 'kritiek' || value === 'hoog' ? value : value === 'normaal' ? 'normaal' : 'hoog'
 }
 
-function parseFindings(content: string): ReviewFindingItem[] {
+function parseReview(
+  content: string,
+  requirements: Requirement[],
+): { findings: ReviewFindingItem[]; requirementChecks: RequirementCheck[] } {
   const jsonText = content.match(/```json?\s*([\s\S]*?)```/i)?.[1]?.trim() ?? content.trim()
-  let parsed: { findings?: unknown }
+  let parsed: { findings?: unknown; requirementChecks?: unknown }
   try {
-    parsed = JSON.parse(jsonText) as { findings?: unknown }
+    parsed = JSON.parse(jsonText) as { findings?: unknown; requirementChecks?: unknown }
   } catch {
-    return []
+    return { findings: [], requirementChecks: [] }
   }
 
-  if (!Array.isArray(parsed.findings)) return []
+  const findings = Array.isArray(parsed.findings)
+    ? parsed.findings
+        .map((raw): ReviewFindingItem | null => {
+          if (!raw || typeof raw !== 'object') return null
+          const item = raw as Record<string, unknown>
+          const title = typeof item.title === 'string' ? item.title.trim() : ''
+          const detail = typeof item.detail === 'string' ? item.detail.trim() : ''
+          if (!title || !detail) return null
+          return { priority: normalizePriority(item.priority), title, detail }
+        })
+        .filter((item): item is ReviewFindingItem => item !== null)
+    : []
 
-  return parsed.findings
-    .map((raw): ReviewFindingItem | null => {
-      if (!raw || typeof raw !== 'object') return null
-      const item = raw as Record<string, unknown>
-      const title = typeof item.title === 'string' ? item.title.trim() : ''
-      const detail = typeof item.detail === 'string' ? item.detail.trim() : ''
-      if (!title || !detail) return null
-      return { priority: normalizePriority(item.priority), title, detail }
+  return { findings, requirementChecks: normalizeRequirementChecks(parsed.requirementChecks, requirements) }
+}
+
+/** Niet-voldane eisen worden ook als bevinding zichtbaar: verplicht = kritiek, wens = hoog. */
+function findingsFromChecks(checks: RequirementCheck[], requirements: Requirement[]): ReviewFindingItem[] {
+  const byId = new Map(requirements.map((req) => [req.id, req]))
+  return checks
+    .filter((check) => check.met === false)
+    .map((check): ReviewFindingItem | null => {
+      const req = byId.get(check.id)
+      if (!req) return null
+      return {
+        priority: req.mandatory ? 'kritiek' : 'hoog',
+        title: `Eis niet voldaan: ${req.text.length > 90 ? `${req.text.slice(0, 87)}…` : req.text}`,
+        detail: `${check.note || 'Het concept voldoet niet aantoonbaar aan deze eis.'} (${req.source}${req.reference ? `, ${req.reference}` : ''})`,
+      }
     })
     .filter((item): item is ReviewFindingItem => item !== null)
 }
@@ -261,7 +315,8 @@ export async function handleReviewDraftRequest(request: ReviewDraftRequest): Pro
       ],
       {
         jsonMode: ai.provider !== 'anthropic',
-        maxTokens: 4_000,
+        // Bevindingen + het oordeel per eis uit het register.
+        maxTokens: 6_000,
         timeoutMs: 120_000,
         useThinking: false,
         // Herhaalde reviews van hetzelfde project herlezen het bronnenblok;
@@ -272,13 +327,15 @@ export async function handleReviewDraftRequest(request: ReviewDraftRequest): Pro
       },
     )
 
-    const aiFindings = parseFindings(content)
+    const requirements = reviewableRequirements(request)
+    const { findings: aiFindings, requirementChecks } = parseReview(content, requirements)
 
     return Response.json({
-      findings: mergeFindings(baseline, aiFindings),
+      findings: mergeFindings(baseline, [...findingsFromChecks(requirementChecks, requirements), ...aiFindings]),
       provider: ai.provider,
       model: ai.model,
-      enriched: aiFindings.length > 0,
+      enriched: aiFindings.length > 0 || requirementChecks.length > 0,
+      requirementChecks,
     } satisfies ReviewDraftResponse)
   } catch {
     // AI-call mislukt → val terug op de baseline zodat de review altijd iets oplevert.

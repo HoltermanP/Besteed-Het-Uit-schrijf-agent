@@ -30,7 +30,6 @@ import {
   GraduationCap,
   Highlighter,
   Import,
-  ListChecks,
   Loader2,
   Medal,
   MessageSquarePlus,
@@ -62,7 +61,12 @@ import { blobViewUrl } from '../lib/blobFiles'
 import FileUploadZone from '../components/FileUploadZone'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog'
 import { acceptedStyleExtensions } from '../types/styleDocument'
-import type { RequestedDocument, TenderAnalysis } from '../types/tenderAnalysis'
+import type {
+  RequestedDocument,
+  RequirementStatus,
+  RequirementStatusEntry,
+  TenderAnalysis,
+} from '../types/tenderAnalysis'
 import { exportPdfFromHtml } from '../lib/documentExport'
 import {
   formatDocumentLimits,
@@ -82,6 +86,9 @@ import { isNeonConfigured, isWriterConfigured, migrateLegacyNeonUrl } from '../l
 import { generateDraftViaApi, fetchWriterStatus, isNoAiConfigError, type WriterStatus } from '../lib/writeDraftApi'
 import { rewriteFragmentViaApi } from '../lib/rewriteFragmentApi'
 import { reviewDraftViaApi } from '../lib/reviewDraftApi'
+import { extractRequirementsViaApi } from '../lib/extractRequirementsApi'
+import { applyRequirementChecks, deriveRequirementsFromAnalysis } from '../lib/requirements'
+import RequirementsCard from '../components/RequirementsCard'
 import { getCompanyConfig, isCompanyConfigured, mergeDocumentsWithCompanyConfig } from '../lib/companyConfig'
 import { computeOpportunityScore, type OpportunityLevel } from '../lib/opportunityScore'
 import { fetchStyleDocuments } from '../lib/styleDocumentsApi'
@@ -247,7 +254,7 @@ function stripCommentMarks(html: string): string {
 // submissionRequirements. Zonder deze normalisatie crasht een `.length`/.map` in de render.
 function normalizeStoredAnalysis(analysis: TenderAnalysis | null): TenderAnalysis | null {
   if (!analysis) return analysis
-  return {
+  const normalized: TenderAnalysis = {
     ...analysis,
     wordLimits: analysis.wordLimits ?? [],
     contentRequirements: analysis.contentRequirements ?? [],
@@ -257,6 +264,9 @@ function normalizeStoredAnalysis(analysis: TenderAnalysis | null): TenderAnalysi
     evaluationCriteria: analysis.evaluationCriteria ?? [],
     gaps: analysis.gaps ?? [],
   }
+  // Analyses van vóór het eisenregister krijgen een afgeleid register, zodat de
+  // checklist direct werkt zonder heranalyse.
+  return { ...normalized, requirements: analysis.requirements ?? deriveRequirementsFromAnalysis(normalized) }
 }
 
 /** Bestandsnaam-veilige variant van een titel voor exports. */
@@ -341,6 +351,7 @@ function loadInitialState(projectId: string) {
     analysis,
     tenderDocuments,
     analysisSource: snapshot?.analysisSource ?? null,
+    requirementStatuses: snapshot?.requirementStatuses ?? {},
     drafts,
     activeDraftId: active.id,
   }
@@ -464,6 +475,9 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   // Vingerafdruk van de bronnen waarop de laatste AI-analyse is gebaseerd;
   // zolang die gelijk blijft, wordt de analyse hergebruikt i.p.v. opnieuw betaald.
   const [analysisSource, setAnalysisSource] = useState<string | null>(initial.analysisSource)
+  const [requirementStatuses, setRequirementStatuses] = useState<Record<string, RequirementStatusEntry>>(
+    initial.requirementStatuses,
+  )
   // Alle stukken van deze inschrijving; `draft`/`stage`/`comments` hierboven zijn de
   // werkkopie van het actieve stuk. Refs spiegelen de state zodat lange async flows
   // (analyse → meerdere stukken schrijven) niet op verouderde closures werken.
@@ -629,6 +643,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       draft: html,
       analysis,
       analysisSource,
+      requirementStatuses,
       updatedAt,
     }
     saveDossier(projectId, snapshot)
@@ -639,7 +654,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       updatedAt,
       source: projectId.startsWith('prj-') ? 'blank' : 'tender',
     })
-  }, [projectId, project, documents, tenderDocuments, comments, stage, draft, analysis, analysisSource, drafts, activeDraftId])
+  }, [projectId, project, documents, tenderDocuments, comments, stage, draft, analysis, analysisSource, requirementStatuses, drafts, activeDraftId])
 
   useEffect(() => {
     draftsRef.current = drafts
@@ -718,6 +733,27 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     () => (analysis && activeDraft ? scopeAnalysisToDocument(analysis, activeDraft.requested) : analysis),
     [analysis, activeDraft],
   )
+
+  // Eisenregister: schrijfstukken met een geschreven concept gelden automatisch als afgedekt.
+  const writtenDocumentIds = useMemo(
+    () =>
+      new Set(
+        drafts.filter((item) => !isStartDraft(item.id === activeDraftId ? draft : item.html)).map((item) => item.id),
+      ),
+    [drafts, activeDraftId, draft],
+  )
+
+  const setRequirementStatus = (id: string, status: RequirementStatus, note?: string) => {
+    setRequirementStatuses((current) => ({
+      ...current,
+      [id]: {
+        status,
+        note: note === undefined ? current[id]?.note : note.trim() || undefined,
+        by: 'gebruiker',
+        updatedAt: new Date().toISOString(),
+      },
+    }))
+  }
 
   const addCustomDraft = () => {
     const title = customDocTitle.trim()
@@ -844,8 +880,14 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       MAP_CONCURRENCY,
       async (doc): Promise<TenderDocumentExtract | null> => {
         const reused = isFresh(doc) ? cached.get(doc.id) : null
-        const extract = reused ?? (await analyzeDocumentViaApi(doc, project.buyer))
-        return extract ? { name: doc.name, extract } : null
+        // Het brede extract (analysis-tier) en de smalle eisen-extractie (light-tier) lopen
+        // parallel; elk wordt alleen opnieuw gedaan als het nog niet op het document is gecachet.
+        const [extract, requirements] = await Promise.all([
+          reused ?? analyzeDocumentViaApi(doc, project.buyer),
+          reused?.requirements ?? extractRequirementsViaApi(doc, project.buyer),
+        ])
+        if (!extract) return null
+        return { name: doc.name, extract: requirements ? { ...extract, requirements } : extract }
       },
       (done, total) => setSyncStatus(`Documenten los analyseren (${done}/${total})…`),
     )
@@ -964,14 +1006,14 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       setAnalysisSource(analysisFingerprintFor(effectiveDocuments, project.buyer))
       applyAnalysisToDrafts(result)
       setSyncStatus(
-        `Uitvraag-analyse door ${enriched.provider} (${enriched.model}): ${writableDocuments(result).length} op te stellen stuk(ken), ${result.contentRequirements.length} vragen, ${result.documentRequirements.length} documenten, ${result.submissionRequirements.length} inschrijvingseisen`,
+        `Uitvraag-analyse door ${enriched.provider} (${enriched.model}): ${writableDocuments(result).length} op te stellen stuk(ken), ${result.contentRequirements.length} vragen, ${result.documentRequirements.length} documenten, ${result.requirements?.length ?? 0} eisen in het register`,
       )
       return result
     }
 
     applyAnalysisToDrafts(baseline)
     setSyncStatus(
-      `Heuristische analyse: ${writableDocuments(baseline).length} op te stellen stuk(ken), ${baseline.contentRequirements.length} vragen, ${baseline.documentRequirements.length} documenten, ${baseline.submissionRequirements.length} inschrijvingseisen`,
+      `Heuristische analyse: ${writableDocuments(baseline).length} op te stellen stuk(ken), ${baseline.contentRequirements.length} vragen, ${baseline.documentRequirements.length} documenten, ${baseline.requirements?.length ?? 0} eisen in het register`,
     )
     return baseline
   }
@@ -1744,11 +1786,16 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         targetDocument: activeDraft?.requested,
         baseline,
       })
+      // Het oordeel van de reviewer per eis landt in het eisenregister (voldaan/aandacht).
+      const checks = ai?.requirementChecks ?? []
+      if (checks.length) {
+        setRequirementStatuses((current) => applyRequirementChecks(current, checks, result.requirements ?? []))
+      }
       if (ai && ai.findings.length) {
         setFindings(ai.findings.map((finding) => ({ id: makeId(), ...finding })))
         setSyncStatus(
           ai.enriched
-            ? `AI-review uitgevoerd met ${ai.provider} (${ai.model})`
+            ? `AI-review uitgevoerd met ${ai.provider} (${ai.model})${checks.length ? ` · ${checks.length} eisen getoetst` : ''}`
             : 'Review uitgevoerd (heuristisch — AI gaf geen extra punten)',
         )
       } else {
@@ -2728,6 +2775,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
                     <Badge variant="secondary">{analysis.documentRequirements.length} documenten</Badge>
                     <Badge variant="secondary">{analysis.submissionRequirements.length} inschrijvingseisen</Badge>
                     <Badge variant="secondary">{analysis.wordLimits.length} limieten</Badge>
+                    <Badge variant="secondary">{analysis.requirements?.length ?? 0} eisen in het register</Badge>
                     <Badge>{writableDocuments(analysis).length} op te stellen stukken</Badge>
                   </div>
                   <div className="space-y-2 rounded-md border bg-accent/40 p-3">
@@ -3104,51 +3152,13 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           </CardContent>
         </Card>
 
-        {analysis && (analysis.requestedDocuments.length || analysis.documentRequirements.length) ? (
-          <Card>
-            <CardContent className="space-y-2">
-              <div className="flex items-center gap-2 text-primary">
-                <ListChecks size={17} />
-                <h2 className="text-sm font-semibold">Checklist inschrijving</h2>
-              </div>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                Wat er volgens de analyse in totaal moet worden ingediend. Schrijfstukken schrijf je in de middenkolom;
-                formulieren en bewijsstukken lever je zelf aan.
-              </p>
-              <ul className="grid gap-1 text-xs">
-                {writableDocuments(analysis).map((doc) => {
-                  const item = drafts.find((entry) => entry.id === doc.id)
-                  const html = item ? (item.id === activeDraftId ? draft : item.html) : ''
-                  const done = Boolean(item) && !isStartDraft(html)
-                  return (
-                    <li key={doc.id} className="flex items-start gap-1.5">
-                      {done ? (
-                        <CheckCircle2 size={14} className="mt-0.5 flex-none text-emerald-600" />
-                      ) : (
-                        <PenLine size={14} className="mt-0.5 flex-none text-muted-foreground" />
-                      )}
-                      <span className="min-w-0">
-                        <span className="font-medium">{doc.title}</span>
-                        <span className="text-muted-foreground"> — schrijfstuk{done ? ', geschreven' : ', nog te schrijven'}</span>
-                      </span>
-                    </li>
-                  )
-                })}
-                {nonWritableDocuments(analysis).map((doc) => (
-                  <li key={doc.id} className="flex items-start gap-1.5">
-                    <ClipboardList size={14} className="mt-0.5 flex-none text-muted-foreground" />
-                    <span className="min-w-0">
-                      <span className="font-medium">{doc.title}</span>
-                      <span className="text-muted-foreground">
-                        {' '}— {requestedDocumentKindLabels[doc.kind].toLowerCase()}
-                        {doc.mandatory ? ', verplicht' : ''}
-                      </span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
+        {analysis ? (
+          <RequirementsCard
+            analysis={analysis}
+            statuses={requirementStatuses}
+            writtenDocumentIds={writtenDocumentIds}
+            onSetStatus={setRequirementStatus}
+          />
         ) : null}
       </aside>
     </main>

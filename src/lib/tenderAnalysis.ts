@@ -11,6 +11,7 @@ import type {
   WordLimit,
 } from '../types/tenderAnalysis'
 import { dedupeRequestedDocuments, requestedDocumentId } from './requestedDocuments'
+import { deriveRequirementsFromAnalysis } from './requirements'
 
 const LEIDRAAD_HINTS = ['leidraad', 'inschrijfleidraad', 'aanbestedingsleidraad', 'beoordelingsleidraad']
 const TOPIC_KEYWORDS = [
@@ -798,6 +799,9 @@ export function analyzeTenderDocuments(
 
   return {
     ...partial,
+    // Heuristisch eisenregister (gratis): stukken, limieten, inhouds- en inschrijvingseisen
+    // als afvinkbare eisen. De AI-analyse vervangt dit door de volledige eisen-extractie.
+    requirements: deriveRequirementsFromAnalysis(partial),
     underlyingIntent,
     analyzedAt: new Date().toLocaleString('nl-NL'),
     summary,
