@@ -84,6 +84,39 @@ test('toont het eisenregister en laat een eis afvinken', async ({ page }) => {
   await expect(page.getByRole('region', { name: 'Eisen aan de inschrijving' }).getByTestId('requirements-progress')).toHaveText(after)
 })
 
+test('verbeterronde: review vraagt informatie op en verwerkt antwoorden naar zilver', async ({ page }) => {
+  await page.getByRole('button', { name: 'Leidraadanalyse' }).click()
+  await page.getByRole('button', { name: 'Analyseer dossier' }).click()
+  await expect(page.getByRole('heading', { name: 'Op te stellen documenten' })).toBeVisible()
+  await page.keyboard.press('Escape')
+
+  await page.getByRole('button', { name: 'Start schrijfagent' }).first().click()
+  await expect(page.getByText('Brons versie')).toBeVisible({ timeout: 15000 })
+
+  // De AI-review levert (ook zonder AI) gerichte informatievragen voor open eisen van het bidteam.
+  await page.getByRole('button', { name: 'AI-review', exact: true }).click()
+  await page.getByRole('button', { name: 'Review uitvoeren', exact: true }).click()
+  await expect(page.getByTestId('review-finding').first()).toBeVisible({ timeout: 15000 })
+  await page.keyboard.press('Escape')
+
+  const panel = page.getByRole('region', { name: 'Verbeterronde' })
+  await expect(panel).toBeVisible()
+  await expect(panel.getByRole('heading', { name: /Verbeterronde naar Zilver/ })).toBeVisible()
+  const request = panel.getByTestId('info-request').first()
+  await expect(request).toBeVisible()
+  // Zonder antwoord of goedgekeurd voorstel valt er niets te verwerken.
+  await expect(panel.getByRole('button', { name: 'Verwerk naar Zilver' })).toBeDisabled()
+
+  await request.getByRole('textbox').fill('Referentielijst met drie opdrachten uit 2024–2025 is beschikbaar (bijlage A).')
+  await request.getByRole('textbox').blur()
+  await expect(panel.getByText(/1 beantwoord/)).toBeVisible()
+
+  // Verwerken naar zilver neemt alleen het gegeven antwoord mee; de stap verschuift naar Zilver.
+  await page.getByRole('button', { name: 'Verwerk naar Zilver' }).click()
+  await expect(page.getByText('Verbeterronde verwerkt')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByRole('button', { name: /Zilver/ }).first()).toHaveAttribute('aria-pressed', 'true')
+})
+
 test('genereert concept met leidraadanalyse-sectie', async ({ page }) => {
   await page.getByRole('button', { name: 'Start schrijfagent' }).first().click()
   await expect(page.getByText('0. Leidraadanalyse en schrijfstijl')).toBeVisible()

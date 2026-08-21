@@ -47,6 +47,60 @@ export type TenderProject = {
   neonUrl?: string
 }
 
+export type ReviewPriority = 'kritiek' | 'hoog' | 'normaal'
+
+/**
+ * Gerichte vraag van de AI-review aan het bidteam: informatie die nodig is om een eis af te
+ * dekken, een claim te onderbouwen of een voorstel te kunnen schrijven zonder te verzinnen.
+ */
+export type InformationRequest = {
+  id: string
+  question: string
+  /** Waarom dit nodig is: welke claim, sectie of eis onderbouwing mist. */
+  reason: string
+  section?: string
+  /** Eis uit het eisenregister waar de vraag bij hoort. */
+  requirementId?: string
+  priority: ReviewPriority
+  status: 'open' | 'beantwoord' | 'overgeslagen'
+  answer?: string
+  askedAtStage: Stage
+}
+
+/**
+ * Verbetervoorstel van de AI-review. 'verbeteren' = beter voldoen aan de vraag/eisen;
+ * 'overtreffen' = de uitvraag overstijgen op een punt waar de opdrachtgever dat waardeert.
+ * Wordt pas verwerkt na goedkeuring door de gebruiker.
+ */
+export type ImprovementProposal = {
+  id: string
+  kind: 'verbeteren' | 'overtreffen'
+  title: string
+  /** Wat er concreet verandert of bijkomt. */
+  detail: string
+  /** Waarom dit punten oplevert (criterium, prioriteit van de opdrachtgever, vraag achter de vraag). */
+  rationale: string
+  section?: string
+  criterion?: string
+  /** Feitelijke input die het bidteam moet leveren om dit te kunnen schrijven zonder te verzinnen. */
+  needsInput?: string
+  status: 'voorgesteld' | 'goedgekeurd' | 'afgewezen' | 'verwerkt'
+  /** Feiten/antwoord van de gebruiker bij goedkeuring (verplicht als needsInput gezet is). */
+  input?: string
+  proposedAtStage: Stage
+}
+
+/** De verbeterronde van één stuk: wat de AI-review vraagt en voorstelt vóór de volgende versie. */
+export type ImprovementRound = {
+  /** Stadium van het concept dat is gereviewd. */
+  stage: Stage
+  reviewedAt: string
+  provider?: string
+  model?: string
+  informationRequests: InformationRequest[]
+  proposals: ImprovementProposal[]
+}
+
 /**
  * Eén te schrijven stuk binnen een project, met eigen concept, stadium en opmerkingen.
  * De lijst volgt uit de leidraadanalyse (requestedDocuments van soort 'schrijfstuk');
@@ -63,6 +117,8 @@ export type DraftDocument = {
   stage: Stage
   html: string
   comments: ReviewComment[]
+  /** Laatste verbeterronde (AI-review) van dit stuk; antwoorden en goedgekeurde voorstellen gaan mee naar de volgende versie. */
+  round?: ImprovementRound | null
   updatedAt: string
 }
 

@@ -3,7 +3,9 @@ import type {
   ReviewDraftRequest,
   ReviewDraftResponse,
   ReviewFindingItem,
+  ReviewInformationRequest,
   ReviewPriority,
+  ReviewProposal,
 } from '../../src/types/reviewDraft'
 import type { Requirement, RequirementCheck, TenderAnalysis } from '../../src/types/tenderAnalysis'
 import { normalizeRequirementChecks, requirementsForDocument } from '../../src/lib/requirements'
@@ -13,6 +15,8 @@ const DRAFT_CHAR_LIMIT = 120_000
 const MAX_FINDINGS = 14
 // Eisen die de reviewer per stuk toetst; meer dan dit maakt de JSON-output onbetrouwbaar.
 const MAX_REQUIREMENT_CHECKS = 40
+const MAX_INFORMATION_REQUESTS = 10
+const MAX_PROPOSALS = 8
 
 const PRIORITY_RANK: Record<ReviewPriority, number> = {
   kritiek: 0,
@@ -24,6 +28,16 @@ const stageLabels: Record<ReviewDraftRequest['stage'], string> = {
   brons: 'Brons (eerste concept)',
   zilver: 'Zilver (review verwerkt)',
   goud: 'Goud (eindversie)',
+}
+
+// De verbeterronde per stadium: wat de review moet opleveren om de volgende versie beter te maken.
+const STAGE_FOCUS: Record<ReviewDraftRequest['stage'], string> = {
+  brons:
+    'Eerste versie. Toets volledigheid tegen de eisen en de vraag van dit stuk. Vraag ALLE informatie op die nodig is om eisen af te dekken en claims te onderbouwen. Doe voorstellen om te verbeteren én om de uitvraag te overtreffen waar de opdrachtgever dat aantoonbaar waardeert (prioriteiten, vraag achter de vraag, beoordelingscriteria met hoge weging).',
+  zilver:
+    'Review verwerkt. Controleer of elk goedgekeurd voorstel en elk antwoord uit de vorige ronde daadwerkelijk én feitelijk juist is verwerkt — niet of half verwerkt is een bevinding "hoog". Signaleer restpunten. Nieuwe voorstellen alleen als ze aantoonbaar punten opleveren; nieuwe informatievragen alleen voor wat nog mist.',
+  goud:
+    'Eindversie. Eindcontrole op eisen, feitencheck en consistentie; geen koerswijzigingen meer — alleen wat nog moet om in te dienen. Elke claim zonder onderbouwing in de bronnen is een informatievraag of moet worden geschrapt.',
 }
 
 const SYSTEM_PROMPT = `Je bent een senior kwaliteitsreviewer voor Nederlandse aanbestedingen (Aanbestedingswet, EMVI, BPKV).
@@ -48,6 +62,17 @@ Je krijgt een lijst eisen (elk met een id) die aan de tekst van dit stuk toetsba
 - met = null: de eis is niet van toepassing op dít stuk (hoort bij een ander stuk van de inschrijving)
 Gebruik uitsluitend de gegeven ids. Een niet-voldane verplichte eis is ook een bevinding ("kritiek").
 
+FEITENCHECK (hard)
+Elke claim in het concept — cijfers, referenties, certificaten, namen, resultaten, toezeggingen, werkwijzen — moet terug te voeren zijn op de bronnen of op de aanvullende informatie van het bidteam (vorige ronde). Is dat niet zo: stel een informationRequest ("Onderbouw of schrap: …") met wat precies nodig is. Verzin NOOIT onderbouwing en stel nooit voor om iets te beweren dat niet uit de bronnen blijkt.
+
+INFORMATIEVRAGEN (informationRequests) — gericht uitvragen bij het bidteam
+Eén concrete vraag per item, beantwoordbaar door het bidteam, met reason (welke claim/sectie/eis er zonder dit antwoord niet feitelijk kan), section (sectie in het concept) en requirementId (alleen als de vraag een open eis uit het register afdekt; gebruik dan exact die id). Bronnen: (1) open eisen van het bidteam die niet uit de bronnen blijken, (2) claims zonder onderbouwing, (3) input die een voorstel nodig heeft. Herhaal geen vraag die in de vorige ronde al is beantwoord of bewust overgeslagen. Maximaal ${MAX_INFORMATION_REQUESTS}, belangrijkste eerst.
+
+VOORSTELLEN (proposals) — worden pas verwerkt na goedkeuring door de gebruiker
+- kind "verbeteren": beter voldoen aan de vraag of een eis, sterker bewijs, scherpere structuur, consistentie.
+- kind "overtreffen": de uitvraag overstijgen op een punt waar de opdrachtgever dat aantoonbaar waardeert (prioriteiten, vraag achter de vraag, hoog gewogen criterium, win-thema's uit de bedrijfsbronnen). Alleen als het past binnen de limieten en de leidraad het niet verbiedt.
+Per voorstel: title, detail (wat concreet verandert of bijkomt), rationale (waarom het punten oplevert, met het criterium), section, criterion en needsInput: de feitelijke input die het bidteam moet leveren om dit te schrijven zonder te verzinnen (leeg laten als de bronnen al volstaan). Herhaal geen afgewezen voorstel. Maximaal ${MAX_PROPOSALS}.
+
 PRIORITEITEN
 - "kritiek": diskwalificerend of een hard criterium dat ontbreekt/geschonden is
 - "hoog": kost aantoonbaar punten of verzwakt de score
@@ -67,6 +92,12 @@ Antwoord uitsluitend met geldig JSON in exact deze vorm:
   ],
   "requirementChecks": [
     { "id": "", "met": true, "note": "" }
+  ],
+  "informationRequests": [
+    { "question": "", "reason": "", "section": "", "requirementId": "", "priority": "kritiek|hoog|normaal" }
+  ],
+  "proposals": [
+    { "kind": "verbeteren|overtreffen", "title": "", "detail": "", "rationale": "", "section": "", "criterion": "", "needsInput": "" }
   ]
 }`
 
@@ -134,6 +165,34 @@ function formatRequirements(requirements: Requirement[]): string {
     .join('\n')
 }
 
+function formatOpenUserRequirements(request: ReviewDraftRequest): string {
+  const list = (request.openUserRequirements ?? []).slice(0, 20)
+  if (!list.length) return '- (geen open eisen voor het bidteam)'
+  return list
+    .map((req) => `- id=${req.id} [${req.category}${req.mandatory ? ', verplicht' : ''}] ${req.text}${req.question ? ` — vraag: ${req.question}` : ''}`)
+    .join('\n')
+}
+
+function formatPreviousRound(request: ReviewDraftRequest): string {
+  const round = request.round
+  if (!round) return '- (eerste ronde; geen eerdere vragen of voorstellen)'
+  const lines: string[] = [`- Gereviewde versie vorige ronde: ${round.stage}`]
+  if (round.answered.length) {
+    lines.push('- Beantwoorde vragen (feitelijke basis — gebruik deze, vraag ze niet opnieuw):')
+    round.answered.forEach((item) => lines.push(`  • V: ${item.question}\n    A: ${item.answer}`))
+  }
+  if (round.approved.length) {
+    lines.push('- Goedgekeurde voorstellen (controleer of ze verwerkt zijn):')
+    round.approved.forEach((item) =>
+      lines.push(`  • ${item.title} — ${item.detail}${item.input ? `\n    Input bidteam: ${item.input}` : ''}${item.processed ? ' [door de schrijfagent verwerkt]' : ' [nog te verwerken]'}`),
+    )
+  }
+  if (round.rejected.length) lines.push(`- Afgewezen voorstellen (niet opnieuw voorstellen): ${round.rejected.join('; ')}`)
+  if (round.skipped.length) lines.push(`- Bewust overgeslagen vragen (niet opnieuw stellen): ${round.skipped.join('; ')}`)
+  if (round.unanswered.length) lines.push(`- Nog onbeantwoord (mag herhaald worden als het nog nodig is): ${round.unanswered.join('; ')}`)
+  return lines.join('\n')
+}
+
 function formatAnalysis(analysis: TenderAnalysis | null): string {
   if (!analysis) return 'Geen leidraadanalyse beschikbaar — beoordeel op basis van bronnen en het concept.'
 
@@ -188,6 +247,7 @@ ${formatDocuments(request)}`
 
 function buildTaskPrompt(request: ReviewDraftRequest): string {
   return `Fase: ${stageLabels[request.stage]}
+Focus van deze verbeterronde: ${STAGE_FOCUS[request.stage]}
 
 Project:
 - Titel: ${request.project.title}
@@ -200,6 +260,12 @@ ${formatAnalysis(request.analysis)}
 
 Eisenregister — toets elke eis (requirementChecks):
 ${formatRequirements(reviewableRequirements(request))}
+
+Open eisen die het bidteam zelf moet afdekken (kandidaat-informatievragen; blijkt de eis al uit de bronnen, stel dan geen vraag):
+${formatOpenUserRequirements(request)}
+
+Vorige verbeterronde:
+${formatPreviousRound(request)}
 
 Heuristische baseline (al gesignaleerd — NIET herhalen, wel aanvullen):
 ${formatBaseline(request.baseline)}
@@ -219,16 +285,70 @@ function normalizePriority(value: unknown): ReviewPriority {
   return value === 'kritiek' || value === 'hoog' ? value : value === 'normaal' ? 'normaal' : 'hoog'
 }
 
+function str(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function parseInformationRequests(value: unknown, knownRequirementIds: Set<string>): ReviewInformationRequest[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((raw): ReviewInformationRequest | null => {
+      if (!raw || typeof raw !== 'object') return null
+      const item = raw as Record<string, unknown>
+      const question = str(item.question)
+      if (!question) return null
+      const requirementId = str(item.requirementId)
+      return {
+        question,
+        reason: str(item.reason) || 'Nodig voor een feitelijk onderbouwde volgende versie.',
+        section: str(item.section) || undefined,
+        requirementId: knownRequirementIds.has(requirementId) ? requirementId : undefined,
+        priority: normalizePriority(item.priority),
+      }
+    })
+    .filter((item): item is ReviewInformationRequest => item !== null)
+    .slice(0, MAX_INFORMATION_REQUESTS)
+}
+
+function parseProposals(value: unknown): ReviewProposal[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((raw): ReviewProposal | null => {
+      if (!raw || typeof raw !== 'object') return null
+      const item = raw as Record<string, unknown>
+      const title = str(item.title)
+      const detail = str(item.detail)
+      if (!title || !detail) return null
+      return {
+        kind: str(item.kind) === 'overtreffen' ? 'overtreffen' : 'verbeteren',
+        title,
+        detail,
+        rationale: str(item.rationale) || 'Verhoogt de score op de beoordelingscriteria.',
+        section: str(item.section) || undefined,
+        criterion: str(item.criterion) || undefined,
+        needsInput: str(item.needsInput) || undefined,
+      }
+    })
+    .filter((item): item is ReviewProposal => item !== null)
+    .slice(0, MAX_PROPOSALS)
+}
+
 function parseReview(
   content: string,
   requirements: Requirement[],
-): { findings: ReviewFindingItem[]; requirementChecks: RequirementCheck[] } {
+  knownRequirementIds: Set<string>,
+): {
+  findings: ReviewFindingItem[]
+  requirementChecks: RequirementCheck[]
+  informationRequests: ReviewInformationRequest[]
+  proposals: ReviewProposal[]
+} {
   const jsonText = content.match(/```json?\s*([\s\S]*?)```/i)?.[1]?.trim() ?? content.trim()
-  let parsed: { findings?: unknown; requirementChecks?: unknown }
+  let parsed: { findings?: unknown; requirementChecks?: unknown; informationRequests?: unknown; proposals?: unknown }
   try {
-    parsed = JSON.parse(jsonText) as { findings?: unknown; requirementChecks?: unknown }
+    parsed = JSON.parse(jsonText) as typeof parsed
   } catch {
-    return { findings: [], requirementChecks: [] }
+    return { findings: [], requirementChecks: [], informationRequests: [], proposals: [] }
   }
 
   const findings = Array.isArray(parsed.findings)
@@ -244,7 +364,12 @@ function parseReview(
         .filter((item): item is ReviewFindingItem => item !== null)
     : []
 
-  return { findings, requirementChecks: normalizeRequirementChecks(parsed.requirementChecks, requirements) }
+  return {
+    findings,
+    requirementChecks: normalizeRequirementChecks(parsed.requirementChecks, requirements),
+    informationRequests: parseInformationRequests(parsed.informationRequests, knownRequirementIds),
+    proposals: parseProposals(parsed.proposals),
+  }
 }
 
 /** Niet-voldane eisen worden ook als bevinding zichtbaar: verplicht = kritiek, wens = hoog. */
@@ -315,8 +440,8 @@ export async function handleReviewDraftRequest(request: ReviewDraftRequest): Pro
       ],
       {
         jsonMode: ai.provider !== 'anthropic',
-        // Bevindingen + het oordeel per eis uit het register.
-        maxTokens: 6_000,
+        // Bevindingen, oordeel per eis, informatievragen en voorstellen.
+        maxTokens: 8_000,
         timeoutMs: 120_000,
         useThinking: false,
         // Herhaalde reviews van hetzelfde project herlezen het bronnenblok;
@@ -328,14 +453,21 @@ export async function handleReviewDraftRequest(request: ReviewDraftRequest): Pro
     )
 
     const requirements = reviewableRequirements(request)
-    const { findings: aiFindings, requirementChecks } = parseReview(content, requirements)
+    const knownRequirementIds = new Set((request.analysis?.requirements ?? []).map((req) => req.id))
+    const { findings: aiFindings, requirementChecks, informationRequests, proposals } = parseReview(
+      content,
+      requirements,
+      knownRequirementIds,
+    )
 
     return Response.json({
       findings: mergeFindings(baseline, [...findingsFromChecks(requirementChecks, requirements), ...aiFindings]),
       provider: ai.provider,
       model: ai.model,
-      enriched: aiFindings.length > 0 || requirementChecks.length > 0,
+      enriched: aiFindings.length > 0 || requirementChecks.length > 0 || informationRequests.length > 0 || proposals.length > 0,
       requirementChecks,
+      informationRequests,
+      proposals,
     } satisfies ReviewDraftResponse)
   } catch {
     // AI-call mislukt → val terug op de baseline zodat de review altijd iets oplevert.

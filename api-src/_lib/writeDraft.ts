@@ -48,7 +48,7 @@ INHOUDELIJKE REGELS
 - Voeg geen standaardparagrafen toe over risico, duurzaamheid, implementatie of continuiteit tenzij de leidraad dat vereist
 - Respecteer de specifieke eisen aan de inschrijving (vorm, opmaak, indiening, geschiktheid) uit de analyse: schrijf bijvoorbeeld anoniem als dat vereist is, in het Nederlands, en houd je aan format-/structuureisen
 - Onderbouw uitspraken met feiten uit bedrijfsbronnen; geen lege superlatieven
-- Ontbrekende feiten niet verzinnen — weglaten of voorzichtig formuleren
+- FEITEN (hard): schrijf geen cijfers, namen, referenties, certificaten, resultaten, werkwijzen of toezeggingen die niet letterlijk in de bronnen of in de aanvullende informatie van het bidteam (taakblok "VERBETERRONDE") staan. Ontbreekt onderbouwing: laat de claim weg of formuleer zonder feitelijke claim — nooit invullen met aannames; de reviewer vraagt die informatie bij het bidteam op
 - Verwijs niet naar het schrijfproces, AI, prompts of interne review
 
 STIJL
@@ -508,6 +508,38 @@ Lessons learned uit eerdere aanbestedingen (toepassen wat werkte, vermijden wat 
 ${docsByType(request, 'lessons') || '- geen'}`
 }
 
+/** Uitkomst van de verbeterronde: alleen goedgekeurde voorstellen en gegeven antwoorden zijn feitelijke basis. */
+function buildImprovementsBlock(request: WriteDraftRequest): string {
+  const improvements = request.improvements
+  if (!improvements) return ''
+  const lines: string[] = ['VERBETERRONDE (door het bidteam goedgekeurd — verwerk dit in deze versie)']
+
+  if (improvements.answers.length) {
+    lines.push('Aanvullende informatie van het bidteam (feitelijke basis; gebruik deze antwoorden letterlijk als bron):')
+    improvements.answers.forEach((item, index) =>
+      lines.push(`${index + 1}. Vraag: ${item.question}${item.section ? ` [sectie: ${item.section}]` : ''}\n   Antwoord: ${item.answer}`),
+    )
+  }
+
+  if (improvements.approvedProposals.length) {
+    lines.push('', 'Goedgekeurde voorstellen (elk verwerken; "overtreffen" = de uitvraag overstijgen op dit punt, binnen de limieten):')
+    improvements.approvedProposals.forEach((item, index) =>
+      lines.push(
+        `${index + 1}. [${item.kind}] ${item.title}${item.section ? ` [sectie: ${item.section}]` : ''}\n   Wat: ${item.detail}\n   Waarom: ${item.rationale}${item.input ? `\n   Feitelijke input bidteam: ${item.input}` : '\n   (geen aanvullende input — gebruik uitsluitend de bronnen; verzin geen feiten)'}`,
+      ),
+    )
+  }
+
+  if (improvements.unanswered.length) {
+    lines.push('', 'NIET INVULLEN — onbeantwoorde informatievragen (hiervoor ontbreekt feitelijke onderbouwing; laat de claim weg of formuleer zonder feit, schrijf géén aanname):')
+    improvements.unanswered.forEach((item, index) =>
+      lines.push(`${index + 1}. ${item.question}${item.section ? ` [sectie: ${item.section}]` : ''} — ${item.reason}`),
+    )
+  }
+
+  return `${lines.join('\n')}\n\n`
+}
+
 function buildTaskPrompt(request: WriteDraftRequest): string {
   const openComments = request.comments
     .filter((comment) => !comment.resolved)
@@ -554,7 +586,7 @@ De bronnen staan in het vorige bericht.
 Open reviewopmerkingen:
 ${openComments || '- geen'}
 
-${currentDraftBlock}
+${buildImprovementsBlock(request)}${currentDraftBlock}
 
 ${stageTask}
 Lever uitsluitend het HTML-artikel.`

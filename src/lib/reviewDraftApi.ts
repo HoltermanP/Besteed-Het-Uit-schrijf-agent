@@ -4,8 +4,9 @@ import type {
   ReviewDraftRequest,
   ReviewDraftResponse,
   ReviewFindingItem,
+  ReviewRoundContext,
 } from '../types/reviewDraft'
-import type { RequestedDocument, SourceDocument, TenderAnalysis } from '../types/tenderAnalysis'
+import type { RequestedDocument, Requirement, SourceDocument, TenderAnalysis } from '../types/tenderAnalysis'
 
 type ReviewComment = {
   fragment: string
@@ -41,6 +42,10 @@ export async function reviewDraftViaApi(args: {
   /** Het stuk dat gereviewd wordt (bij meerdere stukken per inschrijving). */
   targetDocument?: RequestedDocument
   baseline: ReviewFindingItem[]
+  /** Open eisen die het bidteam zelf moet afdekken (kandidaat-informatievragen). */
+  openUserRequirements?: Requirement[]
+  /** Vorige verbeterronde van dit stuk. */
+  round?: ReviewRoundContext
 }): Promise<ReviewDraftResponse | null> {
   const payload: ReviewDraftRequest = {
     stage: args.stage,
@@ -59,6 +64,8 @@ export async function reviewDraftViaApi(args: {
     analysis: args.analysis,
     targetDocument: args.targetDocument,
     baseline: args.baseline,
+    openUserRequirements: args.openUserRequirements,
+    round: args.round,
   }
 
   const apiConfig = getApiConfig()

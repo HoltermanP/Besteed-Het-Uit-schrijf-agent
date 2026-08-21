@@ -31,6 +31,24 @@ export type WriteDraftProject = {
 /** Kort profiel van een ander stuk uit dezelfde inschrijving (voor afbakening en samenhang). */
 export type WriteDraftSibling = Pick<RequestedDocument, 'title' | 'kind' | 'question'>
 
+/**
+ * Uitkomst van de verbeterronde die de schrijfagent moet verwerken: alleen door de gebruiker
+ * goedgekeurde voorstellen en gegeven antwoorden; onbeantwoorde vragen markeren wat NIET
+ * met aannames ingevuld mag worden.
+ */
+export type WriteDraftImprovements = {
+  approvedProposals: Array<{
+    kind: 'verbeteren' | 'overtreffen'
+    title: string
+    detail: string
+    rationale: string
+    section?: string
+    input?: string
+  }>
+  answers: Array<{ question: string; answer: string; section?: string }>
+  unanswered: Array<{ question: string; reason: string; section?: string }>
+}
+
 export type WriteDraftRequest = {
   stage: 'brons' | 'zilver' | 'goud'
   project: WriteDraftProject
@@ -42,6 +60,8 @@ export type WriteDraftRequest = {
   targetDocument?: RequestedDocument
   /** De overige stukken van deze inschrijving — elders uitgewerkt, hier niet herhalen. */
   siblingDocuments?: WriteDraftSibling[]
+  /** Goedgekeurde voorstellen en antwoorden uit de verbeterronde (zilver/goud). */
+  improvements?: WriteDraftImprovements
   currentDraft?: string
   ai?: WriteDraftAiConfig
   stream?: boolean

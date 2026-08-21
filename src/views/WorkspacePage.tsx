@@ -87,8 +87,18 @@ import { generateDraftViaApi, fetchWriterStatus, isNoAiConfigError, type WriterS
 import { rewriteFragmentViaApi } from '../lib/rewriteFragmentApi'
 import { reviewDraftViaApi } from '../lib/reviewDraftApi'
 import { extractRequirementsViaApi } from '../lib/extractRequirementsApi'
-import { applyRequirementChecks, deriveRequirementsFromAnalysis } from '../lib/requirements'
+import { applyRequirementChecks, deriveRequirementsFromAnalysis, resolveRequirementStatuses } from '../lib/requirements'
 import RequirementsCard from '../components/RequirementsCard'
+import ImprovementRoundPanel from '../components/ImprovementRoundPanel'
+import {
+  markRoundProcessed,
+  mergeRound,
+  nextStageFor,
+  roundFromOpenRequirements,
+  roundToImprovements,
+  roundToReviewContext,
+  summarizeRound,
+} from '../lib/improvementRound'
 import { getCompanyConfig, isCompanyConfigured, mergeDocumentsWithCompanyConfig } from '../lib/companyConfig'
 import { computeOpportunityScore, type OpportunityLevel } from '../lib/opportunityScore'
 import { fetchStyleDocuments } from '../lib/styleDocumentsApi'
@@ -107,6 +117,7 @@ import type {
   CommentStatus,
   DossierSnapshot,
   DraftDocument,
+  ImprovementRound,
   ReviewComment,
   SourceDocument,
   SourceType,
@@ -753,6 +764,85 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         updatedAt: new Date().toISOString(),
       },
     }))
+  }
+
+  // Verbeterronde van het actieve stuk (antwoorden, goed-/afkeuren) bewaren op het stuk.
+  const updateRound = (round: ImprovementRound) => {
+    persistDraft(activeDraftIdRef.current, { round })
+  }
+
+  // Verwerk de verbeterronde naar de volgende versie: uitsluitend goedgekeurde voorstellen en
+  // gegeven antwoorden gaan als feitelijke basis naar de schrijfagent; onbeantwoorde vragen
+  // mogen niet met aannames worden ingevuld.
+  const applyImprovements = async () => {
+    if (generating || reviewing) return
+    const current = draftsRef.current.find((item) => item.id === activeDraftIdRef.current)
+    const round = current?.round
+    const html = liveDraftHtml()
+    if (!round || isStartDraft(html)) return
+    const improvements = roundToImprovements(round)
+    if (!improvements || (!improvements.approvedProposals.length && !improvements.answers.length)) {
+      setSyncStatus('Beantwoord eerst een vraag of keur een voorstel goed; er is nog niets te verwerken.')
+      return
+    }
+    const target = nextStageFor(stage)
+    setGenerating(true)
+    setSyncStatus(`Schrijfagent verwerkt de verbeterronde naar ${stageMeta[target].label}…`)
+    const result = analysis ?? (await runAnalysis())
+    const { requested, scoped, siblings } = briefFor(activeDraft, result)
+    const lessonDocuments = await gatherLessonDocuments(result)
+    const distilledById = await gatherDistilledDocuments()
+
+    try {
+      const aiResult = await generateDraftViaApi(
+        {
+          stage: target,
+          project,
+          documents: [...applyDistillates(effectiveDocuments, distilledById), ...lessonDocuments],
+          comments: toLegacyComments(comments),
+          analysis: scoped,
+          targetDocument: requested,
+          siblingDocuments: siblings,
+          improvements,
+          currentDraft: stripCommentMarks(html),
+        },
+        (accumulated) => {
+          updateEditorHtml(accumulated || html)
+        },
+        (message) => setSyncStatus(message),
+      )
+      updateEditorHtml(aiResult.html)
+      persistDraft(activeDraftIdRef.current, { html: aiResult.html, stage: target, round: markRoundProcessed(round) })
+      setStage(target)
+      setFindings(reviewDraft(aiResult.html, effectiveDocuments, scoped))
+      setSyncStatus(
+        `Verbeterronde verwerkt naar ${stageMeta[target].label} met ${aiResult.provider} (${aiResult.model}) — voer een nieuwe AI-review uit voor de volgende ronde`,
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Verwerken mislukt.'
+      if (isNoAiConfigError(message)) {
+        // Zonder AI: antwoorden en goedgekeurde voorstellen zichtbaar in het concept zetten,
+        // zodat de ronde niet verloren gaat (zelfde mechanisme als bij opmerkingen).
+        const items = [
+          ...improvements.answers.map(
+            (item) => `<p><strong>Aanvullende informatie:</strong> ${summarize(item.answer, 260)}</p>`,
+          ),
+          ...improvements.approvedProposals.map(
+            (item) => `<p><strong>Voorstel verwerkt:</strong> ${item.title} — ${summarize(item.detail, 200)}</p>`,
+          ),
+        ].join('')
+        const next = html.replace('</article>', `<section><h2>Verbeterronde verwerkt</h2>${items}</section></article>`)
+        updateEditorHtml(next)
+        persistDraft(activeDraftIdRef.current, { html: next, stage: target, round: markRoundProcessed(round) })
+        setStage(target)
+        setFindings(reviewDraft(next, effectiveDocuments, scoped))
+        setSyncStatus('Verbeterronde lokaal verwerkt (geen AI geconfigureerd)')
+        return
+      }
+      setSyncStatus(message)
+    } finally {
+      setGenerating(false)
+    }
   }
 
   const addCustomDraft = () => {
@@ -1776,6 +1866,14 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       const baselineFindings = reviewDraft(html, effectiveDocuments, scoped)
       const baseline = baselineFindings.map(({ priority, title, detail }) => ({ priority, title, detail }))
       const distilledById = await gatherDistilledDocuments()
+      // Eisen die het bidteam zelf moet afdekken en nog open staan: de reviewer vraagt ze gericht uit.
+      const openUserRequirements = resolveRequirementStatuses(
+        result.requirements ?? [],
+        requirementStatuses,
+        writtenDocumentIds,
+      ).filter((req) => req.checkBy === 'gebruiker' && (req.status === 'open' || req.status === 'aandacht'))
+      const currentDraftId = activeDraftIdRef.current
+      const previousRound = draftsRef.current.find((item) => item.id === currentDraftId)?.round ?? null
       const ai = await reviewDraftViaApi({
         stage,
         project,
@@ -1785,22 +1883,35 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         analysis: scoped,
         targetDocument: activeDraft?.requested,
         baseline,
+        openUserRequirements,
+        round: roundToReviewContext(previousRound),
       })
       // Het oordeel van de reviewer per eis landt in het eisenregister (voldaan/aandacht).
       const checks = ai?.requirementChecks ?? []
       if (checks.length) {
         setRequirementStatuses((current) => applyRequirementChecks(current, checks, result.requirements ?? []))
       }
+      // Verbeterronde: informatievragen en voorstellen van de reviewer (zonder AI: de open
+      // eisen van het bidteam als vragen), samengevoegd met wat in de vorige ronde al is besloten.
+      const hasRoundOutput = Boolean(ai?.informationRequests?.length || ai?.proposals?.length)
+      const nextRound = hasRoundOutput
+        ? mergeRound(previousRound, stage, ai!)
+        : roundFromOpenRequirements(previousRound, stage, openUserRequirements)
+      persistDraft(currentDraftId, { round: nextRound })
+      const roundSummary = summarizeRound(nextRound)
+      const roundNote = roundSummary.openQuestions || roundSummary.pendingProposals
+        ? ` · verbeterronde: ${roundSummary.openQuestions} vragen, ${roundSummary.pendingProposals} voorstellen`
+        : ''
       if (ai && ai.findings.length) {
         setFindings(ai.findings.map((finding) => ({ id: makeId(), ...finding })))
         setSyncStatus(
           ai.enriched
-            ? `AI-review uitgevoerd met ${ai.provider} (${ai.model})${checks.length ? ` · ${checks.length} eisen getoetst` : ''}`
-            : 'Review uitgevoerd (heuristisch — AI gaf geen extra punten)',
+            ? `AI-review uitgevoerd met ${ai.provider} (${ai.model})${checks.length ? ` · ${checks.length} eisen getoetst` : ''}${roundNote}`
+            : `Review uitgevoerd (heuristisch — AI gaf geen extra punten)${roundNote}`,
         )
       } else {
         setFindings(baselineFindings)
-        setSyncStatus('AI-review niet beschikbaar — heuristische review getoond')
+        setSyncStatus(`AI-review niet beschikbaar — heuristische review getoond${roundNote}`)
       }
     } catch {
       setFindings(reviewDraft(html, effectiveDocuments, scopedAnalysis))
@@ -2635,6 +2746,17 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           })}
         </nav>
 
+        {activeDraft?.round && !notStarted ? (
+          <ImprovementRoundPanel
+            round={activeDraft.round}
+            currentStage={stage}
+            busy={generating || reviewing}
+            onChange={updateRound}
+            onApply={() => void applyImprovements()}
+            onReview={() => void runAiReview()}
+          />
+        ) : null}
+
         {appliedLessons.length ? (
           <div className="mb-[14px] rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/50 dark:bg-amber-950/30">
             <p className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
@@ -2953,6 +3075,12 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
                 {reviewing ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
                 {reviewing ? 'Review uitvoeren…' : 'Review uitvoeren'}
               </Button>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                De review toetst het concept aan eisen en bronnen en vraagt gericht informatie op waar feitelijke
+                onderbouwing ontbreekt. Vragen en voorstellen (verbeteren of de uitvraag overtreffen) verschijnen in de
+                verbeterronde onder de schrijfstadia; na jouw antwoord en goedkeuring verwerkt de schrijfagent ze in de
+                volgende versie.
+              </p>
               <div className="grid gap-[9px]">
                 {findings.map((finding) => (
                   <article

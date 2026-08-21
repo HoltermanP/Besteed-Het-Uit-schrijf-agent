@@ -448,6 +448,16 @@ export default function HandleidingPage() {
               met een toelichting.
             </li>
             <li>
+              <strong>Verbeterronde</strong> (onder de schrijfstadia, na een AI-review): de review helpt elke versie
+              beter te maken. Ze stelt <em>informatievragen</em> waar feitelijke onderbouwing ontbreekt of een eis
+              nog niet is afgedekt, en doet <em>voorstellen</em> om te verbeteren of de uitvraag te overtreffen op
+              punten die de opdrachtgever waardeert — met erbij welke feiten het bidteam daarvoor moet leveren.
+              Beantwoord de vragen, keur voorstellen goed of wijs ze af en klik <Term>Verwerk naar Zilver</Term>{' '}
+              (of Goud). De schrijfagent verwerkt uitsluitend wat is goedgekeurd en beantwoord; voor onbeantwoorde
+              vragen schrijft hij niets op basis van aannames — de review blijft daarom vragen om informatie totdat
+              de onderbouwing er is.
+            </li>
+            <li>
               <strong>Kansscore:</strong> de score-tegel toont je winkans op basis van match tussen profiel en
               uitvraag, referenties, harde eisen en concurrentie. Klik erop voor de opbouw per factor (score, weging,
               signalen). Niveaus: Lage kans, Matige kans, Kansrijk en Sterke kans.
