@@ -40,9 +40,13 @@ function trimText(text: string, max: number): string {
   return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned
 }
 
-function formatStyleContext(analysis: TenderAnalysis | null): string {
+function formatStyleContext(analysis: TenderAnalysis | null, doc?: RewriteFragmentRequest['targetDocument']): string {
   if (!analysis) return '- Geen leidraadanalyse beschikbaar; volg de stijl van het bestaande onderdeel.'
   const lines = [`- Gecombineerde schrijfstijl: ${analysis.styleProfile.blendedGuidance}`]
+  if (doc) {
+    lines.push(`- Dit onderdeel hoort bij het stuk "${doc.title}"${doc.question ? ` — vraag uit de leidraad: ${doc.question.slice(0, 400)}` : ''}`)
+    if (doc.criteria.length) lines.push(`- Dit stuk wordt beoordeeld op: ${doc.criteria.join('; ')}`)
+  }
   if (analysis.styleProfile.buyerSignals?.length) {
     lines.push(`- Opdrachtgevertaal: ${analysis.styleProfile.buyerSignals.join('; ')}`)
   }
@@ -75,7 +79,7 @@ Project:
 - TenderNed: ${request.project.tendernedId}
 
 Stijl- en beoordelingscontext:
-${formatStyleContext(request.analysis)}
+${formatStyleContext(request.analysis, request.targetDocument)}
 
 Schrijfkader — schrijfregels, schrijfwijze & kwaliteit (verplicht volgen, ook in de herschreven passage):
 ${formatDocuments(request.documents, ['rules', 'training'], KADER_CHAR_LIMIT)}

@@ -1,5 +1,5 @@
 import type { AiProvider } from './apiConfig'
-import type { SourceDocument, TenderAnalysis } from './tenderAnalysis'
+import type { RequestedDocument, SourceDocument, TenderAnalysis } from './tenderAnalysis'
 import type { WriteDraftAiConfig, WriteDraftProject } from './writeDraft'
 
 export type RewriteFragmentRequest = {
@@ -13,6 +13,8 @@ export type RewriteFragmentRequest = {
   sectionHtml: string
   documents: Pick<SourceDocument, 'name' | 'type' | 'content'>[]
   analysis: TenderAnalysis | null
+  /** Het stuk waar het onderdeel bij hoort (vraag en criteria), voor een passende herschrijving. */
+  targetDocument?: RequestedDocument
   ai?: WriteDraftAiConfig
 }
 

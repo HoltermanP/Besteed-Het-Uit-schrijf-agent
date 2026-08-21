@@ -1,5 +1,6 @@
-import type { TenderAnalysis } from '../types/tenderAnalysis'
+import type { RequestedDocument, TenderAnalysis } from '../types/tenderAnalysis'
 import type { SourceDocument } from '../types/tenderAnalysis'
+import { formatDocumentLimits } from './requestedDocuments'
 
 type Stage = 'brons' | 'zilver' | 'goud'
 
@@ -113,6 +114,8 @@ export function buildHtmlDraft(
   documents: SourceDocument[],
   comments: Array<{ fragment: string; note: string; resolved: boolean }>,
   analysis?: TenderAnalysis | null,
+  /** Het stuk waarvoor dit concept is; bepaalt titel en kicker zodat elk stuk herkenbaar is. */
+  deliverable?: RequestedDocument | null,
 ) {
   const tenderDocs = documents.filter((doc) => doc.type === 'tender')
   const companyDocs = documents.filter((doc) => doc.type === 'company')
@@ -144,17 +147,24 @@ export function buildHtmlDraft(
 
   const sectionOffset = analysis ? 1 : 0
 
+  const docTitle = deliverable?.title?.trim()
+  const kicker = docTitle ? `${docTitle} · ${stageLabels[stage]} versie` : `${stageLabels[stage]} versie`
+  const criteriaMeta = deliverable?.criteria?.length
+    ? `<div><dt>Beoordeeld op</dt><dd>${escapeHtml(deliverable.criteria.join('; '))}</dd></div>`
+    : ''
+
   return `<article class="proposal-doc">
   <header class="doc-header">
-    <p class="kicker">${stageLabels[stage]} versie</p>
-    <p class="doc-subtitle">Inschrijving voor ${escapeHtml(project.buyer)}</p>
-    <h1>${escapeHtml(project.title)}</h1>
+    <p class="kicker">${escapeHtml(kicker)}</p>
+    <p class="doc-subtitle">Inschrijving ${escapeHtml(project.title)} — ${escapeHtml(project.buyer)}</p>
+    <h1>${escapeHtml(docTitle || project.title)}</h1>
     <dl class="doc-meta">
       <div><dt>Opdrachtgever</dt><dd>${escapeHtml(project.buyer)}</dd></div>
+      ${criteriaMeta}
       <div><dt>Deadline</dt><dd>${escapeHtml(project.deadline)}</dd></div>
       <div><dt>TenderNed</dt><dd>${escapeHtml(project.tendernedId)}</dd></div>
     </dl>
-    <p class="lead">${escapeHtml(styleLead)}${escapeHtml(criteriaHint)}</p>
+    <p class="lead">${deliverable?.question ? `${escapeHtml(summarize(deliverable.question, 240))} ` : ''}${escapeHtml(styleLead)}${escapeHtml(criteriaHint)}</p>
   </header>
 
   ${analysisBlock}
@@ -255,12 +265,35 @@ const sourceTypeLabels: Record<SourceDocument['type'], string> = {
   training: 'schrijfstijlvoorbeeld(en)',
 }
 
+/** Blok met de opdracht voor één te schrijven stuk (titel, vraag, criteria, onderwerpen, limieten). */
+function renderDeliverableBrief(deliverable: RequestedDocument) {
+  const limits = formatDocumentLimits(deliverable)
+  const rows = [
+    deliverable.question ? `<div><dt>Vraag uit de leidraad</dt><dd>${escapeHtml(deliverable.question)}</dd></div>` : '',
+    deliverable.criteria.length ? `<div><dt>Beoordeeld op</dt><dd>${escapeHtml(deliverable.criteria.join('; '))}</dd></div>` : '',
+    limits ? `<div><dt>Limiet</dt><dd>${escapeHtml(limits)}</dd></div>` : '',
+    deliverable.format ? `<div><dt>Vorm</dt><dd>${escapeHtml(deliverable.format)}</dd></div>` : '',
+    `<div><dt>Bron</dt><dd>${escapeHtml(deliverable.source)}</dd></div>`,
+  ].join('')
+  const topics = deliverable.topics.length
+    ? `<p><strong>Onderwerpen die dit stuk moet beantwoorden</strong></p><ol>${deliverable.topics
+        .map((topic) => `<li>${escapeHtml(topic)}</li>`)
+        .join('')}</ol>`
+    : ''
+  return `<section class="doc-section">
+    <h2>Opdracht voor dit stuk</h2>
+    <dl class="doc-meta">${rows}</dl>
+    ${topics}
+  </section>`
+}
+
 /**
  * Startinhoud van het tekstveld vóórdat de schrijfagent is gestart. Bewust géén
  * voorgeschreven conceptteksten (die lijken op een al geschreven stuk), maar een
  * duidelijke melding plus een korte samenvatting van de aanbesteding en de bronnen.
+ * Met een `deliverable` toont het veld bovendien de opdracht voor precies dat stuk.
  */
-export function buildStartDraft(project: TenderProject, documents: SourceDocument[]) {
+export function buildStartDraft(project: TenderProject, documents: SourceDocument[], deliverable?: RequestedDocument | null) {
   const tenderDocs = documents.filter((doc) => doc.type === 'tender')
   // De catalogus voegt naast de volledige tekst een aparte samenvattingsbron toe; gebruik die bij voorkeur.
   const summaryDoc = tenderDocs.find((doc) => /—\s*samenvatting$/i.test(doc.name)) ?? tenderDocs[0]
@@ -279,17 +312,24 @@ export function buildStartDraft(project: TenderProject, documents: SourceDocumen
     project.tendernedId ? `<div><dt>TenderNed</dt><dd>${escapeHtml(project.tendernedId)}</dd></div>` : '',
   ].join('')
 
+  const docTitle = deliverable?.title?.trim()
+  const notice = docTitle
+    ? `De schrijfagent moet dit stuk nog schrijven. Klik op <em>Start schrijfagent</em> om het eerste concept (Brons) van <em>${escapeHtml(docTitle)}</em> te laten schrijven. Hieronder staan de opdracht voor dit stuk en een korte samenvatting van de aanbesteding.`
+    : 'De schrijfagent moet nog gestart worden. Klik op <em>Start schrijfagent</em> om het eerste concept (Brons) te laten schrijven. Hieronder staat alleen een korte samenvatting van de aanbesteding.'
+
   return `<article class="proposal-doc draft-start" ${START_DRAFT_ATTR}>
   <div class="start-notice">
     <strong>Nog geen concept geschreven</strong>
-    De schrijfagent moet nog gestart worden. Klik op <em>Start schrijfagent</em> om het eerste concept (Brons) te laten schrijven. Hieronder staat alleen een korte samenvatting van de aanbesteding.
+    ${notice}
   </div>
   <header class="doc-header">
-    <p class="kicker">Samenvatting aanbesteding</p>
-    ${project.buyer ? `<p class="doc-subtitle">Inschrijving voor ${escapeHtml(project.buyer)}</p>` : ''}
-    <h1>${escapeHtml(project.title)}</h1>
+    <p class="kicker">${docTitle ? 'Samenvatting aanbesteding · nog te schrijven stuk' : 'Samenvatting aanbesteding'}</p>
+    ${project.buyer ? `<p class="doc-subtitle">Inschrijving ${escapeHtml(project.title)} — ${escapeHtml(project.buyer)}</p>` : ''}
+    <h1>${escapeHtml(docTitle || project.title)}</h1>
     ${meta ? `<dl class="doc-meta">${meta}</dl>` : ''}
   </header>
+
+  ${deliverable ? renderDeliverableBrief(deliverable) : ''}
 
   <section class="doc-section">
     <h2>Waar gaat de aanbesteding over?</h2>

@@ -8,6 +8,7 @@ import type {
   WordLimit,
 } from '../../src/types/tenderAnalysis'
 import { completeChat, resolveAiFromRequest } from './aiClient'
+import { normalizeRequestedDocuments } from '../../src/lib/requestedDocuments'
 
 // Eén stuk per call: ruim budget zodat een volledige leidraad in één keer wordt gelezen.
 const DOC_CHAR_LIMIT = 200_000
@@ -48,13 +49,31 @@ Extraheer met de hoogste nauwkeurigheid en VERBATIM waar het om harde eisen gaat
 - alle woord-, karakter- en paginalimieten (met de exacte getallen en op welke sectie ze slaan)
 - elk verplicht onderwerp/vraag dat inhoudelijk beantwoord moet worden (contentRequirements)
 - alle in te dienen documenten/bijlagen (documentRequirements)
+- WELKE STUKKEN DE INSCHRIJVER MOET OPSTELLEN (requestedDocuments) — dit is cruciaal, zie hieronder
 - de beoordelingscriteria met gewichten (evaluationCriteria)
 - vorm-, opmaak-, indienings- en geschiktheidseisen (submissionRequirements)
-Vat NIET lossy samen: mis geen limiet of verplicht onderwerp. Laat modifications leeg.`,
+Vat NIET lossy samen: mis geen limiet of verplicht onderwerp. Laat modifications leeg.
+
+REQUESTEDDOCUMENTS — de op te stellen stukken (één item per stuk dat apart wordt ingediend of beoordeeld):
+- kind "schrijfstuk": alles wat de inschrijver zelf moet SCHRIJVEN en waarop inhoudelijk wordt beoordeeld: plan van aanpak,
+  kwaliteitsdocument/uitwerking per (sub)gunningscriterium of per vraag (bv. "Kwaliteit — Subcriterium 1: Implementatie"),
+  casusuitwerking, implementatie-/transitieplan, communicatieplan, risicoanalyse, visie, presentatie, SROI-plan, enz.
+  Vraagt de leidraad per (sub)gunningscriterium een aparte uitwerking of een apart in te dienen document, maak dan per
+  criterium/vraag een eigen schrijfstuk. Vraagt ze één samenhangend document met meerdere hoofdstukken, maak dan één
+  schrijfstuk met die hoofdstukken als topics.
+- kind "formulier": voorgeschreven formats die worden ingevuld/ondertekend (UEA, prijsblad/inschrijfbiljet, verklaringen, invullingsblad).
+- kind "bewijsstuk": bestaand bewijs dat wordt bijgevoegd (referenties, CV's, certificaten, uittreksels, polissen).
+Per item: title (korte, herkenbare titel zoals de leidraad het stuk noemt, incl. criteriumnummer als dat er is), kind, question
+(de LETTERLIJKE vraag/opdracht uit de leidraad waar dit stuk antwoord op geeft — citeer of parafraseer dicht bij de tekst, incl.
+wat de beoordelaar wil zien), criteria (de (sub)gunningscriteria met weging waarop dít stuk wordt beoordeeld), topics (de
+onderwerpen/deelvragen die in dít stuk beantwoord moeten worden, in de volgorde van de leidraad), wordLimits (alleen de
+limieten die voor dít stuk gelden), format (bv. "PDF, max. 4 A4, Arial 10"), mandatory, source.`,
   'nota-van-inlichtingen': `Dit is een NOTA VAN INLICHTINGEN (vragen & antwoorden).
 Deze OVERRULET de leidraad waar antwoorden eisen wijzigen, verduidelijken of intrekken.
 - Zet elke wijziging/verduidelijking die een eis raakt in modifications (concreet: "X wordt Y").
 - Neem gewijzigde of nieuwe limieten/eisen ook op in de bijbehorende lijsten.
+- requestedDocuments: alleen vullen als de NvI een op te stellen stuk toevoegt, schrapt of de vraag/limiet ervan wijzigt
+  (zelfde velden als bij de leidraad: title, kind, question, criteria, topics, wordLimits, format, mandatory, source).
 - Laat lijsten leeg als de NvI die niet raakt; verzin geen eisen.`,
   bijlage: `Dit is een BIJLAGE (bv. bestek, programma van eisen, format, prijsblad of overeenkomst).
 - Vat de inhoud beknopt samen (summary) en haal concrete feiten/cijfers/constraints op in keyFacts
@@ -85,6 +104,7 @@ Antwoord UITSLUITEND met geldig JSON in exact deze vorm:
   "wordLimits": [{ "label": "", "section": "", "min": null, "max": null, "unit": "woorden", "source": "" }],
   "contentRequirements": [{ "topic": "", "detail": "", "mandatory": true, "source": "" }],
   "documentRequirements": [{ "name": "", "mandatory": true, "source": "" }],
+  "requestedDocuments": [{ "title": "", "kind": "schrijfstuk|formulier|bewijsstuk", "question": "", "criteria": [], "topics": [], "wordLimits": [{ "label": "", "section": "", "min": null, "max": null, "unit": "woorden", "source": "" }], "format": "", "mandatory": true, "source": "" }],
   "submissionRequirements": [{ "category": "vorm", "requirement": "", "mandatory": true, "source": "" }],
   "evaluationCriteria": ["Criterium (gewicht%)"],
   "modifications": [],
@@ -189,6 +209,7 @@ function parseExtract(content: string, role: DocumentRole, source: string, sourc
     wordLimits: normalizeWordLimits(parsed.wordLimits, source),
     contentRequirements: normalizeContentRequirements(parsed.contentRequirements, source),
     documentRequirements: normalizeDocumentRequirements(parsed.documentRequirements, source),
+    requestedDocuments: normalizeRequestedDocuments(parsed.requestedDocuments, source).slice(0, 25),
     submissionRequirements: normalizeSubmissionRequirements(parsed.submissionRequirements, source),
     evaluationCriteria: normalizeStringList(parsed.evaluationCriteria).slice(0, 12),
     modifications: normalizeStringList(parsed.modifications).slice(0, 30),

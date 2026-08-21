@@ -1,5 +1,5 @@
 import type { AiProvider } from './apiConfig'
-import type { SourceDocument, TenderAnalysis } from './tenderAnalysis'
+import type { RequestedDocument, SourceDocument, TenderAnalysis } from './tenderAnalysis'
 
 export type ReviewPriority = 'kritiek' | 'hoog' | 'normaal'
 
@@ -37,6 +37,8 @@ export type ReviewDraftRequest = {
   documents: Pick<SourceDocument, 'name' | 'type' | 'content'>[]
   comments: ReviewDraftComment[]
   analysis: TenderAnalysis | null
+  /** Het stuk dat gereviewd wordt (vraag, criteria, limieten), als de inschrijving uit meerdere stukken bestaat. */
+  targetDocument?: RequestedDocument
   /** Heuristische bevindingen die client-side al zijn berekend (deterministische feiten). */
   baseline: ReviewFindingItem[]
   ai?: ReviewDraftAiConfig

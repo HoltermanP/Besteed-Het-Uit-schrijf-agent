@@ -5,7 +5,7 @@ import type {
   ReviewDraftResponse,
   ReviewFindingItem,
 } from '../types/reviewDraft'
-import type { SourceDocument, TenderAnalysis } from '../types/tenderAnalysis'
+import type { RequestedDocument, SourceDocument, TenderAnalysis } from '../types/tenderAnalysis'
 
 type ReviewComment = {
   fragment: string
@@ -38,6 +38,8 @@ export async function reviewDraftViaApi(args: {
   documents: SourceDocument[]
   comments: ReviewComment[]
   analysis: TenderAnalysis | null
+  /** Het stuk dat gereviewd wordt (bij meerdere stukken per inschrijving). */
+  targetDocument?: RequestedDocument
   baseline: ReviewFindingItem[]
 }): Promise<ReviewDraftResponse | null> {
   const payload: ReviewDraftRequest = {
@@ -55,6 +57,7 @@ export async function reviewDraftViaApi(args: {
       resolved: comment.resolved,
     })),
     analysis: args.analysis,
+    targetDocument: args.targetDocument,
     baseline: args.baseline,
   }
 

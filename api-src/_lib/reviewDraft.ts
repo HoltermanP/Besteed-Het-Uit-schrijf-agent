@@ -90,6 +90,21 @@ function formatBaseline(baseline: ReviewFindingItem[]): string {
   return baseline.map((item) => `- [${item.priority}] ${item.title}: ${item.detail}`).join('\n')
 }
 
+function formatTargetDocument(request: ReviewDraftRequest): string {
+  const doc = request.targetDocument
+  if (!doc) return ''
+  const lines = [
+    'Te reviewen stuk (de inschrijving bestaat uit meerdere stukken; beoordeel dit concept ALLEEN op de vraag van dít stuk):',
+    `- Titel: ${doc.title}`,
+    `- Vraag/opdracht uit de leidraad: ${doc.question || '(niet letterlijk bekend)'}`,
+    `- Beoordeeld op: ${doc.criteria.length ? doc.criteria.join('; ') : '(zie criteria in de analyse)'}`,
+  ]
+  if (doc.topics.length) lines.push(`- Verwachte onderwerpen/deelvragen: ${doc.topics.join('; ')}`)
+  if (doc.format) lines.push(`- Vorm/format: ${doc.format}`)
+  lines.push('- Let ook op: vaste documentopbouw (header met kern-antwoord, genummerde secties per deelvraag met "Beoordeeld op", slotsectie met toezeggingen) en consistente stem/terminologie met de andere stukken.')
+  return `${lines.join('\n')}\n\n`
+}
+
 function formatAnalysis(analysis: TenderAnalysis | null): string {
   if (!analysis) return 'Geen leidraadanalyse beschikbaar — beoordeel op basis van bronnen en het concept.'
 
@@ -151,7 +166,7 @@ Project:
 - Deadline: ${request.project.deadline}
 - TenderNed: ${request.project.tendernedId}
 
-Leidraadanalyse:
+${formatTargetDocument(request)}Leidraadanalyse:
 ${formatAnalysis(request.analysis)}
 
 Heuristische baseline (al gesignaleerd — NIET herhalen, wel aanvullen):

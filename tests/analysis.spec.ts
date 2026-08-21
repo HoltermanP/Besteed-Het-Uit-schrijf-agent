@@ -20,6 +20,34 @@ test('analyseert leidraad met eisen en schrijfstijl', async ({ page }) => {
   await expect(page.getByText(/Opdrachtgever:/).first()).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Vraag achter de vraag' })).toBeVisible()
   await expect(page.getByText(/Expliciet gevraagd:/)).toBeVisible()
+  // De analyse benoemt welke stukken de inschrijver zelf moet schrijven, met de limiet per stuk.
+  await expect(page.getByRole('heading', { name: 'Op te stellen documenten' })).toBeVisible()
+  await expect(page.getByText(/Daarnaast aan te leveren/)).toBeVisible()
+})
+
+test('toont per stuk een eigen concept en schrijft het gekozen stuk', async ({ page }) => {
+  await page.getByRole('button', { name: 'Leidraadanalyse' }).click()
+  await page.getByRole('button', { name: 'Analyseer dossier' }).click()
+  await expect(page.getByRole('heading', { name: 'Op te stellen documenten' })).toBeVisible()
+  await page.keyboard.press('Escape')
+
+  // Het herkende schrijfstuk staat als kaart in de middenkolom en is het actieve stuk.
+  const panel = page.getByRole('region', { name: 'Stukken van deze inschrijving' })
+  await expect(panel.getByRole('button', { name: /^Plan van aanpak/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Opdracht voor dit stuk' })).toBeVisible()
+
+  // Een eigen stuk toevoegen geeft een tweede, nog niet gestart concept.
+  await panel.getByRole('button', { name: 'Eigen stuk' }).click()
+  await page.getByLabel('Titel van het stuk').fill('Implementatieplan')
+  await page.getByRole('button', { name: 'Toevoegen' }).last().click()
+  await expect(panel.getByRole('button', { name: /^Implementatieplan/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Implementatieplan', level: 1 })).toBeVisible()
+
+  // Het actieve stuk schrijven; het andere stuk blijft ongeschreven.
+  await page.getByRole('button', { name: 'Start schrijfagent' }).first().click()
+  await expect(page.getByText('Implementatieplan · Brons versie')).toBeVisible({ timeout: 15000 })
+  await panel.getByRole('button', { name: /^Plan van aanpak/ }).click()
+  await expect(page.getByText('Nog geen concept geschreven')).toBeVisible()
 })
 
 test('genereert concept met leidraadanalyse-sectie', async ({ page }) => {

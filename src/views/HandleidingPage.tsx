@@ -200,11 +200,16 @@ export default function HandleidingPage() {
               Vul het dossier aan met eigen documenten of geplakte tekst onder <Term>Bronnen</Term>. Via de{' '}
               <Term>Bronmatrix</Term> zie je of alle bronnen van voldoende kwaliteit zijn.
             </Step>
-            <Step n={5} title="Genereer het bronzen concept">
-              Zolang er nog geen concept is, toont het tekstveld alleen een korte samenvatting van de
-              aanbesteding. Kies het stadium <Term>Brons</Term> en klik op <Term>Start schrijfagent</Term>{' '}
-              (daarna heet die knop <Term>Genereer</Term>). De agent schrijft een eerste
-              concept op basis van al je bronnen, je bedrijfsprofiel en relevante leerpunten.
+            <Step n={5} title="Genereer het bronzen concept per stuk">
+              De leidraadanalyse bepaalt welke stukken je moet opstellen (plan van aanpak, uitwerking per
+              subgunningscriterium, casus, implementatieplan …) en met welke vraag, criteria en limiet per stuk.
+              Elk stuk staat als kaart onder <Term>Stukken van deze inschrijving</Term> met een eigen concept.
+              Zolang een stuk nog niet is geschreven, toont het tekstveld de opdracht voor dat stuk en een korte
+              samenvatting van de aanbesteding. Kies het stadium <Term>Brons</Term> en klik op{' '}
+              <Term>Start schrijfagent</Term> (daarna heet die knop <Term>Genereer</Term>), of schrijf alle
+              stukken in één keer met <Term>Schrijf alle ontbrekende stukken</Term>. De agent schrijft elk stuk in
+              dezelfde herkenbare opbouw en stijl, maar inhoudelijk gericht op de vraag van dát stuk; met{' '}
+              <Term>Eigen stuk</Term> voeg je een stuk toe dat de analyse niet herkende.
             </Step>
             <Step n={6} title="Review, verbeter en exporteer">
               Plaats opmerkingen in de tekst en laat de agent ze verwerken (<Term>Zilver</Term>), maak de eindversie
@@ -358,9 +363,9 @@ export default function HandleidingPage() {
               tekstvak.
             </li>
             <li>
-              <strong>Controleren:</strong> open de <Term>Bronmatrix</Term> voor een overzicht van alle effectieve
-              bronnen met kwaliteitsoordeel (ok, waarschuwing of fout), woordenaantal en een fragment. Automatisch
-              toegevoegde bronnen zijn gemarkeerd met &ldquo;· auto&rdquo;.
+              <strong>Controleren:</strong> open de <Term>Bronmatrix</Term> voor een overzicht van de bronnen van dit
+              project met kwaliteitsoordeel (ok, waarschuwing of fout), woordenaantal en een fragment. Het
+              bedrijfsprofiel, het schrijfkader en leerpunten gelden voor alle projecten en staan daar niet tussen.
             </li>
           </ul>
         </Section>

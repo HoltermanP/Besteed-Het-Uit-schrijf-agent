@@ -13,6 +13,7 @@ import type {
   WordLimit,
 } from '../../src/types/tenderAnalysis'
 import { completeChat, resolveAiFromRequest } from './aiClient'
+import { dedupeRequestedDocuments, normalizeRequestedDocuments } from '../../src/lib/requestedDocuments'
 
 // Leidraden volledig meegeven: afkappen laat de analyse eisen missen die de rest
 // van de pijplijn daarna nooit meer ziet.
@@ -36,6 +37,12 @@ Doel: de uitvraag scherp en volledig analyseren zodat de bidwriter al vanaf de e
 
 Analyseer de aanbestedingsstukken (vooral de leidraad) en bepaal concreet:
 - welke documenten/bijlagen moeten worden ingediend (documentRequirements)
+- WELKE STUKKEN DE INSCHRIJVER MOET OPSTELLEN (requestedDocuments): per apart in te dienen of apart beoordeeld stuk één item met
+  title, kind ("schrijfstuk" = zelf te schrijven en inhoudelijk beoordeeld, zoals plan van aanpak of een uitwerking per
+  (sub)gunningscriterium; "formulier" = in te vullen format zoals UEA/prijsblad; "bewijsstuk" = bij te voegen bewijs zoals
+  referenties/CV's/certificaten), question (de letterlijke vraag/opdracht uit de leidraad voor dit stuk), criteria (de
+  (sub)gunningscriteria met weging waarop dit stuk wordt beoordeeld), topics (de deelvragen/onderwerpen voor dit stuk, in
+  leidraadvolgorde), wordLimits (alleen de limieten van dit stuk), format, mandatory, source
 - welke woord-, karakter- of paginalimieten gelden (wordLimits) en wat het bindende maximum is (targetWordCount/targetCharCount)
 - welke vragen/onderwerpen inhoudelijk beantwoord moeten worden (contentRequirements)
 - de beoordelingscriteria met gewichten (evaluationCriteria)
@@ -60,6 +67,7 @@ Antwoord UITSLUITEND met geldig JSON in exact deze vorm:
   "wordLimits": [{ "label": "", "section": "", "min": null, "max": null, "unit": "woorden|karakters|paginas", "source": "" }],
   "contentRequirements": [{ "topic": "", "detail": "", "mandatory": true, "source": "" }],
   "documentRequirements": [{ "name": "", "mandatory": true, "source": "" }],
+  "requestedDocuments": [{ "title": "", "kind": "schrijfstuk|formulier|bewijsstuk", "question": "", "criteria": [], "topics": [], "wordLimits": [{ "label": "", "section": "", "min": null, "max": null, "unit": "woorden", "source": "" }], "format": "", "mandatory": true, "source": "" }],
   "submissionRequirements": [{ "category": "vorm", "requirement": "", "mandatory": true, "source": "" }],
   "evaluationCriteria": ["Criterium (gewicht%)"],
   "styleProfile": { "companyName": "", "buyerName": "", "companySignals": [], "buyerSignals": [], "blendedGuidance": "" },
@@ -211,6 +219,10 @@ function parseAnalysisJson(content: string, baseline: TenderAnalysis): TenderAna
     wordLimits: normalizeWordLimits(parsed.wordLimits, baseline.wordLimits),
     contentRequirements: normalizeContentRequirements(parsed.contentRequirements, baseline.contentRequirements),
     documentRequirements: normalizeDocumentRequirements(parsed.documentRequirements, baseline.documentRequirements),
+    requestedDocuments: (() => {
+      const parsedDocs = normalizeRequestedDocuments(parsed.requestedDocuments, baseline.leidraadSource ?? 'leidraad')
+      return parsedDocs.length ? parsedDocs : baseline.requestedDocuments ?? []
+    })(),
     submissionRequirements: normalizeSubmissionRequirements(
       parsed.submissionRequirements,
       baseline.submissionRequirements,
@@ -295,6 +307,14 @@ function mergeExtracts(baseline: TenderAnalysis, extracts: TenderDocumentExtract
     [...ordered.flatMap((item) => item.extract.submissionRequirements), ...baseline.submissionRequirements],
     (req) => `${req.category}|${req.requirement}`,
   )
+  // Op te stellen stukken: de AI-extracten zijn leidend (zij kennen vraag, criteria en topics per stuk);
+  // de heuristische baseline vult alleen aan wat de AI niet noemde. Een NvI-item dat hetzelfde stuk
+  // noemt staat achteraan en vult lege velden aan (zie dedupeRequestedDocuments).
+  const aiRequested = ordered.flatMap((item) => item.extract.requestedDocuments ?? [])
+  const requestedDocuments = dedupeRequestedDocuments([
+    ...aiRequested,
+    ...(aiRequested.length ? [] : baseline.requestedDocuments ?? []),
+  ])
   const evaluationCriteria = dedupeBy(
     [...ordered.flatMap((item) => item.extract.evaluationCriteria), ...baseline.evaluationCriteria],
     (criterion) => criterion,
@@ -316,6 +336,7 @@ function mergeExtracts(baseline: TenderAnalysis, extracts: TenderDocumentExtract
     wordLimits,
     contentRequirements,
     documentRequirements,
+    requestedDocuments,
     submissionRequirements,
     evaluationCriteria,
     gaps,
@@ -329,7 +350,7 @@ Je krijgt een reeds samengevoegde uitvraag-analyse (uit losse documentanalyses) 
 Jouw taak: een scherpe overkoepelende duiding leveren — GEEN eisen toevoegen of weglaten.
 
 Lever concreet:
-- summary: bondige samenvatting van de uitvraag (2-4 zinnen).
+- summary: bondige samenvatting van de uitvraag (2-4 zinnen), inclusief welke stukken de inschrijver moet opstellen.
 - styleProfile: stem van de inschrijver × verwachtingen van de opdrachtgever, met blendedGuidance.
 - underlyingIntent: de "vraag achter de vraag", onderliggende behoefte, prioriteiten en schrijflens.
 
@@ -355,8 +376,15 @@ function summarizeMergedForSynthesis(merged: TenderAnalysis, extracts: TenderDoc
     .slice(0, 30)
     .join('\n')
 
+  const requested = (merged.requestedDocuments ?? [])
+    .map((doc) => `- [${doc.kind}] ${doc.title}${doc.criteria.length ? ` — beoordeeld op: ${doc.criteria.join(', ')}` : ''}${doc.question ? `\n  Vraag: ${doc.question}` : ''}`)
+    .join('\n')
+
   return `Documenten (map-fase):
 ${docLine || '- (geen)'}
+
+Op te stellen / aan te leveren stukken:
+${requested || '- (geen herkend)'}
 
 Samengevoegde eisen:
 ${JSON.stringify(

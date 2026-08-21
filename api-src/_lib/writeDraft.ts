@@ -1,6 +1,7 @@
 import { completeChat, resolveAiFromRequest, streamChat, type AiRuntimeConfig, type AiMessage } from './aiClient'
 import type { WriteDraftDocument, WriteDraftRequest, WriteDraftResponse } from '../../src/types/writeDraft'
-import type { TenderAnalysis } from '../../src/types/tenderAnalysis'
+import type { RequestedDocument, TenderAnalysis } from '../../src/types/tenderAnalysis'
+import { requestedDocumentKindLabels, scopeAnalysisToDocument } from '../../src/lib/requestedDocuments'
 
 const stageInstructions: Record<WriteDraftRequest['stage'], string> = {
   brons:
@@ -20,7 +21,13 @@ const stageLabels: Record<WriteDraftRequest['stage'], string> = {
 const SYSTEM_PROMPT = `Je bent een senior bidwriter voor Nederlandse aanbestedingen (Aanbestedingswet, EMVI, BPKV).
 
 DOEL
-Schrijf het concrete inschrijfstuk dat de opdrachtgever vraagt — geen generiek salesdocument. Structuur, koppen en volgorde volgen de leidraad en beoordelingscriteria, niet een vaste template.
+Schrijf het concrete inschrijfstuk dat de opdrachtgever vraagt — geen generiek salesdocument. Een inschrijving bestaat vaak uit meerdere apart in te dienen stukken (plan van aanpak, uitwerking per subgunningscriterium, casus, implementatieplan …). Je schrijft er steeds PRECIES ÉÉN: het stuk dat in het taakblok onder "DIT STUK" staat. Inhoud, koppen en volgorde volgen de vraag die de leidraad voor dát stuk stelt; de opbouw volgt de vaste documentopbouw hieronder, zodat alle stukken van één inschrijving herkenbaar dezelfde vorm en stem hebben.
+
+VASTE DOCUMENTOPBOUW (gelijk voor elk stuk van deze inschrijving — herkenbare structuur en stijl, inhoud specifiek per stuk)
+1. <header class="doc-header">: <p class="kicker"> = "[Titel van dit stuk] · [Brons/Zilver/Goud] versie"; <p class="doc-subtitle"> = "Inschrijving [projecttitel] — [opdrachtgever]"; <h1> = de titel van dit stuk; <dl class="doc-meta"> met Opdrachtgever, Beoordeeld op (de criteria van dit stuk), Deadline, TenderNed; <p class="lead"> = de kern van ons antwoord op de vraag van dit stuk in 2–4 zinnen (direct het antwoord, geen herhaling van de vraag).
+2. Genummerde <section class="doc-section"> per deelvraag/onderwerp/subcriterium dat de leidraad voor DIT stuk stelt — in de volgorde en met de benaming van de leidraad. Elke sectie: <h2> met nummer en informatieve titel, <p class="section-subtitle"> "Beoordeeld op: …" (het criterium/subcriterium en de deelvraag), daarna de uitwerking. Vast ritme per sectie: kernzin met ons antwoord → hoe wij dat concreet doen (wie, wat, wanneer, hoe vaak) → bewijs uit bedrijfsbronnen → wat het de opdrachtgever oplevert. Opsommingen/tabellen als verdieping, maximaal één <figure class="doc-model"> per sectie.
+3. Slotsectie "Onze toezeggingen in het kort" (laatste genummerde <section class="doc-section">): één tabel (Toezegging | Meetpunt | Eigenaar) met de concrete, toetsbare toezeggingen uit dit stuk. Bij een krappe limiet (≤ 1 A4 of ≤ 600 woorden) compact houden of weglaten ten gunste van de inhoud.
+Dezelfde stem, terminologie, nummeringsstijl en opmaakklassen in elk stuk; de inhoud wisselt volledig mee met de vraag van het stuk.
 
 BRONHIËRARCHIE (streng, van hoog naar laag)
 1. Leidraad / aanbestedingsstukken — gevraagde stukken, onderwerpen, woord- en paginalimieten, beoordelingscriteria
@@ -30,7 +37,8 @@ BRONHIËRARCHIE (streng, van hoog naar laag)
 5. Schrijfwijze & voorbeeldteksten (Schrijfkader) — toon, zinsbouw, opmaak; geen nieuwe inhoud verzinnen
 
 INHOUDELIJKE REGELS
-- VOLG DE LEIDRAAD LETTERLIJK: neem de hoofdstuk-/vraagindeling over die de leidraad voor het in te dienen stuk voorschrijft — dezelfde (sub)gunningscriteria of vraagnummers, dezelfde titels, dezelfde volgorde. Verzin geen eigen hoofdstukindeling; de beoordelaar moet het stuk 1-op-1 naast de leidraad kunnen leggen
+- SCHRIJF ALLEEN DIT STUK: beantwoord de vraag die de leidraad voor dit stuk stelt, volledig en gericht. Inhoud die bij een ander stuk van de inschrijving hoort (zie "Andere stukken" in het taakblok) werk je hier NIET uit; hooguit één zin met verwijzing als de leidraad dat toestaat
+- VOLG DE LEIDRAAD LETTERLIJK: neem de hoofdstuk-/vraagindeling over die de leidraad voor dit stuk voorschrijft — dezelfde (sub)gunningscriteria of vraagnummers, dezelfde titels, dezelfde volgorde. Verzin geen eigen hoofdstukindeling; de beoordelaar moet het stuk 1-op-1 naast de leidraad kunnen leggen
 - Verdeel het woordbudget naar de weging van de gunningscriteria: een subcriterium van 30% krijgt aantoonbaar meer diepgang dan een van 15%
 - Maak per verplicht onderwerp uit de leidraadanalyse een eigen <section class="doc-section"> met genummerde <h2>
 - Koppel elke sectie in een <p class="section-subtitle"> aan het relevante beoordelingscriterium of subcriterium
@@ -137,9 +145,9 @@ Gebruik exact deze HTML-formats (wrapper altijd <figure class="doc-model"> met e
 </figure>
 
 OUTPUT (alleen HTML, geen markdown)
-- Eén <article class="proposal-doc">…</article>
-- <header class="doc-header"> met kicker (Brons/Zilver/Goud versie), <h1>, metadata (<dl class="doc-meta">), <p class="lead">
-- Per gevraagd stuk/onderwerp: <section class="doc-section"> met <h2>, <p class="section-subtitle">, inhoud (<p>, <ul>/<ol>, <table>, en waar het de inhoud versterkt één <figure class="doc-model">)
+- Eén <article class="proposal-doc">…</article> — dit ene stuk, volgens de vaste documentopbouw
+- <header class="doc-header"> met kicker ("[Titel stuk] · Brons/Zilver/Goud versie"), <p class="doc-subtitle">, <h1> (titel van het stuk), metadata (<dl class="doc-meta">), <p class="lead">
+- Per deelvraag/onderwerp van dit stuk: <section class="doc-section"> met genummerde <h2>, <p class="section-subtitle">, inhoud (<p>, <ul>/<ol>, <table>, en waar het de inhoud versterkt één <figure class="doc-model">), afgesloten met de slotsectie met toezeggingen
 - Geen meta-sectie over schrijfkwaliteit, stijlbibliotheek of werkwijze van het schrijven
 - Geen tekst buiten het HTML-artikel`
 
@@ -404,6 +412,38 @@ Verwachte bijlagen (inhoudelijk verwerken waar het plan van aanpak dat vraagt; n
 ${formatDocumentRequirements(analysis)}`
 }
 
+/** Het stuk dat nu geschreven wordt, plus de afbakening t.o.v. de overige stukken van de inschrijving. */
+function buildDocumentBrief(request: WriteDraftRequest): string {
+  const doc = request.targetDocument
+  if (!doc) {
+    return `DIT STUK
+- Het inschrijfstuk dat de aanbestedingsstukken vragen (geen losse stukken herkend): werk alle verplichte onderwerpen uit de leidraadanalyse uit.`
+  }
+
+  const lines = [
+    'DIT STUK (schrijf uitsluitend dit document)',
+    `- Titel: ${doc.title}`,
+    `- Soort: ${requestedDocumentKindLabels[doc.kind]}${doc.mandatory ? ' — verplicht in te dienen' : ''}`,
+    `- Vraag/opdracht uit de leidraad: ${doc.question || '(niet letterlijk gevonden — leid de vraag af uit de leidraadtekst voor dit stuk)'}`,
+    `- Beoordeeld op: ${doc.criteria.length ? doc.criteria.join('; ') : '(zie beoordelingscriteria hieronder)'}`,
+  ]
+  if (doc.topics.length) {
+    lines.push('- Deelvragen/onderwerpen voor dit stuk (in deze volgorde; elk een eigen sectie):')
+    doc.topics.forEach((topic, index) => lines.push(`  ${index + 1}. ${topic}`))
+  }
+  if (doc.format) lines.push(`- Vorm/format: ${doc.format}`)
+  lines.push(`- Bron: ${doc.source}`)
+
+  const siblings = (request.siblingDocuments ?? []).filter((item) => item.title !== doc.title)
+  if (siblings.length) {
+    lines.push('', 'Andere stukken van deze inschrijving (elders uitgewerkt — hier NIET herhalen; zelfde stem en opbouw):')
+    siblings.forEach((item) => {
+      lines.push(`- ${item.title} [${requestedDocumentKindLabels[item.kind]}]${item.question ? ` — ${item.question.slice(0, 160)}` : ''}`)
+    })
+  }
+  return lines.join('\n')
+}
+
 function buildAnalysisBlock(analysis: TenderAnalysis | null | undefined): string {
   if (!analysis) return 'Geen leidraadanalyse beschikbaar — leid structuur af uit aanbestedingsbronnen.'
 
@@ -468,11 +508,12 @@ ${request.currentDraft.slice(0, 120_000)}`
 
   const volumeLimited = request.analysis ? hasVolumeLimit(request.analysis) : false
 
+  const docName = request.targetDocument ? `het stuk "${request.targetDocument.title}"` : 'het inschrijfstuk'
   const stageTask =
     request.stage === 'brons'
       ? volumeLimited
-        ? 'Schrijf het volledige inschrijfstuk en gebruik het volumemaximum uit de leidraad bijna volledig (97–100%, zonder overschrijding).'
-        : 'Schrijf het volledige inschrijfstuk zeer uitgebreid — minimaal 2500 woorden, met alle verplichte onderwerpen diepgaand uitgewerkt.'
+        ? `Schrijf ${docName} volledig en gebruik het volumemaximum voor dit stuk bijna volledig (97–100%, zonder overschrijding).`
+        : `Schrijf ${docName} volledig en zeer uitgebreid — minimaal 2500 woorden, met alle verplichte onderwerpen van dit stuk diepgaand uitgewerkt.`
       : request.stage === 'zilver'
         ? volumeLimited
           ? 'Verbeter het huidige concept; verwerk alle open reviewopmerkingen en breid uit tot dicht bij het leidraad-maximum.'
@@ -488,6 +529,8 @@ Project:
 - Opdrachtgever: ${request.project.buyer}
 - Deadline: ${request.project.deadline}
 - TenderNed: ${request.project.tendernedId}
+
+${buildDocumentBrief(request)}
 
 ${buildAnalysisBlock(request.analysis)}
 
@@ -705,9 +748,17 @@ export async function generateDraftWithAi(
   }
 }
 
+/** Spits de analyse toe op het te schrijven stuk (idempotent als de client dat al deed). */
+function scopeRequest(request: WriteDraftRequest): WriteDraftRequest {
+  const doc: RequestedDocument | undefined = request.targetDocument
+  if (!doc || !request.analysis) return request
+  const sole = !(request.siblingDocuments ?? []).some((item) => item.kind === 'schrijfstuk' && item.title !== doc.title)
+  return { ...request, analysis: scopeAnalysisToDocument(request.analysis, doc, { soleDocument: sole }) }
+}
+
 export async function handleWriteDraftRequest(body: unknown): Promise<Response> {
   try {
-    const request = (body ?? {}) as WriteDraftRequest
+    const request = scopeRequest((body ?? {}) as WriteDraftRequest)
     if (!request.project?.title?.trim()) {
       throw new Error('Projectgegevens ontbreken.')
     }

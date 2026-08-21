@@ -2,12 +2,15 @@ import type { SourceDocument } from '../types/tenderAnalysis'
 import type {
   ContentRequirement,
   DocumentRequirement,
+  RequestedDocument,
+  RequestedDocumentKind,
   StyleProfile,
   SubmissionRequirement,
   TenderAnalysis,
   UnderlyingIntent,
   WordLimit,
 } from '../types/tenderAnalysis'
+import { dedupeRequestedDocuments, requestedDocumentId } from './requestedDocuments'
 
 const LEIDRAAD_HINTS = ['leidraad', 'inschrijfleidraad', 'aanbestedingsleidraad', 'beoordelingsleidraad']
 const TOPIC_KEYWORDS = [
@@ -42,6 +45,74 @@ const DOCUMENT_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /nota van inlichtingen/i, label: 'Nota van Inlichtingen (referentie)' },
   { pattern: /verklaring\s+.*?integriteit/i, label: 'Integriteitsverklaring' },
 ]
+
+/**
+ * Stukken die de inschrijver moet opstellen (schrijfstuk), invullen (formulier) of bijvoegen
+ * (bewijsstuk). De heuristiek herkent de gangbare benamingen; de AI-analyse verfijnt dit.
+ */
+const REQUESTED_DOCUMENT_PATTERNS: Array<{ pattern: RegExp; title: string; kind: RequestedDocumentKind }> = [
+  { pattern: /plan van aanpak/i, title: 'Plan van aanpak', kind: 'schrijfstuk' },
+  { pattern: /kwaliteitsdocument|kwaliteitsplan|kwalitatief(?:e)? (?:document|uitwerking)/i, title: 'Kwaliteitsdocument', kind: 'schrijfstuk' },
+  { pattern: /implementatieplan|transitieplan|invoeringsplan|opstartplan/i, title: 'Implementatieplan', kind: 'schrijfstuk' },
+  { pattern: /communicatieplan/i, title: 'Communicatieplan', kind: 'schrijfstuk' },
+  { pattern: /risicoanalyse|risicodossier|risicobeheersplan|risicoparagraaf/i, title: 'Risicoanalyse', kind: 'schrijfstuk' },
+  { pattern: /visiedocument|visie op (?:de )?(?:opdracht|dienstverlening|samenwerking)/i, title: 'Visiedocument', kind: 'schrijfstuk' },
+  { pattern: /casus(?:uitwerking|beschrijving)?|praktijkcase|case[- ]uitwerking/i, title: 'Casusuitwerking', kind: 'schrijfstuk' },
+  { pattern: /presentatie/i, title: 'Presentatie', kind: 'schrijfstuk' },
+  { pattern: /social return[- ]?plan|sroi[- ]?plan|participatieplan/i, title: 'Social-returnplan', kind: 'schrijfstuk' },
+  { pattern: /duurzaamheidsplan|mvo[- ]?plan|co2[- ]?plan/i, title: 'Duurzaamheidsplan', kind: 'schrijfstuk' },
+  { pattern: /projectplan|uitvoeringsplan|werkplan|plan van uitvoering/i, title: 'Uitvoeringsplan', kind: 'schrijfstuk' },
+  { pattern: /beheerplan|onderhoudsplan|continu[iï]teitsplan|exitplan|transitie[- ]?en[- ]?exitplan/i, title: 'Beheer- en continuïteitsplan', kind: 'schrijfstuk' },
+  { pattern: /uniform europees aanbestedingsdocument|\buea\b|eigen verklaring/i, title: 'Uniform Europees Aanbestedingsdocument (UEA)', kind: 'formulier' },
+  { pattern: /prijs(?:blad|formulier|opgave)|inschrijfbiljet|inschrijvingsbiljet|begrotingsformat/i, title: 'Prijsblad / inschrijfbiljet', kind: 'formulier' },
+  { pattern: /invullingsblad|gunningsblad/i, title: 'Invullingsblad gunningscriteria', kind: 'formulier' },
+  { pattern: /gedragsverklaring aanbesteden|\bgva\b|verklaring omtrent gedrag|\bvog\b/i, title: 'Gedragsverklaring aanbesteden', kind: 'formulier' },
+  { pattern: /akkoordverklaring|conformiteitsverklaring|verklaring\s+.*?integriteit/i, title: 'Akkoord-/integriteitsverklaring', kind: 'formulier' },
+  { pattern: /referentie(?:lijst|overzicht|formulier|project)?s?/i, title: 'Referenties', kind: 'bewijsstuk' },
+  { pattern: /teamoverzicht|cv'?s?|curriculum vitae/i, title: "Teamoverzicht met CV's", kind: 'bewijsstuk' },
+  { pattern: /iso[- ]?\d{4,5}|certifica(?:at|ten)|vca|nen[- ]?\d{3,5}/i, title: 'Certificaten', kind: 'bewijsstuk' },
+  { pattern: /uittreksel (?:kvk|handelsregister)|kamer van koophandel/i, title: 'Uittreksel Handelsregister', kind: 'bewijsstuk' },
+  { pattern: /verzekering(?:sbewijs|spolis|scertificaat)|aansprakelijkheidsverzekering/i, title: 'Verzekeringsbewijs', kind: 'bewijsstuk' },
+]
+
+/** Zin(nen) rond een tekstpositie, als ruwe "vraag" bij een herkend stuk. */
+function sentenceAround(text: string, index: number, length: number): string {
+  const start = Math.max(0, text.lastIndexOf('.', index - 1) + 1)
+  const endDot = text.indexOf('.', index + length)
+  const end = endDot === -1 ? Math.min(text.length, index + length + 220) : Math.min(endDot + 1, index + length + 320)
+  return normalize(text.slice(start, end))
+}
+
+function extractRequestedDocuments(text: string, source: string, criteria: string[]): RequestedDocument[] {
+  const found: RequestedDocument[] = []
+  for (const { pattern, title, kind } of REQUESTED_DOCUMENT_PATTERNS) {
+    const match = text.match(pattern)
+    if (!match || match.index == null) continue
+    const vicinity = text.slice(Math.max(0, match.index - 260), match.index + match[0].length + 260)
+    const question = sentenceAround(text, match.index, match[0].length)
+    // Limieten die in de directe omgeving van het stuk staan, horen bij dit stuk.
+    const wordLimits = kind === 'schrijfstuk' ? extractWordLimits(vicinity, source) : []
+    const topicHits =
+      kind === 'schrijfstuk'
+        ? TOPIC_KEYWORDS.filter((topic) => vicinity.toLowerCase().includes(topic) && !title.toLowerCase().includes(topic))
+        : []
+    const criteriaHits = criteria.filter((criterion) =>
+      vicinity.toLowerCase().includes(criterion.replace(/\s*\(\d+%\)/, '').toLowerCase()),
+    )
+    found.push({
+      id: requestedDocumentId(title),
+      title,
+      kind,
+      question: kind === 'schrijfstuk' ? question : '',
+      criteria: criteriaHits.slice(0, 6),
+      topics: topicHits.slice(0, 8),
+      wordLimits,
+      mandatory: /verplicht|dient|moet|op straffe/i.test(vicinity),
+      source,
+    })
+  }
+  return dedupeRequestedDocuments(found)
+}
 
 function normalize(text: string) {
   return text.replace(/\s+/g, ' ').trim()
@@ -671,6 +742,9 @@ export function analyzeTenderDocuments(
     extractSubmissionRequirements(doc.content, doc.name),
   )
   const evaluationCriteria = extractEvaluationCriteria(allTenderText || combinedText)
+  const requestedDocuments = dedupeRequestedDocuments(
+    analysisSources.flatMap((doc) => extractRequestedDocuments(doc.content, doc.name, evaluationCriteria)),
+  )
 
   const styleProfile = buildStyleProfile(companyDocs, tenderDocs, leidraad, buyerName)
 
@@ -699,6 +773,7 @@ export function analyzeTenderDocuments(
     wordLimits,
     contentRequirements,
     documentRequirements,
+    requestedDocuments,
     submissionRequirements,
     evaluationCriteria,
     styleProfile,
@@ -716,8 +791,9 @@ export function analyzeTenderDocuments(
     styleProfile,
   )
 
+  const writableCount = requestedDocuments.filter((doc) => doc.kind === 'schrijfstuk').length
   const summary = leidraad
-    ? `Leidraad "${leidraad.name}" geanalyseerd: ${contentRequirements.length} inhoudseisen, ${documentRequirements.length} documenten, ${wordLimits.length} limieten, vraag-achter-de-vraag inzicht en gecombineerde schrijfstijl (${styleProfile.companyName} × ${buyerName}).`
+    ? `Leidraad "${leidraad.name}" geanalyseerd: ${writableCount} op te stellen schrijfstuk(ken), ${contentRequirements.length} inhoudseisen, ${documentRequirements.length} documenten, ${wordLimits.length} limieten, vraag-achter-de-vraag inzicht en gecombineerde schrijfstijl (${styleProfile.companyName} × ${buyerName}).`
     : `Analyse op basis van ${tenderDocs.length} aanbestedingsbron(nen): voeg een leidraad toe voor volledige eisen, limieten en opdrachtintentie.`
 
   return {

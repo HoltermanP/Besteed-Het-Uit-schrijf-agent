@@ -418,6 +418,7 @@ export function computeOpportunityScore(
       wordLimits: [],
       contentRequirements: [],
       documentRequirements: [],
+      requestedDocuments: [],
       submissionRequirements: [],
       evaluationCriteria: [],
       styleProfile: { companyName: '', buyerName: '', companySignals: [], buyerSignals: [], blendedGuidance: '' },

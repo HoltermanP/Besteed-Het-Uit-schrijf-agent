@@ -15,6 +15,8 @@ export type DocumentExtract = {
   wordLimits: WordLimit[]
   contentRequirements: ContentRequirement[]
   documentRequirements: DocumentRequirement[]
+  /** Stukken die de inschrijver moet opstellen of aanleveren, met de vraag per stuk. */
+  requestedDocuments?: RequestedDocument[]
   submissionRequirements: SubmissionRequirement[]
   evaluationCriteria: string[]
   /** Alleen bij Nota van Inlichtingen: wijzigingen die eerdere eisen overrulen. */
@@ -72,6 +74,39 @@ export type DocumentRequirement = {
   source: string
 }
 
+/**
+ * Soort in te dienen stuk:
+ * - schrijfstuk: door de inschrijver zelf te SCHRIJVEN (plan van aanpak, kwaliteitsdocument per
+ *   (sub)gunningscriterium, casusuitwerking, implementatieplan, presentatie …) — dit schrijft de agent
+ * - formulier: voorgeschreven format dat ingevuld/ondertekend wordt (UEA, prijsblad, verklaringen)
+ * - bewijsstuk: bestaand bewijs dat wordt bijgevoegd (referenties, CV's, certificaten, uittreksels)
+ */
+export type RequestedDocumentKind = 'schrijfstuk' | 'formulier' | 'bewijsstuk'
+
+/**
+ * Eén concreet stuk dat de uitvraag van de inschrijver verlangt. Voor schrijfstukken is dit
+ * de opdracht voor de schrijfagent: de letterlijke vraag, de criteria waarop het stuk wordt
+ * beoordeeld, de onderwerpen die erin moeten en de limieten die voor dít stuk gelden.
+ */
+export type RequestedDocument = {
+  /** Stabiele sleutel (afgeleid van de titel) zodat een heranalyse hetzelfde stuk herkent. */
+  id: string
+  title: string
+  kind: RequestedDocumentKind
+  /** De letterlijke vraag/opdracht uit de leidraad waar dit stuk antwoord op geeft. */
+  question: string
+  /** (Sub)gunningscriteria waarop dit stuk wordt beoordeeld, incl. weging waar bekend. */
+  criteria: string[]
+  /** Onderwerpen/vragen die in dít stuk beantwoord moeten worden. */
+  topics: string[]
+  /** Limieten die specifiek voor dit stuk gelden (leeg = geen eigen limiet gevonden). */
+  wordLimits: WordLimit[]
+  /** Vorm-/formaateisen voor dit stuk (bv. "PDF, max. 4 A4, Arial 10"). */
+  format?: string
+  mandatory: boolean
+  source: string
+}
+
 /** Specifieke eis aan de inschrijving zelf (vorm, opmaak, indiening, geschiktheid) */
 export type SubmissionRequirementCategory =
   | 'vorm'
@@ -119,6 +154,11 @@ export type TenderAnalysis = {
   wordLimits: WordLimit[]
   contentRequirements: ContentRequirement[]
   documentRequirements: DocumentRequirement[]
+  /**
+   * Welke stukken de inschrijver moet opstellen of aanleveren, met per stuk de vraag,
+   * criteria, onderwerpen en limieten. De schrijfagent schrijft elk 'schrijfstuk' apart.
+   */
+  requestedDocuments: RequestedDocument[]
   /** Specifieke eisen aan de inschrijving zelf (vorm, opmaak, indiening, geschiktheid) */
   submissionRequirements: SubmissionRequirement[]
   evaluationCriteria: string[]
