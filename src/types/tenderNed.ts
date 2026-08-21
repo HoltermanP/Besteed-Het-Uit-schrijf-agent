@@ -46,8 +46,17 @@ export type TenderDocument = {
 
 export type SavedTenderDocumentStatus = 'ok' | 'leeg' | 'overgeslagen' | 'fout'
 
-/** Resultaat per gedownload document na tekstextractie. */
+/** Herkomst van een aanbestedingsdocument: gedownload van TenderNed of zelf geüpload in het project. */
+export type SavedTenderDocumentSource = 'tenderned' | 'upload'
+
+/** Resultaat per gedownload of geüpload document na tekstextractie. */
 export type SavedTenderDocument = {
+  /** Alleen aanwezig bij eigen uploads; koppelt het bestand aan zijn tekstbron in het dossier. */
+  id?: string
+  /** Ontbreekt bij oudere TenderNed-downloads; lees dat als 'tenderned'. */
+  source?: SavedTenderDocumentSource
+  /** Moment van uploaden (ISO), alleen bij eigen uploads. */
+  uploadedAt?: string
   naam: string
   type: string
   categorie: string

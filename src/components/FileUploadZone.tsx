@@ -10,6 +10,8 @@ type FileUploadZoneProps = {
   title: string
   hint: string
   formatsLabel?: string
+  /** Optioneel id voor het verborgen bestandsveld (bv. voor labels of tests). */
+  inputId?: string
   onFiles: (files: FileList) => void | Promise<void>
 }
 
@@ -21,6 +23,7 @@ export default function FileUploadZone({
   title,
   hint,
   formatsLabel,
+  inputId,
   onFiles,
 }: FileUploadZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -81,6 +84,7 @@ export default function FileUploadZone({
         </div>
         <input
           ref={inputRef}
+          id={inputId}
           type="file"
           className="hidden"
           multiple={multiple}

@@ -32,6 +32,7 @@ import {
   Medal,
   MessageSquarePlus,
   PenLine,
+  Plus,
   RefreshCw,
   Search,
   ScanSearch,
@@ -53,6 +54,7 @@ import type { DistillDocumentResponse } from '../types/distillDocument'
 import type { TenderDocumentExtract } from '../types/analyzeTender'
 import { assessSourceContent } from '../lib/sourceQuality'
 import { readFileContent } from '../lib/extractTextApi'
+import { fetchProjectArchiveAvailability, importProjectDocument } from '../lib/projectDocumentsApi'
 import FileUploadZone from '../components/FileUploadZone'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog'
 import { acceptedStyleExtensions } from '../types/styleDocument'
@@ -235,6 +237,25 @@ function normalizeStoredAnalysis(analysis: TenderAnalysis | null): TenderAnalysi
     evaluationCriteria: analysis.evaluationCriteria ?? [],
     gaps: analysis.gaps ?? [],
   }
+}
+
+type UploadNotice = { tone: 'ok' | 'warning' | 'error'; message: string }
+
+/** Korte terugkoppeling onder een uploadzone (gelukt, waarschuwing of fout). */
+function NoticeBox({ notice }: { notice: UploadNotice | null }) {
+  if (!notice) return null
+  return (
+    <p
+      className={cn(
+        'rounded-md border px-[10px] py-2 text-xs leading-snug',
+        notice.tone === 'ok' && 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200',
+        notice.tone === 'warning' && 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200',
+        notice.tone === 'error' && 'border-red-300 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200',
+      )}
+    >
+      {notice.message}
+    </p>
+  )
 }
 
 // Laad de werkruimte van één project uit zijn dossier-snapshot.
@@ -436,7 +457,11 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   const savedRangeRef = useRef<Range | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const commentsListRef = useRef<HTMLDivElement | null>(null)
-  const [uploadNotice, setUploadNotice] = useState<{ tone: 'ok' | 'warning' | 'error'; message: string } | null>(null)
+  const [uploadNotice, setUploadNotice] = useState<UploadNotice | null>(null)
+  const [projectDocNotice, setProjectDocNotice] = useState<UploadNotice | null>(null)
+  const [uploadingProjectDocs, setUploadingProjectDocs] = useState(false)
+  // Of originelen van eigen uploads gearchiveerd kunnen worden (Vercel Blob geconfigureerd).
+  const [archiveAvailable, setArchiveAvailable] = useState(false)
   const [showAllSources, setShowAllSources] = useState(false)
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
   const [uploadingFiles, setUploadingFiles] = useState(false)
@@ -463,6 +488,10 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     void fetchWriterStatus().then(setServerWriter)
+  }, [])
+
+  useEffect(() => {
+    void fetchProjectArchiveAvailability().then(setArchiveAvailable)
   }, [])
 
   useEffect(() => {
@@ -835,12 +864,84 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   }
 
   const removeDocument = (id: string) => {
+    // Tekstbron van een eigen upload: haal dan ook het bestand uit de documentenlijst,
+    // anders lijkt het document nog mee te doen terwijl de tekst weg is.
+    const linkedFileId = documents.find((doc) => doc.id === id)?.tenderDocumentId
     setDocuments((current) => current.filter((doc) => doc.id !== id))
+    if (linkedFileId) {
+      setTenderDocuments((current) => current.filter((doc) => doc.id !== linkedFileId))
+    }
     setSelectedSourceId((current) => (current === id ? null : current))
+  }
+
+  // Eigen geüpload projectdocument verwijderen: bestand én de ingelezen tekstbron.
+  const removeProjectDocument = (fileId: string) => {
+    setTenderDocuments((current) => current.filter((doc) => doc.id !== fileId))
+    const linkedSourceIds = documents.filter((doc) => doc.tenderDocumentId === fileId).map((doc) => doc.id)
+    if (linkedSourceIds.length) {
+      setDocuments((current) => current.filter((doc) => doc.tenderDocumentId !== fileId))
+      setSelectedSourceId((current) => (current && linkedSourceIds.includes(current) ? null : current))
+    }
+  }
+
+  // Eigen aanbestedingsdocumenten voor dít project: stukken die niet op TenderNed staan.
+  // Elk bestand wordt ingelezen als aanbestedingsbron en (indien mogelijk) als origineel
+  // gearchiveerd, precies zoals gedownloade TenderNed-documenten.
+  const uploadProjectDocuments = async (files: FileList | null, noticeTarget: 'documents' | 'sources') => {
+    if (!files?.length) return
+    const setNotice = noticeTarget === 'documents' ? setProjectDocNotice : setUploadNotice
+    setUploadingProjectDocs(true)
+    setNotice(null)
+
+    const imported = []
+    for (const file of Array.from(files)) {
+      imported.push(await importProjectDocument(projectId, file, { archive: archiveAvailable }))
+    }
+    const added = imported.map((item) => item.document)
+    const sources = imported.flatMap((item) => (item.source ? [item.source] : []))
+
+    setTenderDocuments((current) => [...added, ...current])
+    if (sources.length) {
+      setDocuments((current) => [...sources, ...current])
+      setSelectedSourceId(sources[0].id)
+      setActiveType('tender')
+    }
+
+    const unreadable = imported.filter((item) => !item.source)
+    const warned = imported.filter((item) => item.source && item.document.note)
+    if (unreadable.length) {
+      const details = unreadable.map((item) => `${item.document.naam}: ${item.document.note ?? 'geen tekst'}`).join(' · ')
+      setNotice({
+        tone: sources.length ? 'warning' : 'error',
+        message: sources.length
+          ? `${sources.length} document(en) toegevoegd als aanbestedingsbron. Niet gelezen — ${details}`
+          : `Niet gelezen — ${details}`,
+      })
+    } else {
+      setNotice({
+        tone: warned.length ? 'warning' : 'ok',
+        message: warned.length
+          ? `${sources.length} document(en) toegevoegd; ${warned.length} met weinig of ingekorte tekst — controleer de inhoud.`
+          : `${sources.length} document(en) toegevoegd als aanbestedingsbron.`,
+      })
+    }
+
+    setUploadingProjectDocs(false)
   }
 
   const handleFileUpload = async (files: FileList | null) => {
     if (!files?.length) return
+    // Op het tabblad Aanbesteding is een upload een projectdocument: zelfde route als de kaart
+    // "Aanbestedingsdocumenten", zodat het bestand ook daar verschijnt en gearchiveerd wordt.
+    if (activeType === 'tender') {
+      setUploadingFiles(true)
+      try {
+        await uploadProjectDocuments(files, 'sources')
+      } finally {
+        setUploadingFiles(false)
+      }
+      return
+    }
     setUploadingFiles(true)
     setUploadNotice(null)
 
@@ -908,7 +1009,9 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       return fresh.length ? [...fresh, ...current] : current
     })
     if (tender.documents?.length) {
-      setTenderDocuments(tender.documents)
+      // Eigen uploads blijven staan; alleen de TenderNed-bestanden worden vervangen.
+      const fromTender = tender.documents
+      setTenderDocuments((current) => [...current.filter((doc) => doc.source === 'upload'), ...fromTender])
     }
     setProject((current) => ({
       ...current,
@@ -1472,9 +1575,18 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         </div>
 
         <div className="mb-4 space-y-1.5">
-          <Label htmlFor="company-switcher" className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-            <Building2 size={13} /> Actief bedrijf
-          </Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="company-switcher" className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+              <Building2 size={13} /> Actief bedrijf
+            </Label>
+            <Link
+              href="/configuratie#bedrijven"
+              className="flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
+              title="Bedrijven beheren of een nieuw bedrijf aanmaken"
+            >
+              <Plus size={12} /> Nieuw bedrijf
+            </Link>
+          </div>
           <Select value={activeCompanyId} onValueChange={(value) => void switchCompany(value)}>
             <SelectTrigger id="company-switcher" className="w-full bg-card">
               <SelectValue placeholder="Kies bedrijf…" />
@@ -1763,18 +1875,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
               </Link>
               .
             </p>
-            {uploadNotice ? (
-              <p
-                className={cn(
-                  'rounded-md border px-[10px] py-2 text-xs leading-snug',
-                  uploadNotice.tone === 'ok' && 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200',
-                  uploadNotice.tone === 'warning' && 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200',
-                  uploadNotice.tone === 'error' && 'border-red-300 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200',
-                )}
-              >
-                {uploadNotice.message}
-              </p>
-            ) : null}
+            <NoticeBox notice={uploadNotice} />
             <Input placeholder="Naam bron" value={manualName} onChange={(event) => setManualName(event.target.value)} />
             <Textarea
               className="min-h-[118px]"
@@ -1876,75 +1977,125 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           </CardContent>
         </Card>
 
-        {tenderDocuments.length ? (
-          <Card className="mb-[14px]">
-            <CardContent className="space-y-2.5">
-              <div className="flex items-center gap-2 text-primary">
-                <FileText size={17} />
-                <h2 className="text-sm font-semibold">Aanbestedingsdocumenten</h2>
+        <Card className="mb-[14px]">
+          <CardContent className="space-y-2.5">
+            <div className="flex items-center gap-2 text-primary">
+              <FileText size={17} />
+              <h2 className="text-sm font-semibold">Aanbestedingsdocumenten</h2>
+              {tenderDocuments.length ? (
                 <Badge variant="secondary" className="ml-auto">{tenderDocuments.length}</Badge>
-              </div>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                Origineel gedownloade bestanden van TenderNed, bewaard bij dit project. De tekst is al
-                ingelezen als bron; klik op een bestand om het origineel te openen.
-              </p>
-              <ul className="grid max-h-72 list-none gap-0 overflow-y-auto p-0">
-                {tenderDocuments.map((doc, index) => (
-                  <li
-                    key={`${doc.naam}-${index}`}
-                    className="flex items-center gap-2 border-t py-1.5 text-xs first:border-t-0"
-                  >
-                    <span className="w-11 shrink-0 rounded bg-muted py-0.5 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                      {doc.type}
-                    </span>
-                    {doc.fileUrl ? (
-                      <a
-                        className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium underline-offset-2 hover:text-primary hover:underline"
-                        href={doc.fileUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={doc.note ? `${doc.naam} — ${doc.note}` : doc.naam}
-                      >
-                        {doc.naam}
-                      </a>
-                    ) : (
-                      <span
-                        className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
-                        title={doc.note ? `${doc.naam} — ${doc.note}` : doc.naam}
-                      >
-                        {doc.naam}
-                      </span>
-                    )}
-                    <span className="shrink-0 tabular-nums text-muted-foreground">{formatBytes(doc.grootte)}</span>
-                    {doc.fileUrl ? (
-                      <a
-                        className="inline-flex shrink-0 items-center gap-1 font-medium text-primary underline-offset-2 hover:underline"
-                        href={doc.fileUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <ExternalLink size={12} /> Openen
-                      </a>
-                    ) : (
-                      <span
-                        className="shrink-0 text-[10px] text-muted-foreground"
-                        title="Origineel niet gearchiveerd — download de aanbesteding opnieuw in de catalogus (vereist Vercel Blob-configuratie)."
-                      >
-                        geen origineel
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              {tenderDocuments.every((doc) => !doc.fileUrl) ? (
-                <p className="rounded-md border border-amber-300 bg-amber-50 px-[10px] py-2 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-                  De originele bestanden zijn nog niet gearchiveerd. Download deze aanbesteding opnieuw
-                  in de catalogus nadat Vercel Blob is geconfigureerd.
-                </p>
               ) : null}
-            </CardContent>
-          </Card>
-        ) : null}
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Bestanden van TenderNed én eigen documenten die je speciaal voor dit project uploadt — bijvoorbeeld
+              een nota van inlichtingen uit de mail of stukken van een onderhandse uitvraag. De tekst wordt
+              ingelezen als aanbestedingsbron; klik op een bestand om het origineel te openen.
+            </p>
+            <FileUploadZone
+              inputId="project-document-upload"
+              accept={acceptedStyleExtensions}
+              loading={uploadingProjectDocs}
+              title="Eigen documenten voor dit project uploaden"
+              hint="Worden bij dit project bewaard en gebruikt als aanbestedingsbron"
+              formatsLabel={
+                archiveAvailable
+                  ? 'PDF, Word, PowerPoint, Excel, txt, md, csv — PDF tot 50 MB, overig max. 4 MB. Het origineel wordt gearchiveerd.'
+                  : 'PDF, Word, PowerPoint, Excel, txt, md, csv — PDF tot 50 MB, overig max. 4 MB. Alleen de tekst wordt bewaard (geen documentarchief geconfigureerd).'
+              }
+              onFiles={(files) => uploadProjectDocuments(files, 'documents')}
+            />
+            <NoticeBox notice={projectDocNotice} />
+            {tenderDocuments.length ? (
+              <ul className="grid max-h-72 list-none gap-0 overflow-y-auto p-0">
+                {tenderDocuments.map((doc, index) => {
+                  const uploaded = doc.source === 'upload'
+                  const unreadable = doc.status === 'fout' || doc.status === 'leeg'
+                  const title = doc.note ? `${doc.naam} — ${doc.note}` : doc.naam
+                  return (
+                    <li
+                      key={doc.id ?? `${doc.naam}-${index}`}
+                      className="flex items-center gap-2 border-t py-1.5 text-xs first:border-t-0"
+                    >
+                      <span className="w-11 shrink-0 rounded bg-muted py-0.5 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                        {doc.type}
+                      </span>
+                      {doc.fileUrl ? (
+                        <a
+                          className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium underline-offset-2 hover:text-primary hover:underline"
+                          href={doc.fileUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={title}
+                        >
+                          {doc.naam}
+                        </a>
+                      ) : (
+                        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap" title={title}>
+                          {doc.naam}
+                        </span>
+                      )}
+                      {uploaded ? (
+                        <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px] font-medium">
+                          Eigen upload
+                        </Badge>
+                      ) : null}
+                      {unreadable ? (
+                        <span className="shrink-0 text-[10px] font-semibold text-destructive" title={doc.note}>
+                          {doc.status === 'leeg' ? 'geen tekst' : 'niet gelezen'}
+                        </span>
+                      ) : null}
+                      <span className="shrink-0 tabular-nums text-muted-foreground">{formatBytes(doc.grootte)}</span>
+                      {doc.fileUrl ? (
+                        <a
+                          className="inline-flex shrink-0 items-center gap-1 font-medium text-primary underline-offset-2 hover:underline"
+                          href={doc.fileUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <ExternalLink size={12} /> Openen
+                        </a>
+                      ) : (
+                        <span
+                          className="shrink-0 text-[10px] text-muted-foreground"
+                          title={
+                            uploaded
+                              ? 'Origineel niet gearchiveerd — alleen de tekst is bewaard (Vercel Blob niet geconfigureerd).'
+                              : 'Origineel niet gearchiveerd — download de aanbesteding opnieuw in de catalogus (vereist Vercel Blob-configuratie).'
+                          }
+                        >
+                          geen origineel
+                        </span>
+                      )}
+                      {uploaded && doc.id ? (
+                        <button
+                          type="button"
+                          className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-destructive"
+                          title="Document uit dit project verwijderen"
+                          aria-label={`Verwijder ${doc.naam}`}
+                          onClick={() => removeProjectDocument(doc.id as string)}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      ) : null}
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Nog geen documenten bij dit project. Koppel een aanbesteding via TenderNed of upload eigen bestanden
+                hierboven.
+              </p>
+            )}
+            {tenderDocuments.some((doc) => doc.source !== 'upload') &&
+            tenderDocuments.filter((doc) => doc.source !== 'upload').every((doc) => !doc.fileUrl) ? (
+              <p className="rounded-md border border-amber-300 bg-amber-50 px-[10px] py-2 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                De originele TenderNed-bestanden zijn nog niet gearchiveerd. Download deze aanbesteding opnieuw
+                in de catalogus nadat Vercel Blob is geconfigureerd.
+              </p>
+            ) : null}
+          </CardContent>
+        </Card>
       </aside>
 
       <section className="h-auto min-w-0 overflow-auto p-4 sm:p-6 xl:h-screen">

@@ -347,6 +347,13 @@ export default function HandleidingPage() {
               PowerPoint, Excel, txt, md en csv — ook oude formaten zoals .doc en .xls. PDF's mogen tot 50 MB zijn (die worden in je browser uitgelezen); overige bestanden maximaal 4 MB. De tekst wordt automatisch uitgelezen.
             </li>
             <li>
+              <strong>Eigen aanbestedingsdocumenten:</strong> stukken die niet op TenderNed staan (een nota van
+              inlichtingen uit de mail, bijlagen van een onderhandse uitvraag) upload je in de kaart{' '}
+              <Term>Aanbestedingsdocumenten</Term> van het project. Ze worden net als TenderNed-bestanden bij het
+              project bewaard: de tekst wordt ingelezen als aanbestedingsbron en het origineel blijft te openen
+              (als Vercel Blob is geconfigureerd). Uploaden op het tabblad Aanbesteding doet hetzelfde.
+            </li>
+            <li>
               <strong>Handmatig plakken:</strong> geef een naam op bij &ldquo;Naam bron&rdquo; en plak de tekst in het
               tekstvak.
             </li>

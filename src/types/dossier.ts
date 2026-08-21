@@ -14,6 +14,8 @@ export type SourceDocument = {
   type: SourceType
   content: string
   importedAt: string
+  /** Id van het geüploade projectdocument waaruit deze tekst komt (zie DossierSnapshot.tenderDocuments). */
+  tenderDocumentId?: string
   /** Gecachet per-document distillaat uit de map-fase van de analyse. */
   extract?: DocumentExtract | null
   /** Gecomprimeerde promptversie (alleen company/rules/training), gecachet per upload. */
