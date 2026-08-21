@@ -17,6 +17,7 @@ import {
   GraduationCap,
   Import,
   PenLine,
+  Plus,
   Pencil,
   ScanSearch,
   Search,
@@ -204,6 +205,11 @@ export default function ProjectsOverviewPage() {
                 ))}
               </SelectContent>
             </Select>
+            <Button asChild variant="outline" title="Bedrijven beheren of een nieuw bedrijf aanmaken">
+              <Link href="/configuratie#bedrijven">
+                <Plus size={15} /> <span className="sr-only sm:not-sr-only">Nieuw bedrijf</span>
+              </Link>
+            </Button>
             <ModeToggle />
           </div>
         </div>

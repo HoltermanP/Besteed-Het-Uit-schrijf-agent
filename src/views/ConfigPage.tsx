@@ -5,6 +5,7 @@ import Link from 'next/link'
 import {
   ArrowLeft,
   Building2,
+  CheckCircle2,
   FileText,
   Loader2,
   PenLine,
@@ -37,17 +38,18 @@ import type { CpvSuggestion } from '../types/cpvSuggest'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { ModeToggle } from '@/components/mode-toggle'
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from '@/components/ui/select'
 
 const makeId = () => Math.random().toString(36).slice(2, 10)
 
@@ -69,6 +71,7 @@ export default function ConfigPage() {
   const [activeCompanyId] = useState(() => getActiveCompanyId())
   const [newCompanyName, setNewCompanyName] = useState('')
   const [companyBusy, setCompanyBusy] = useState(false)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
 
   const activeCompany = companies.find((company) => company.id === activeCompanyId) ?? companies[0]
 
@@ -104,16 +107,24 @@ export default function ConfigPage() {
     window.location.reload()
   }
 
-  const handleRemoveCompany = async () => {
+  const handleRemoveCompany = async (id: string) => {
     if (companies.length <= 1) return
+    const target = companies.find((company) => company.id === id)
+    if (!target) return
     const confirmed = window.confirm(
-      `Bedrijf "${activeCompany.name}" verwijderen? Alle projecten, bronnen en opgeslagen aanbestedingen van dit bedrijf worden definitief verwijderd.`,
+      `Bedrijf "${target.name}" verwijderen? Alle projecten, bronnen en opgeslagen aanbestedingen van dit bedrijf worden definitief verwijderd.`,
     )
     if (!confirmed) return
     setCompanyBusy(true)
-    removeCompany(activeCompanyId)
+    removeCompany(id)
     await flushStorage()
     window.location.reload()
+  }
+
+  const formatCreatedAt = (iso: string) => {
+    const date = new Date(iso)
+    if (Number.isNaN(date.getTime())) return ''
+    return date.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
   }
 
   const update = (patch: Partial<CompanyConfig>) => {
@@ -301,91 +312,173 @@ export default function ConfigPage() {
         </div>
       </header>
 
-      <div className="mx-auto mb-4 max-w-[920px]">
+      <div id="bedrijven" className="mx-auto mb-4 max-w-[920px] scroll-mt-6">
         <Card>
           <CardHeader>
-            <div className="flex items-start gap-3">
-              <Building2 size={20} className="mt-0.5 shrink-0" />
-              <div>
-                <h2 className="text-lg font-semibold">Bedrijven</h2>
-                <p className="text-sm text-muted-foreground">
-                  Werk voor meerdere bedrijven: projecten, bronnen en opgeslagen aanbestedingen zijn
-                  per bedrijf gescheiden. Kies hier voor welk bedrijf je werkt of maak een nieuw
-                  bedrijf aan.
-                </p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex min-w-0 flex-1 items-start gap-3">
+                <Building2 size={20} className="mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold">Bedrijven</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Je kunt meerdere bedrijfsconfiguraties naast elkaar aanmaken. Elk bedrijf heeft
+                    zijn eigen bedrijfsprofiel, projecten, bronnen en opgeslagen aanbestedingen.
+                    Overal in de applicatie kies je bovenaan voor welk bedrijf je werkt; alles wat
+                    je daarna doet, hoort bij dat bedrijf.
+                  </p>
+                </div>
               </div>
+              <Button
+                type="button"
+                className="shrink-0"
+                disabled={companyBusy}
+                onClick={() => setCreateDialogOpen(true)}
+              >
+                <Plus size={15} /> Nieuw bedrijf aanmaken
+              </Button>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="company-select">Actief bedrijf</Label>
-                <div className="flex items-center gap-2">
-                  <Select value={activeCompanyId} onValueChange={(value) => void switchCompany(value)}>
-                    <SelectTrigger id="company-select" className="min-w-0 flex-1" disabled={companyBusy}>
-                      <SelectValue placeholder="Kies bedrijf…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {companies.map((company) => (
-                        <SelectItem key={company.id} value={company.id}>
-                          {company.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="shrink-0 text-destructive"
-                    disabled={companyBusy || companies.length <= 1}
-                    title={
-                      companies.length <= 1
-                        ? 'Het laatste bedrijf kan niet worden verwijderd.'
-                        : 'Verwijder dit bedrijf inclusief alle bijbehorende data.'
-                    }
-                    onClick={() => void handleRemoveCompany()}
-                  >
-                    <Trash2 size={15} />
-                    <span className="sr-only">Verwijder bedrijf</span>
-                  </Button>
-                </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Bedrijfsconfiguraties</Label>
+                <span className="text-xs text-muted-foreground">
+                  {companies.length} {companies.length === 1 ? 'bedrijf' : 'bedrijven'}
+                </span>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="company-new">Nieuw bedrijf</Label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    id="company-new"
-                    className="min-w-0 flex-1"
-                    value={newCompanyName}
-                    onChange={(event) => setNewCompanyName(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault()
-                        void handleCreateCompany()
-                      }
-                    }}
-                    placeholder="Naam van het bedrijf"
-                    disabled={companyBusy}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="shrink-0"
-                    disabled={companyBusy || !newCompanyName.trim()}
-                    onClick={() => void handleCreateCompany()}
-                  >
-                    {companyBusy ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
-                    Aanmaken
-                  </Button>
-                </div>
-              </div>
+              <ul className="divide-y overflow-hidden rounded-lg border">
+                {companies.map((company) => {
+                  const isActive = company.id === activeCompanyId
+                  const createdAt = formatCreatedAt(company.createdAt)
+                  return (
+                    <li
+                      key={company.id}
+                      className={`flex flex-wrap items-center gap-3 px-3 py-2.5 ${
+                        isActive ? 'bg-primary/5' : 'bg-card'
+                      }`}
+                    >
+                      <div
+                        className={`grid size-9 shrink-0 place-items-center rounded-md ${
+                          isActive ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+                        }`}
+                      >
+                        <Building2 size={16} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="truncate font-medium">{company.name}</span>
+                          {isActive ? (
+                            <Badge className="gap-1">
+                              <CheckCircle2 size={12} /> Actief
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {isActive
+                            ? 'Hier werk je nu voor. De configuratie hieronder hoort bij dit bedrijf.'
+                            : createdAt
+                              ? `Aangemaakt op ${createdAt}`
+                              : 'Eigen projecten, bronnen en aanbestedingen'}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {isActive ? null : (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={companyBusy}
+                            onClick={() => void switchCompany(company.id)}
+                          >
+                            {companyBusy ? <Loader2 size={14} className="animate-spin" /> : null}
+                            Activeren
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          disabled={companyBusy || companies.length <= 1}
+                          title={
+                            companies.length <= 1
+                              ? 'Het laatste bedrijf kan niet worden verwijderd.'
+                              : `Verwijder ${company.name} inclusief alle bijbehorende data.`
+                          }
+                          onClick={() => void handleRemoveCompany(company.id)}
+                        >
+                          <Trash2 size={15} />
+                          <span className="sr-only">Verwijder {company.name}</span>
+                        </Button>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              De configuratie hieronder geldt voor het actieve bedrijf: {activeCompany.name}. Na het
-              wisselen of aanmaken herlaadt de applicatie met de data van dat bedrijf.
+              Wisselen van bedrijf kan hier én via de bedrijfskiezer in de werkplek en het
+              projectoverzicht. Na het wisselen of aanmaken herlaadt de applicatie met de data van
+              dat bedrijf. De instellingen hieronder gelden alleen voor {activeCompany.name}.
             </p>
           </CardContent>
         </Card>
+
+        <Dialog
+          open={createDialogOpen}
+          onOpenChange={(open) => {
+            if (companyBusy) return
+            setCreateDialogOpen(open)
+            if (!open) setNewCompanyName('')
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Nieuw bedrijf aanmaken</DialogTitle>
+              <DialogDescription>
+                Er wordt een nieuwe, lege bedrijfsconfiguratie aangemaakt met een eigen
+                bedrijfsprofiel, projecten, bronnen en opgeslagen aanbestedingen. Het nieuwe bedrijf
+                wordt direct actief; daarna vul je hieronder de bedrijfsgegevens in. De bestaande
+                bedrijven blijven ongewijzigd.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="company-new">Naam van het bedrijf</Label>
+              <Input
+                id="company-new"
+                autoFocus
+                value={newCompanyName}
+                onChange={(event) => setNewCompanyName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void handleCreateCompany()
+                  }
+                }}
+                placeholder="Bijv. SMELT EUROPE BV"
+                disabled={companyBusy}
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={companyBusy}
+                onClick={() => setCreateDialogOpen(false)}
+              >
+                Annuleren
+              </Button>
+              <Button
+                type="button"
+                disabled={companyBusy || !newCompanyName.trim()}
+                onClick={() => void handleCreateCompany()}
+              >
+                {companyBusy ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+                Aanmaken en activeren
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <form className="mx-auto grid max-w-[920px] gap-4" onSubmit={handleSubmit}>
