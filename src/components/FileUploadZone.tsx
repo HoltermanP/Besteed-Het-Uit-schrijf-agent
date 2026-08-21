@@ -12,6 +12,8 @@ type FileUploadZoneProps = {
   formatsLabel?: string
   /** Optioneel id voor het verborgen bestandsveld (bv. voor labels of tests). */
   inputId?: string
+  /** Lage variant voor smalle panelen: één regel titel + hint, formaten als tooltip. */
+  compact?: boolean
   onFiles: (files: FileList) => void | Promise<void>
 }
 
@@ -24,6 +26,7 @@ export default function FileUploadZone({
   hint,
   formatsLabel,
   inputId,
+  compact = false,
   onFiles,
 }: FileUploadZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -47,7 +50,8 @@ export default function FileUploadZone({
     <div className="space-y-2">
       <div
         className={cn(
-          'flex items-center gap-3 rounded-lg border border-dashed border-input bg-muted/30 px-4 py-6 text-left transition-colors',
+          'flex items-center rounded-lg border border-dashed border-input bg-muted/30 text-left transition-colors',
+          compact ? 'gap-2.5 px-3 py-2.5' : 'gap-3 px-4 py-6',
           !inactive && 'cursor-pointer hover:border-ring hover:bg-muted/60',
           dragOver && 'border-ring bg-accent',
           inactive && 'cursor-not-allowed opacity-60',
@@ -70,17 +74,18 @@ export default function FileUploadZone({
         role="button"
         tabIndex={inactive ? -1 : 0}
         aria-disabled={inactive}
+        title={compact ? formatsLabel : undefined}
       >
         {loading ? (
-          <Loader2 className="size-5 shrink-0 animate-spin text-muted-foreground" />
+          <Loader2 className={cn('shrink-0 animate-spin text-muted-foreground', compact ? 'size-4' : 'size-5')} />
         ) : (
-          <FileUp className="size-5 shrink-0 text-muted-foreground" />
+          <FileUp className={cn('shrink-0 text-muted-foreground', compact ? 'size-4' : 'size-5')} />
         )}
         <div className="min-w-0">
-          <strong className="block text-sm font-medium text-foreground">
+          <strong className={cn('block font-medium text-foreground', compact ? 'text-xs' : 'text-sm')}>
             {loading ? 'Bestanden verwerken…' : title}
           </strong>
-          <span className="block text-sm text-muted-foreground">{hint}</span>
+          <span className={cn('block text-muted-foreground', compact ? 'text-[11px] leading-snug' : 'text-sm')}>{hint}</span>
         </div>
         <input
           ref={inputRef}
@@ -93,7 +98,7 @@ export default function FileUploadZone({
           onChange={(event) => handleFiles(event.target.files)}
         />
       </div>
-      {formatsLabel ? <p className="text-xs text-muted-foreground">{formatsLabel}</p> : null}
+      {formatsLabel && !compact ? <p className="text-xs text-muted-foreground">{formatsLabel}</p> : null}
     </div>
   )
 }

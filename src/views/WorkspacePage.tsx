@@ -305,6 +305,18 @@ function loadInitialState(projectId: string) {
   }
 }
 
+// De gecombineerde TenderNed-tekst bestaat uit secties "## <bestandsnaam> — <categorie>\n…"
+// (zie api-src/_lib/tenderDocuments.ts). Haal de sectie van één document eruit;
+// null als er geen herkenbare sectie voor dat document is.
+function removeTenderSection(text: string, naam: string): string | null {
+  const sections = text.split(/\n\n(?=## )/)
+  const escaped = naam.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const matcher = new RegExp(`^## ${escaped}(?: — |\n|$)`)
+  const kept = sections.filter((section) => !matcher.test(section))
+  if (kept.length === sections.length) return null
+  return kept.join('\n\n').trim()
+}
+
 function summarize(text: string, max = 220) {
   const clean = (text ?? '').replace(/\s+/g, ' ').trim()
   return clean.length > max ? `${clean.slice(0, max).trim()}...` : clean
@@ -417,6 +429,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   const [commentText, setCommentText] = useState('')
   const [tendernedQuery, setTendernedQuery] = useState(initial.project.tendernedId)
   const [importingTender, setImportingTender] = useState(false)
+  const [tenderDialogOpen, setTenderDialogOpen] = useState(false)
   const activeTenderId = projectId
   const [dossierSearch, setDossierSearch] = useState('')
   const savedTenders = getSavedTenders()
@@ -611,6 +624,15 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     () => documents.find((doc) => doc.id === selectedSourceId) ?? null,
     [documents, selectedSourceId],
   )
+
+  // Wat er van de aanbestedingsdocumenten daadwerkelijk als bron is ingelezen.
+  const tenderSourceStats = useMemo(() => {
+    const tenderSources = documents.filter((doc) => doc.type === 'tender')
+    return {
+      count: tenderSources.length,
+      words: tenderSources.reduce((total, doc) => total + countWords(doc.content), 0),
+    }
+  }, [documents])
 
   const opportunity = useMemo(
     () => computeOpportunityScore(getCompanyConfig(), analysis, effectiveDocuments),
@@ -875,13 +897,44 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     setSelectedSourceId((current) => (current === id ? null : current))
   }
 
-  // Eigen geüpload projectdocument verwijderen: bestand én de ingelezen tekstbron.
-  const removeProjectDocument = (fileId: string) => {
-    setTenderDocuments((current) => current.filter((doc) => doc.id !== fileId))
-    const linkedSourceIds = documents.filter((doc) => doc.tenderDocumentId === fileId).map((doc) => doc.id)
-    if (linkedSourceIds.length) {
-      setDocuments((current) => current.filter((doc) => doc.tenderDocumentId !== fileId))
-      setSelectedSourceId((current) => (current && linkedSourceIds.includes(current) ? null : current))
+  // Aanbestedingsdocument uit dit project verwijderen: het bestand uit de lijst én de
+  // ingelezen tekst uit de bronnen. Bij een eigen upload is dat de gekoppelde tekstbron;
+  // bij een TenderNed-document de bijbehorende sectie in de gecombineerde aanbestedingsbron.
+  const removeTenderDocument = (index: number) => {
+    const target = tenderDocuments[index]
+    if (!target) return
+    setTenderDocuments((current) => current.filter((_, position) => position !== index))
+
+    if (target.source === 'upload' && target.id) {
+      const fileId = target.id
+      const linkedSourceIds = documents.filter((doc) => doc.tenderDocumentId === fileId).map((doc) => doc.id)
+      if (linkedSourceIds.length) {
+        setDocuments((current) => current.filter((doc) => doc.tenderDocumentId !== fileId))
+        setSelectedSourceId((current) => (current && linkedSourceIds.includes(current) ? null : current))
+      }
+      setProjectDocNotice({ tone: 'ok', message: `"${target.naam}" verwijderd uit dit project, inclusief de ingelezen tekst.` })
+      return
+    }
+
+    let removedText = false
+    const next = documents.flatMap((doc) => {
+      if (doc.type !== 'tender' || doc.tenderDocumentId) return [doc]
+      const stripped = removeTenderSection(doc.content, target.naam)
+      if (stripped === null) return [doc]
+      removedText = true
+      // Lege bron opruimen; anders de tekst bijwerken en de analysecache laten vervallen.
+      return stripped ? [{ ...doc, content: stripped, extract: null }] : []
+    })
+    if (removedText) {
+      setDocuments(next)
+      const remainingIds = new Set(next.map((doc) => doc.id))
+      setSelectedSourceId((current) => (current && !remainingIds.has(current) ? null : current))
+      setProjectDocNotice({ tone: 'ok', message: `"${target.naam}" verwijderd uit dit project; de tekst is uit de aanbestedingsbron gehaald.` })
+    } else {
+      setProjectDocNotice({
+        tone: 'warning',
+        message: `"${target.naam}" uit de lijst verwijderd. De ingelezen tekst was niet als losse sectie herkenbaar; controleer de aanbestedingsbron onder Bronnen.`,
+      })
     }
   }
 
@@ -1023,6 +1076,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     }))
     setActiveType('tender')
     setTendernedQuery(`TN-${tender.kenmerk}`)
+    setTenderDialogOpen(false)
     setSyncStatus(`Aanbesteding gekoppeld aan dit project: ${tender.aanbestedingNaam}`)
   }
 
@@ -1572,7 +1626,14 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
               </span>
             </div>
           </div>
-          <ModeToggle />
+          <div className="flex items-center gap-1.5">
+            <Button asChild variant="outline" size="sm" className="h-8 gap-1.5 px-2.5 text-xs">
+              <Link href="/" title="Terug naar het projectenoverzicht">
+                <FolderOpen size={14} /> Alle projecten
+              </Link>
+            </Button>
+            <ModeToggle />
+          </div>
         </div>
 
         <div className="mb-4 space-y-1.5">
@@ -1602,123 +1663,38 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           </Select>
         </div>
 
-        <Link
-          href="/"
-          className="group mb-4 flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5 text-sm font-semibold transition-colors hover:bg-primary/10"
-        >
-          <span className="grid size-8 flex-none place-items-center rounded-lg bg-primary text-primary-foreground">
-            <FolderOpen size={16} />
-          </span>
-          <span className="min-w-0 flex-1">Alle projecten</span>
-          <ChevronRight size={16} className="rotate-180 text-muted-foreground transition-transform group-hover:-translate-x-0.5 group-hover:text-primary" />
-        </Link>
-
-        <nav className="mb-4 grid gap-1.5">
-          <Link
-            href="/configuratie"
-            className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-sm font-semibold shadow-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
-          >
-            <span className="grid size-8 flex-none place-items-center rounded-lg bg-primary/10 text-primary">
-              <Building2 size={16} />
-            </span>
-            <span className="min-w-0 flex-1">Bedrijfsconfiguratie</span>
-            <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
-          </Link>
-          <Link
-            href="/schrijfregels"
-            className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-sm font-semibold shadow-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
-          >
-            <span className="grid size-8 flex-none place-items-center rounded-lg bg-primary/10 text-primary">
-              <ClipboardList size={16} />
-            </span>
-            <span className="min-w-0 flex-1">Schrijfkader</span>
-            <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
-          </Link>
-          <Link
-            href="/leerpunten"
-            className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-sm font-semibold shadow-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
-          >
-            <span className="grid size-8 flex-none place-items-center rounded-lg bg-primary/10 text-primary">
-              <GraduationCap size={16} />
-            </span>
-            <span className="min-w-0 flex-1">Lessons learned</span>
-            {lessonsLibrary.length ? (
-              <Badge variant="secondary" className="flex-none">{lessonsLibrary.length}</Badge>
-            ) : null}
-            <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
-          </Link>
-          <Link
-            href="/vergelijken"
-            className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-sm font-semibold shadow-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
-          >
-            <span className="grid size-8 flex-none place-items-center rounded-lg bg-primary/10 text-primary">
-              <GitCompareArrows size={16} />
-            </span>
-            <span className="min-w-0 flex-1">Projecten vergelijken</span>
-            <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
-          </Link>
-          <Link
-            href="/handleiding"
-            className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-sm font-semibold shadow-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
-          >
-            <span className="grid size-8 flex-none place-items-center rounded-lg bg-primary/10 text-primary">
-              <BookOpen size={16} />
-            </span>
-            <span className="min-w-0 flex-1">Handleiding</span>
-            <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
-          </Link>
-          <Link
-            href="/admin"
-            className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-sm font-semibold shadow-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
-          >
-            <span className="grid size-8 flex-none place-items-center rounded-lg bg-primary/10 text-primary">
-              <ShieldCheck size={16} />
-            </span>
-            <span className="min-w-0 flex-1">API-beheer</span>
-            <ChevronRight size={16} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
-          </Link>
-        </nav>
-
-        <Card className="mb-[14px]">
-          <CardContent className="space-y-[10px]">
+        <Card className="mb-[14px] border-primary/30">
+          <CardContent className="space-y-2.5">
             <div className="flex items-center gap-2 text-primary">
               <FileText size={17} />
-              <h2 className="text-sm font-semibold">Dossier</h2>
+              <h2 className="text-sm font-semibold">Aanbestedingsdocumenten</h2>
+              <Badge variant="secondary" className="ml-auto">{tenderDocuments.length}</Badge>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-title">Titel</Label>
-              <Input
-                id="project-title"
-                value={project.title}
-                onChange={(event) => setProject({ ...project, title: event.target.value })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-buyer">Opdrachtgever</Label>
-              <Input
-                id="project-buyer"
-                value={project.buyer}
-                onChange={(event) => setProject({ ...project, buyer: event.target.value })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-deadline">Deadline</Label>
-              <Input
-                id="project-deadline"
-                type="date"
-                value={project.deadline}
-                onChange={(event) => setProject({ ...project, deadline: event.target.value })}
-              />
-            </div>
-          </CardContent>
-        </Card>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              De stukken waarop de schrijfagent dit project baseert — van TenderNed en/of zelf geüpload.
+            </p>
 
-        <Card className="mb-[14px]">
-          <CardContent className="space-y-3">
-            <div className="flex items-center gap-2 text-primary">
-              <Import size={17} />
-              <h2 className="text-sm font-semibold">TenderNed</h2>
-            </div>
+            <Dialog open={tenderDialogOpen} onOpenChange={setTenderDialogOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="h-auto w-full justify-start gap-2.5 px-3 py-2.5 text-left"
+                  title="Een gedownloade aanbesteding koppelen of rechtstreeks ophalen bij TenderNed"
+                >
+                  <Import size={16} className="shrink-0 text-primary" />
+                  <span className="min-w-0 flex-1 truncate text-xs">
+                    <span className="font-semibold">Van TenderNed</span>
+                    <span className="font-normal text-muted-foreground"> — koppelen of ophalen</span>
+                  </span>
+                  <ChevronRight size={15} className="shrink-0 text-muted-foreground" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-h-[85vh] gap-3 overflow-auto sm:max-w-lg">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2 text-primary">
+                    <Import size={18} /> Aanbesteding van TenderNed toevoegen
+                  </DialogTitle>
+                </DialogHeader>
 
             <Button asChild className="h-auto w-full justify-start whitespace-normal py-2.5 text-left leading-snug">
               <Link href="/aanbestedingen">
@@ -1827,8 +1803,186 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
                 Downloadt alle documenten van de publicatie en voegt ze toe aan dit project.
               </p>
             </details>
+              </DialogContent>
+            </Dialog>
+
+            <FileUploadZone
+              compact
+              inputId="project-document-upload"
+              accept={acceptedStyleExtensions}
+              loading={uploadingProjectDocs}
+              title="Eigen documenten uploaden"
+              hint="Niet op TenderNed? Sleep of klik — PDF, Word, Excel, tekst"
+              formatsLabel={
+                archiveAvailable
+                  ? 'PDF, Word, PowerPoint, Excel, txt, md, csv — PDF tot 50 MB, overig max. 4 MB. Het origineel wordt gearchiveerd.'
+                  : 'PDF, Word, PowerPoint, Excel, txt, md, csv — PDF tot 50 MB, overig max. 4 MB. Alleen de tekst wordt bewaard (geen documentarchief geconfigureerd).'
+              }
+              onFiles={(files) => uploadProjectDocuments(files, 'documents')}
+            />
+            <NoticeBox notice={projectDocNotice} />
+
+            {tenderDocuments.length ? (
+              <>
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  Ingelezen als aanbestedingsbron: {tenderSourceStats.count} bron(nen),{' '}
+                  {tenderSourceStats.words.toLocaleString('nl-NL')} woorden — terug te vinden onder Bronnen › Aanbesteding.
+                </p>
+                <ul className="flex max-h-72 list-none flex-col gap-0 overflow-y-auto overflow-x-hidden p-0">
+                  {tenderDocuments.map((doc, index) => {
+                    const uploaded = doc.source === 'upload'
+                    const unreadable = doc.status === 'fout' || doc.status === 'leeg'
+                    const title = doc.note ? `${doc.naam} — ${doc.note}` : doc.naam
+                    return (
+                      <li key={doc.id ?? `${doc.naam}-${index}`} className="flex min-w-0 flex-col gap-1 border-t py-2 first:border-t-0">
+                        <div className="flex min-w-0 items-center gap-2 text-xs">
+                          <span className="w-11 shrink-0 rounded bg-muted py-0.5 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                            {doc.type}
+                          </span>
+                          {doc.fileUrl ? (
+                            <a
+                              className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium underline-offset-2 hover:text-primary hover:underline"
+                              href={blobViewUrl(doc.fileUrl)}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={title}
+                            >
+                              {doc.naam}
+                            </a>
+                          ) : (
+                            <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium" title={title}>
+                              {doc.naam}
+                            </span>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 shrink-0 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-destructive"
+                            title="Document uit dit project verwijderen, inclusief de ingelezen tekst"
+                            aria-label={`Verwijder ${doc.naam}`}
+                            onClick={() => removeTenderDocument(index)}
+                          >
+                            <Trash2 size={12} /> Verwijder
+                          </Button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-[52px] text-[11px] text-muted-foreground">
+                          <span className={cn('font-medium', uploaded ? 'text-primary' : 'text-foreground/80')}>
+                            {uploaded ? 'Eigen upload' : 'TenderNed'}
+                          </span>
+                          <span aria-hidden>·</span>
+                          <span className="tabular-nums">{formatBytes(doc.grootte)}</span>
+                          {doc.chars ? (
+                            <>
+                              <span aria-hidden>·</span>
+                              <span className="tabular-nums">{doc.chars.toLocaleString('nl-NL')} tekens ingelezen</span>
+                            </>
+                          ) : null}
+                          {unreadable ? (
+                            <span className="font-semibold text-destructive" title={doc.note}>
+                              {doc.status === 'leeg' ? 'geen tekst' : 'niet gelezen'}
+                            </span>
+                          ) : null}
+                          <span aria-hidden>·</span>
+                          {doc.fileUrl ? (
+                            <a
+                              className="inline-flex items-center gap-1 font-medium text-primary underline-offset-2 hover:underline"
+                              href={blobViewUrl(doc.fileUrl)}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <ExternalLink size={11} /> Openen
+                            </a>
+                          ) : (
+                            <span
+                              title={
+                                uploaded
+                                  ? 'Origineel niet gearchiveerd — alleen de tekst is bewaard (Vercel Blob niet geconfigureerd).'
+                                  : 'Origineel niet gearchiveerd — download de aanbesteding opnieuw in de catalogus (vereist Vercel Blob-configuratie).'
+                              }
+                            >
+                              geen origineel
+                            </span>
+                          )}
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </>
+            ) : (
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Nog geen documenten bij dit project. Koppel een aanbesteding van TenderNed of upload eigen bestanden
+                hierboven.
+              </p>
+            )}
+            {tenderDocuments.some((doc) => doc.source !== 'upload') &&
+            tenderDocuments.filter((doc) => doc.source !== 'upload').every((doc) => !doc.fileUrl) ? (
+              <p className="rounded-md border border-amber-300 bg-amber-50 px-[10px] py-2 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                De originele TenderNed-bestanden zijn nog niet gearchiveerd. Download deze aanbesteding opnieuw
+                in de catalogus nadat Vercel Blob is geconfigureerd.
+              </p>
+            ) : null}
           </CardContent>
         </Card>
+
+        <Card className="mb-[14px]">
+          <CardContent className="space-y-[10px]">
+            <div className="flex items-center gap-2 text-primary">
+              <FileText size={17} />
+              <h2 className="text-sm font-semibold">Dossier</h2>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="project-title">Titel</Label>
+              <Input
+                id="project-title"
+                value={project.title}
+                onChange={(event) => setProject({ ...project, title: event.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="project-buyer">Opdrachtgever</Label>
+              <Input
+                id="project-buyer"
+                value={project.buyer}
+                onChange={(event) => setProject({ ...project, buyer: event.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="project-deadline">Deadline</Label>
+              <Input
+                id="project-deadline"
+                type="date"
+                value={project.deadline}
+                onChange={(event) => setProject({ ...project, deadline: event.target.value })}
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+
+        <nav className="mb-4 grid grid-cols-2 gap-1.5" aria-label="Onderdelen">
+          {[
+            { href: '/configuratie', label: 'Bedrijfsconfiguratie', Icon: Building2, count: 0 },
+            { href: '/schrijfregels', label: 'Schrijfkader', Icon: ClipboardList, count: 0 },
+            { href: '/leerpunten', label: 'Lessons learned', Icon: GraduationCap, count: lessonsLibrary.length },
+            { href: '/vergelijken', label: 'Projecten vergelijken', Icon: GitCompareArrows, count: 0 },
+            { href: '/handleiding', label: 'Handleiding', Icon: BookOpen, count: 0 },
+            { href: '/admin', label: 'API-beheer', Icon: ShieldCheck, count: 0 },
+          ].map(({ href, label, Icon, count }) => (
+            <Link
+              key={href}
+              href={href}
+              title={label}
+              className="group flex min-w-0 items-center gap-2 rounded-lg border bg-card px-2.5 py-2 text-xs font-semibold shadow-xs transition-colors hover:border-primary/40 hover:bg-primary/5"
+            >
+              <span className="grid size-6 flex-none place-items-center rounded-md bg-primary/10 text-primary">
+                <Icon size={13} />
+              </span>
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+              {count ? <Badge variant="secondary" className="flex-none px-1.5 py-0 text-[10px]">{count}</Badge> : null}
+            </Link>
+          ))}
+        </nav>
 
         <p className="mt-[10px] text-xs leading-snug text-muted-foreground">
           {syncStatus}
@@ -1978,125 +2132,6 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           </CardContent>
         </Card>
 
-        <Card className="mb-[14px]">
-          <CardContent className="space-y-2.5">
-            <div className="flex items-center gap-2 text-primary">
-              <FileText size={17} />
-              <h2 className="text-sm font-semibold">Aanbestedingsdocumenten</h2>
-              {tenderDocuments.length ? (
-                <Badge variant="secondary" className="ml-auto">{tenderDocuments.length}</Badge>
-              ) : null}
-            </div>
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              Bestanden van TenderNed én eigen documenten die je speciaal voor dit project uploadt — bijvoorbeeld
-              een nota van inlichtingen uit de mail of stukken van een onderhandse uitvraag. De tekst wordt
-              ingelezen als aanbestedingsbron; klik op een bestand om het origineel te openen.
-            </p>
-            <FileUploadZone
-              inputId="project-document-upload"
-              accept={acceptedStyleExtensions}
-              loading={uploadingProjectDocs}
-              title="Eigen documenten voor dit project uploaden"
-              hint="Worden bij dit project bewaard en gebruikt als aanbestedingsbron"
-              formatsLabel={
-                archiveAvailable
-                  ? 'PDF, Word, PowerPoint, Excel, txt, md, csv — PDF tot 50 MB, overig max. 4 MB. Het origineel wordt gearchiveerd.'
-                  : 'PDF, Word, PowerPoint, Excel, txt, md, csv — PDF tot 50 MB, overig max. 4 MB. Alleen de tekst wordt bewaard (geen documentarchief geconfigureerd).'
-              }
-              onFiles={(files) => uploadProjectDocuments(files, 'documents')}
-            />
-            <NoticeBox notice={projectDocNotice} />
-            {tenderDocuments.length ? (
-              <ul className="grid max-h-72 list-none gap-0 overflow-y-auto p-0">
-                {tenderDocuments.map((doc, index) => {
-                  const uploaded = doc.source === 'upload'
-                  const unreadable = doc.status === 'fout' || doc.status === 'leeg'
-                  const title = doc.note ? `${doc.naam} — ${doc.note}` : doc.naam
-                  return (
-                    <li
-                      key={doc.id ?? `${doc.naam}-${index}`}
-                      className="flex items-center gap-2 border-t py-1.5 text-xs first:border-t-0"
-                    >
-                      <span className="w-11 shrink-0 rounded bg-muted py-0.5 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                        {doc.type}
-                      </span>
-                      {doc.fileUrl ? (
-                        <a
-                          className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium underline-offset-2 hover:text-primary hover:underline"
-                          href={blobViewUrl(doc.fileUrl)}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={title}
-                        >
-                          {doc.naam}
-                        </a>
-                      ) : (
-                        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap" title={title}>
-                          {doc.naam}
-                        </span>
-                      )}
-                      {uploaded ? (
-                        <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px] font-medium">
-                          Eigen upload
-                        </Badge>
-                      ) : null}
-                      {unreadable ? (
-                        <span className="shrink-0 text-[10px] font-semibold text-destructive" title={doc.note}>
-                          {doc.status === 'leeg' ? 'geen tekst' : 'niet gelezen'}
-                        </span>
-                      ) : null}
-                      <span className="shrink-0 tabular-nums text-muted-foreground">{formatBytes(doc.grootte)}</span>
-                      {doc.fileUrl ? (
-                        <a
-                          className="inline-flex shrink-0 items-center gap-1 font-medium text-primary underline-offset-2 hover:underline"
-                          href={blobViewUrl(doc.fileUrl)}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          <ExternalLink size={12} /> Openen
-                        </a>
-                      ) : (
-                        <span
-                          className="shrink-0 text-[10px] text-muted-foreground"
-                          title={
-                            uploaded
-                              ? 'Origineel niet gearchiveerd — alleen de tekst is bewaard (Vercel Blob niet geconfigureerd).'
-                              : 'Origineel niet gearchiveerd — download de aanbesteding opnieuw in de catalogus (vereist Vercel Blob-configuratie).'
-                          }
-                        >
-                          geen origineel
-                        </span>
-                      )}
-                      {uploaded && doc.id ? (
-                        <button
-                          type="button"
-                          className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-destructive"
-                          title="Document uit dit project verwijderen"
-                          aria-label={`Verwijder ${doc.naam}`}
-                          onClick={() => removeProjectDocument(doc.id as string)}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      ) : null}
-                    </li>
-                  )
-                })}
-              </ul>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Nog geen documenten bij dit project. Koppel een aanbesteding via TenderNed of upload eigen bestanden
-                hierboven.
-              </p>
-            )}
-            {tenderDocuments.some((doc) => doc.source !== 'upload') &&
-            tenderDocuments.filter((doc) => doc.source !== 'upload').every((doc) => !doc.fileUrl) ? (
-              <p className="rounded-md border border-amber-300 bg-amber-50 px-[10px] py-2 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-                De originele TenderNed-bestanden zijn nog niet gearchiveerd. Download deze aanbesteding opnieuw
-                in de catalogus nadat Vercel Blob is geconfigureerd.
-              </p>
-            ) : null}
-          </CardContent>
-        </Card>
       </aside>
 
       <section className="h-auto min-w-0 overflow-auto p-4 sm:p-6 xl:h-screen">
@@ -2448,10 +2483,18 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
                   <Building2 size={18} /> Bronmatrix
                 </DialogTitle>
               </DialogHeader>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Overzicht van de bronnen die bij dit project horen. Het bedrijfsprofiel, het schrijfkader en leerpunten
+                gelden voor alle projecten en staan hier niet tussen.
+              </p>
+              {documents.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Nog geen bronnen in dit project. Voeg documenten of tekst toe onder Bronnen.</p>
+              ) : null}
               <div className="grid gap-[9px]">
-                {effectiveDocuments.map((doc, index) => {
+                {documents.map((doc, index) => {
                   const quality = assessSourceContent(doc.content)
-                  const isAuto = !documents.some((item) => item.name === doc.name && item.type === doc.type)
+                  // Projecteigen bedrijfsinfo wordt bij het schrijven verdrongen door het centrale bedrijfsprofiel.
+                  const overridden = doc.type === 'company' && companyConfigActive
                   const statusColor =
                     quality.quality === 'ok'
                       ? 'text-emerald-600 dark:text-emerald-400'
@@ -2460,11 +2503,16 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
                         : 'text-red-600 dark:text-red-400'
                   return (
                     <article key={`${doc.type}-${doc.name}-${index}`} className="rounded-md border bg-card p-[10px]">
-                      <Badge variant="secondary" className="mb-1.5">{sourceLabels[doc.type]}{isAuto ? ' · auto' : ''}</Badge>
+                      <Badge variant="secondary" className="mb-1.5">{sourceLabels[doc.type]}</Badge>
                       <strong className="block break-words text-sm">{doc.name}</strong>
                       <p className={cn('mt-1 break-words text-xs font-medium', statusColor)}>
                         {quality.label} · {quality.words} woorden
                       </p>
+                      {overridden ? (
+                        <p className="mt-1 break-words text-xs text-amber-600 dark:text-amber-400">
+                          Niet gebruikt: het centrale bedrijfsprofiel vervangt projecteigen bedrijfsinfo.
+                        </p>
+                      ) : null}
                       <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">{summarize(doc.content, 120)}</p>
                     </article>
                   )

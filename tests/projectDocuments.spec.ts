@@ -38,7 +38,7 @@ test('upload eigen projectdocument als aanbestedingsbron en verwijder het weer',
 
 test('upload op het tabblad Aanbesteding verschijnt ook bij de aanbestedingsdocumenten', async ({ page }) => {
   // De bronnen-uploadzone staat standaard op het tabblad Aanbesteding.
-  await page.locator('input[type="file"]').first().setInputFiles({
+  await page.locator('input[type="file"]:not(#project-document-upload)').first().setInputFiles({
     name: 'bijlage-pve.txt',
     mimeType: 'text/plain',
     buffer: Buffer.from(
@@ -49,4 +49,53 @@ test('upload op het tabblad Aanbesteding verschijnt ook bij de aanbestedingsdocu
   await expect(page.getByText('1 document(en) toegevoegd als aanbestedingsbron.')).toBeVisible()
   await expect(page.locator('li', { hasText: 'bijlage-pve.txt' }).getByText('Eigen upload')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Bronnen (1)' })).toBeVisible()
+})
+
+test('verwijdert een TenderNed-document inclusief zijn tekst uit de aanbestedingsbron', async ({ page }) => {
+  // Dossier met twee TenderNed-documenten en de bijbehorende gecombineerde bron seeden
+  // (zoals /api/tender-documents die oplevert: één sectie "## <naam> — <categorie>" per document).
+  const leidraad = 'Aanbestedingsleidraad. Inschrijvingen uiterlijk 1 oktober. Gunning op beste prijs-kwaliteitverhouding.'
+  const nvi = 'Nota van inlichtingen. Vraag: mag een combinatie inschrijven? Antwoord: ja, met hoofdelijke aansprakelijkheid.'
+  await page.request.put('/api/state', {
+    data: {
+      set: {
+        'bid-agent-dossier-987654': JSON.stringify({
+          project: { title: 'Seeded tender', tendernedId: 'TN-1', buyer: 'Gemeente Test', deadline: '' },
+          documents: [
+            {
+              id: 'src1',
+              name: 'Seeded tender',
+              type: 'tender',
+              content: `## leidraad.pdf — Aanbestedingsleidraad\n${leidraad}\n\n## nvi-1.pdf — Nota van inlichtingen\n${nvi}`,
+              importedAt: '01-01-2026, 10:00',
+            },
+          ],
+          tenderDocuments: [
+            { naam: 'leidraad.pdf', type: 'pdf', categorie: 'LEI', categorieOmschrijving: 'Aanbestedingsleidraad', grootte: 1000, chars: leidraad.length, status: 'ok' },
+            { naam: 'nvi-1.pdf', type: 'pdf', categorie: 'NVI', categorieOmschrijving: 'Nota van inlichtingen', grootte: 800, chars: nvi.length, status: 'ok' },
+          ],
+          comments: [],
+          stage: 'brons',
+          draft: '',
+          analysis: null,
+          updatedAt: '2026-01-01T10:00:00.000Z',
+        }),
+      },
+    },
+  })
+  await page.goto('/projecten/987654')
+  await expect(page.getByRole('heading', { name: 'Seeded tender', level: 1 }).first()).toBeVisible()
+
+  const row = page.locator('li', { hasText: 'nvi-1.pdf' })
+  await expect(row.getByText('TenderNed')).toBeVisible()
+  await row.getByRole('button', { name: 'Verwijder nvi-1.pdf' }).click()
+
+  await expect(page.getByText('"nvi-1.pdf" verwijderd uit dit project; de tekst is uit de aanbestedingsbron gehaald.')).toBeVisible()
+  await expect(row).toHaveCount(0)
+  await expect(page.locator('li', { hasText: 'leidraad.pdf' })).toBeVisible()
+  // De bron bestaat nog, maar zonder de NvI-tekst.
+  await page.getByRole('button', { name: 'Bekijken' }).first().click()
+  const viewer = page.locator('pre')
+  await expect(viewer).toContainText('Aanbestedingsleidraad')
+  await expect(viewer).not.toContainText('hoofdelijke aansprakelijkheid')
 })

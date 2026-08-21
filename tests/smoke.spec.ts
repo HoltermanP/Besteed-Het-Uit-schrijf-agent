@@ -39,6 +39,7 @@ test('genereert concept en voert AI-review uit', async ({ page }) => {
 
 test('tender ophalen valideert de invoer', async ({ page }) => {
   await createProject(page)
+  await page.getByRole('button', { name: /Van TenderNed/ }).click()
   await page.getByText('Tender ophalen op publicatie-ID of kenmerk').click()
   await page.getByPlaceholder('publicatie-ID of TN-kenmerk').fill('geen-geldig-id')
   await page.getByRole('button', { name: 'Haal de aanbesteding met alle documenten op en koppel die aan dit project' }).click()
