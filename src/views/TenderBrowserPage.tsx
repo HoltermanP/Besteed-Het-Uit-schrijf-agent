@@ -54,6 +54,7 @@ import { getCompanyConfig, isCompanyConfigured } from '../lib/companyConfig'
 import { getApiConfig, isWriterConfigured } from '../lib/apiConfig'
 import { loadStored, saveStored } from '../lib/storage'
 import { fetchWriterStatus } from '../lib/writeDraftApi'
+import { blobViewUrl } from '../lib/blobFiles'
 import type {
   SavedTender,
   SavedTenderDocument,
@@ -1251,7 +1252,7 @@ export default function TenderBrowserPage() {
                               {doc.fileUrl ? (
                                 <a
                                   className="inline-flex shrink-0 items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"
-                                  href={doc.fileUrl}
+                                  href={blobViewUrl(doc.fileUrl)}
                                   target="_blank"
                                   rel="noreferrer"
                                 >

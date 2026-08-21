@@ -55,6 +55,7 @@ import type { TenderDocumentExtract } from '../types/analyzeTender'
 import { assessSourceContent } from '../lib/sourceQuality'
 import { readFileContent } from '../lib/extractTextApi'
 import { fetchProjectArchiveAvailability, importProjectDocument } from '../lib/projectDocumentsApi'
+import { blobViewUrl } from '../lib/blobFiles'
 import FileUploadZone from '../components/FileUploadZone'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog'
 import { acceptedStyleExtensions } from '../types/styleDocument'
@@ -2022,7 +2023,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
                       {doc.fileUrl ? (
                         <a
                           className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium underline-offset-2 hover:text-primary hover:underline"
-                          href={doc.fileUrl}
+                          href={blobViewUrl(doc.fileUrl)}
                           target="_blank"
                           rel="noreferrer"
                           title={title}
@@ -2048,7 +2049,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
                       {doc.fileUrl ? (
                         <a
                           className="inline-flex shrink-0 items-center gap-1 font-medium text-primary underline-offset-2 hover:underline"
-                          href={doc.fileUrl}
+                          href={blobViewUrl(doc.fileUrl)}
                           target="_blank"
                           rel="noreferrer"
                         >

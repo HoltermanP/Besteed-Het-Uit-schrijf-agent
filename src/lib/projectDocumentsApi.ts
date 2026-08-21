@@ -22,20 +22,39 @@ export type ProjectDocumentImport = {
   source: SourceDocument | null
 }
 
-let archiveStatus: Promise<boolean> | null = null
+type BlobAccess = 'public' | 'private'
+type ArchiveStatus = { available: boolean; access: BlobAccess | null }
 
-/** Of originelen gearchiveerd kunnen worden (Vercel Blob geconfigureerd). Eénmalig opgevraagd. */
-export function fetchProjectArchiveAvailability(): Promise<boolean> {
+let archiveStatus: Promise<ArchiveStatus> | null = null
+
+// Archiefstatus (geconfigureerd? public of private store?). Eénmalig opgevraagd; een
+// mislukte aanvraag wordt niet gecachet zodat een volgende upload het opnieuw probeert.
+function fetchArchiveStatus(): Promise<ArchiveStatus> {
   if (!archiveStatus) {
     archiveStatus = fetch(HANDLE_UPLOAD_URL)
-      .then(async (response) => {
-        if (!response.ok) return false
-        const data = (await response.json()) as { archiveAvailable?: boolean }
-        return Boolean(data.archiveAvailable)
+      .then(async (response): Promise<ArchiveStatus> => {
+        if (!response.ok) throw new Error(`status ${response.status}`)
+        const data = (await response.json()) as { archiveAvailable?: boolean; access?: BlobAccess | null }
+        const access = data.access === 'public' || data.access === 'private' ? data.access : null
+        return { available: Boolean(data.archiveAvailable) && access !== null, access }
       })
-      .catch(() => false)
+      .catch(() => {
+        archiveStatus = null
+        return { available: false, access: null }
+      })
   }
   return archiveStatus
+}
+
+/** Of originelen gearchiveerd kunnen worden (Vercel Blob geconfigureerd en bereikbaar). */
+export function fetchProjectArchiveAvailability(): Promise<boolean> {
+  return fetchArchiveStatus().then((status) => status.available)
+}
+
+// Vangnet tegen eindeloos wachten: de Blob-SDK retryt onbekende fouten tot 10× met
+// exponentiële backoff. Ruim genoeg voor grote bestanden op een trage verbinding.
+function uploadTimeoutMs(bytes: number): number {
+  return 2 * 60_000 + Math.ceil(bytes / (5 * 1024 * 1024)) * 60_000
 }
 
 const makeId = () => Math.random().toString(36).slice(2, 10)
@@ -63,12 +82,15 @@ function safePathSegment(name: string): string {
 // token, netwerk), dan blijft het document wél bruikbaar — alleen zonder "Openen"-link.
 async function archiveOriginal(projectId: string, file: File): Promise<string | undefined> {
   try {
+    const status = await fetchArchiveStatus()
+    if (!status.available || !status.access) return undefined
     const { upload } = await import('@vercel/blob/client')
     const blob = await upload(`${BLOB_PREFIX}/${safePathSegment(projectId)}/${safePathSegment(file.name)}`, file, {
-      access: 'public',
+      access: status.access,
       handleUploadUrl: HANDLE_UPLOAD_URL,
       contentType: file.type || undefined,
       multipart: file.size > MULTIPART_FROM_BYTES,
+      abortSignal: AbortSignal.timeout(uploadTimeoutMs(file.size)),
     })
     return blob.url
   } catch {

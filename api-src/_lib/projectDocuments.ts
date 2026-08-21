@@ -1,4 +1,5 @@
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client'
+import { detectBlobAccess, isBlobConfigured } from './blobStore'
 
 // Eigen aanbestedingsdocumenten die een gebruiker in een project uploadt (stukken die
 // niet op TenderNed staan, zoals een nota van inlichtingen uit de mail). De tekst wordt
@@ -9,18 +10,24 @@ import { handleUpload, type HandleUploadBody } from '@vercel/blob/client'
 const BLOB_PREFIX = 'projectdocumenten'
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
-export function isProjectArchiveAvailable(): boolean {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim())
-}
-
 export async function handleProjectDocumentsRequest(request: Request): Promise<Response> {
   if (request.method === 'GET') {
-    return Response.json({ archiveAvailable: isProjectArchiveAvailable() })
+    // De browser moet de access-modus van de store kennen: een client-upload met de
+    // verkeerde modus wordt geweigerd (en bleef door SDK-retries minutenlang hangen).
+    if (!isBlobConfigured()) {
+      return Response.json({ archiveAvailable: false, access: null })
+    }
+    try {
+      return Response.json({ archiveAvailable: true, access: await detectBlobAccess() })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Store-modus kon niet worden bepaald.'
+      return Response.json({ archiveAvailable: false, access: null, error: message })
+    }
   }
   if (request.method !== 'POST') {
     return Response.json({ error: 'Method not allowed' }, { status: 405 })
   }
-  if (!isProjectArchiveAvailable()) {
+  if (!isBlobConfigured()) {
     return Response.json(
       { error: 'Documentarchief niet geconfigureerd (BLOB_READ_WRITE_TOKEN ontbreekt).' },
       { status: 503 },

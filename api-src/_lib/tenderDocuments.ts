@@ -1,5 +1,5 @@
 import { unzipSync } from 'fflate'
-import { put } from '@vercel/blob'
+import { archiveToBlob } from './blobStore'
 import { extractDocumentText } from './extractDocumentText'
 
 const TNS_BASE = 'https://www.tenderned.nl'
@@ -88,17 +88,8 @@ const BLOB_PREFIX = 'aanbestedingsdocumenten'
 // Origineel bestand archiveren zodat het later (los van de geëxtraheerde tekst)
 // nog te bekijken/downloaden is. Zonder BLOB_READ_WRITE_TOKEN (lokaal, of nog niet
 // geconfigureerd) slaat dit stil over — de tekstextractie werkt dan gewoon door.
-async function archiveOriginal(publicatieId: string, fileName: string, buffer: Buffer): Promise<string | undefined> {
-  if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) return undefined
-  try {
-    const blob = await put(`${BLOB_PREFIX}/${publicatieId}/${fileName}`, buffer, {
-      access: 'public',
-      addRandomSuffix: true,
-    })
-    return blob.url
-  } catch {
-    return undefined
-  }
+function archiveOriginal(publicatieId: string, fileName: string, buffer: Buffer): Promise<string | undefined> {
+  return archiveToBlob(`${BLOB_PREFIX}/${publicatieId}/${fileName}`, buffer)
 }
 
 async function safeExtract(fileName: string, buffer: Buffer): Promise<ExtractResult> {
