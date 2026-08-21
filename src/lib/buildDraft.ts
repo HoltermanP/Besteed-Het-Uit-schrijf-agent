@@ -239,3 +239,70 @@ export function buildHtmlDraft(
   }
 </article>`
 }
+
+/** Markering waaraan de werkplek herkent dat het veld alleen de startsamenvatting bevat (nog geen concept). */
+const START_DRAFT_ATTR = 'data-draft-state="start"'
+
+/** Is deze HTML nog de startinhoud (samenvatting) en dus géén geschreven concept? */
+export function isStartDraft(html: string | null | undefined): boolean {
+  return !!html && html.includes(START_DRAFT_ATTR)
+}
+
+const sourceTypeLabels: Record<SourceDocument['type'], string> = {
+  tender: 'aanbestedingsstuk(ken)',
+  company: 'bedrijfsbron(nen)',
+  rules: 'schrijfregel-set(s)',
+  training: 'schrijfstijlvoorbeeld(en)',
+}
+
+/**
+ * Startinhoud van het tekstveld vóórdat de schrijfagent is gestart. Bewust géén
+ * voorgeschreven conceptteksten (die lijken op een al geschreven stuk), maar een
+ * duidelijke melding plus een korte samenvatting van de aanbesteding en de bronnen.
+ */
+export function buildStartDraft(project: TenderProject, documents: SourceDocument[]) {
+  const tenderDocs = documents.filter((doc) => doc.type === 'tender')
+  // De catalogus voegt naast de volledige tekst een aparte samenvattingsbron toe; gebruik die bij voorkeur.
+  const summaryDoc = tenderDocs.find((doc) => /—\s*samenvatting$/i.test(doc.name)) ?? tenderDocs[0]
+  const summaryText = summaryDoc ? summarize(summaryDoc.content, 600) : ''
+
+  const counts = (Object.keys(sourceTypeLabels) as Array<SourceDocument['type']>)
+    .map((type) => ({ type, count: documents.filter((doc) => doc.type === type).length }))
+    .filter((item) => item.count > 0)
+  const sourceList = counts.length
+    ? `<ul>${counts.map((item) => `<li><strong>${item.count}</strong> ${sourceTypeLabels[item.type]}</li>`).join('')}</ul>`
+    : '<p>Nog geen bronnen toegevoegd. Haal een aanbesteding op of voeg bedrijfsinformatie en schrijfregels toe in de linkerkolom.</p>'
+
+  const meta = [
+    project.buyer ? `<div><dt>Opdrachtgever</dt><dd>${escapeHtml(project.buyer)}</dd></div>` : '',
+    project.deadline ? `<div><dt>Deadline</dt><dd>${escapeHtml(project.deadline)}</dd></div>` : '',
+    project.tendernedId ? `<div><dt>TenderNed</dt><dd>${escapeHtml(project.tendernedId)}</dd></div>` : '',
+  ].join('')
+
+  return `<article class="proposal-doc draft-start" ${START_DRAFT_ATTR}>
+  <div class="start-notice">
+    <strong>Nog geen concept geschreven</strong>
+    De schrijfagent moet nog gestart worden. Klik op <em>Start schrijfagent</em> om het eerste concept (Brons) te laten schrijven. Hieronder staat alleen een korte samenvatting van de aanbesteding.
+  </div>
+  <header class="doc-header">
+    <p class="kicker">Samenvatting aanbesteding</p>
+    ${project.buyer ? `<p class="doc-subtitle">Inschrijving voor ${escapeHtml(project.buyer)}</p>` : ''}
+    <h1>${escapeHtml(project.title)}</h1>
+    ${meta ? `<dl class="doc-meta">${meta}</dl>` : ''}
+  </header>
+
+  <section class="doc-section">
+    <h2>Waar gaat de aanbesteding over?</h2>
+    ${
+      summaryText
+        ? `<p>${escapeHtml(summaryText)}</p>`
+        : '<p>Nog geen aanbestedingsstukken toegevoegd. Haal een tender op via het publicatie-ID of voeg de leidraad toe als bron; de samenvatting verschijnt dan hier.</p>'
+    }
+  </section>
+
+  <section class="doc-section">
+    <h2>Bronnen in dit project</h2>
+    ${sourceList}
+  </section>
+</article>`
+}

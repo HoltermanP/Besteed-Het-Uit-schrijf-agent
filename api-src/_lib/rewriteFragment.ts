@@ -12,6 +12,8 @@ const stageLabels: Record<RewriteFragmentRequest['stage'], string> = {
 }
 
 const DOC_CHAR_LIMIT = 6_000
+/** Het schrijfkader (regels + schrijfwijze + aanpassingen) moet volledig meekomen. */
+const KADER_CHAR_LIMIT = 14_000
 const SECTION_CHAR_LIMIT = 20_000
 
 const SYSTEM_PROMPT = `Je bent een senior bidwriter voor Nederlandse aanbestedingen (Aanbestedingswet, EMVI, BPKV).
@@ -24,7 +26,7 @@ OPDRACHT
 - Verander het sectienummer en de titel (<h2>) niet, tenzij de opmerking daar expliciet om vraagt.
 
 STIJL & INHOUD
-- Nederlands, formeel, toetsbaar, actief waar passend. Volg de bestaande schrijfstijl en eventuele schrijfregels.
+- Nederlands, formeel, toetsbaar, actief waar passend. Volg de bestaande schrijfstijl en het schrijfkader: bronnen met de kop [SCHRIJFKADER · …] bevatten verplichte schrijfregels, schrijfwijze en kwaliteitseisen; handmatige aanpassingen daarin gaan vóór vastgelegde regels, die gaan vóór basisregels.
 - Onderbouw met feiten uit de aangeleverde bronnen; verzin geen feiten; geen lege superlatieven.
 - Verwijs niet naar AI, prompts of het reviewproces.
 - Behoud de HTML-conventies: tabellen in <div class="table-wrap"><table><caption>…</caption>…; visuele modellen als <figure class="doc-model"> met een type-tabel (process-flow / timeline / org-chart / matrix-2x2 / model-grid). Voeg alleen een model of tabel toe als de opmerking daarom vraagt of het de boodschap aantoonbaar versterkt.
@@ -56,10 +58,11 @@ function formatStyleContext(analysis: TenderAnalysis | null): string {
 function formatDocuments(
   documents: RewriteFragmentRequest['documents'],
   types: RewriteFragmentRequest['documents'][number]['type'][],
+  limit = DOC_CHAR_LIMIT,
 ): string {
   const relevant = documents.filter((doc) => types.includes(doc.type))
   if (!relevant.length) return '- geen'
-  return relevant.map((doc) => `- [${doc.type}] ${doc.name}: ${trimText(doc.content, DOC_CHAR_LIMIT)}`).join('\n')
+  return relevant.map((doc) => `- [${doc.type}] ${doc.name}: ${trimText(doc.content, limit)}`).join('\n')
 }
 
 function buildUserPrompt(request: RewriteFragmentRequest): string {
@@ -74,8 +77,8 @@ Project:
 Stijl- en beoordelingscontext:
 ${formatStyleContext(request.analysis)}
 
-Schrijfregels & voorbeeldstijl (volg toon en formulering):
-${formatDocuments(request.documents, ['rules', 'training'])}
+Schrijfkader — schrijfregels, schrijfwijze & kwaliteit (verplicht volgen, ook in de herschreven passage):
+${formatDocuments(request.documents, ['rules', 'training'], KADER_CHAR_LIMIT)}
 
 Onderbouwende feiten over de inschrijver:
 ${formatDocuments(request.documents, ['company'])}

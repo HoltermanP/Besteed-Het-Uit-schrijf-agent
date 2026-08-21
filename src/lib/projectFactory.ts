@@ -1,4 +1,4 @@
-import { buildHtmlDraft } from './buildDraft'
+import { buildStartDraft } from './buildDraft'
 import { loadDossier, saveDossier, setActiveDossierId } from './dossier'
 import { makeProjectId, upsertProject } from './projects'
 import type { DossierSnapshot, SourceDocument, TenderProject } from '../types/dossier'
@@ -57,7 +57,7 @@ export function buildFreshDossier(tender: SavedTender): DossierSnapshot {
     tenderDocuments: tender.documents ?? [],
     comments: [],
     stage: 'brons',
-    draft: buildHtmlDraft('brons', project, documents, [], null),
+    draft: buildStartDraft(project, documents),
     analysis: null,
     updatedAt: new Date().toISOString(),
   }
@@ -104,7 +104,7 @@ export function createBlankProject(input?: { title?: string; buyer?: string; dea
     tenderDocuments: [],
     comments: [],
     stage: 'brons',
-    draft: buildHtmlDraft('brons', project, [], [], null),
+    draft: buildStartDraft(project, []),
     analysis: null,
     updatedAt: new Date().toISOString(),
   }

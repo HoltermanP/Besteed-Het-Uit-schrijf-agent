@@ -629,6 +629,42 @@ export const proposalDocumentCss = `
   }
 }
 
+/* Startstand: het veld bevat alleen een samenvatting van de aanbesteding, nog geen
+   concept. De stippellijn en de kleur maken direct zichtbaar dat dit geen tekst van
+   de schrijfagent is. */
+.proposal-doc .start-notice {
+  margin: 0 0 26px;
+  padding: 14px 18px;
+  border: 2px dashed #b3541e;
+  border-radius: 10px;
+  background: #fff8f2;
+  color: #7c3a12;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.proposal-doc .start-notice strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 15px;
+  color: #b3541e;
+}
+
+.proposal-doc .start-notice em {
+  font-style: normal;
+  font-weight: 700;
+}
+
+.proposal-doc.draft-start .kicker {
+  background: #eef5f4;
+  color: #164f4a;
+}
+
+.proposal-doc.draft-start p,
+.proposal-doc.draft-start li {
+  color: #475569;
+}
+
 @media print {
   .proposal-doc {
     max-width: none;

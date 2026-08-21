@@ -43,7 +43,7 @@ import {
   Wand2,
   XCircle,
 } from 'lucide-react'
-import { buildHtmlDraft } from '../lib/buildDraft'
+import { buildHtmlDraft, buildStartDraft, isStartDraft } from '../lib/buildDraft'
 import { revealDraftProgressively } from '../lib/draftProgress'
 import { analyzeTenderDocuments, countCharacters, countWords, reviewAgainstAnalysis } from '../lib/tenderAnalysis'
 import { analyzeTenderViaApi } from '../lib/analyzeTenderApi'
@@ -66,6 +66,7 @@ import { getCompanyConfig, isCompanyConfigured, mergeDocumentsWithCompanyConfig 
 import { computeOpportunityScore, type OpportunityLevel } from '../lib/opportunityScore'
 import { fetchStyleDocuments } from '../lib/styleDocumentsApi'
 import { mergeDocumentsWithStyleDocuments } from '../lib/styleDocumentMerge'
+import { getSchrijfkaderAanpassingen, hasAanpassingen } from '../lib/schrijfkader'
 import type { StyleDocument } from '../types/styleDocument'
 import EvaluationDialog from '../components/EvaluationDialog'
 import { fetchLessons, lessonsToPromptContent, selectRelevantLessons } from '../lib/lessonsLearnedApi'
@@ -256,9 +257,15 @@ function loadInitialState(projectId: string) {
   const comments = normalizeComments(snapshot?.comments)
   const stage: Stage = snapshot?.stage ?? 'brons'
   const analysis = normalizeStoredAnalysis(snapshot?.analysis ?? null)
-  const draft = snapshot?.draft?.trim()
-    ? snapshot.draft
-    : buildHtmlDraft(stage, project, documents, toLegacyComments(comments), analysis)
+  // Zonder geschreven concept toont het veld de startsamenvatting. Oudere dossiers
+  // bewaarden nog het onaangeroerde standaardconcept (dat las als "al geschreven");
+  // dat wordt hier ook naar de startstand gemigreerd zolang er niets in is gewijzigd.
+  const legacyDefault = buildHtmlDraft(stage, project, documents, toLegacyComments(comments), null)
+  const storedDraft = snapshot?.draft?.trim() ?? ''
+  const draft =
+    storedDraft && storedDraft !== legacyDefault.trim()
+      ? storedDraft
+      : buildStartDraft(project, documents)
   // Gearchiveerde aanbestedingsbestanden. Oudere dossiers bewaarden deze alleen bij de
   // opgeslagen aanbesteding zelf; val daar dan op terug.
   const tenderDocuments = snapshot?.tenderDocuments?.length
@@ -438,12 +445,19 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   const [styleDocuments, setStyleDocuments] = useState<StyleDocument[]>([])
   const [lessonsLibrary, setLessonsLibrary] = useState<LessonLearned[]>([])
   const [appliedLessons, setAppliedLessons] = useState<LessonLearned[]>([])
+  // Handmatige aanpassingen uit het Schrijfkader; eenmalig gelezen bij het openen van het project.
+  const kaderAanpassingen = useMemo(() => getSchrijfkaderAanpassingen(), [])
   const effectiveDocuments = useMemo(
-    () => mergeDocumentsWithStyleDocuments(mergeDocumentsWithCompanyConfig(documents), styleDocuments),
-    [documents, styleDocuments],
+    () =>
+      mergeDocumentsWithStyleDocuments(
+        mergeDocumentsWithCompanyConfig(documents),
+        styleDocuments,
+        kaderAanpassingen,
+      ),
+    [documents, styleDocuments, kaderAanpassingen],
   )
   const companyConfigActive = isCompanyConfigured()
-  const styleLibraryActive = styleDocuments.length > 0
+  const schrijfkaderActive = styleDocuments.length > 0 || hasAanpassingen(kaderAanpassingen)
   const [exportingPdf, setExportingPdf] = useState(false)
   const editorRef = useRef<HTMLDivElement | null>(null)
 
@@ -548,6 +562,16 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     return html && html.trim() ? html : draft
   }
 
+  // Zolang de schrijfagent nog niet is gestart, bevat het veld alleen een samenvatting
+  // van de aanbesteding (geen concept). Die samenvatting volgt de bronnen en
+  // projectgegevens, bijvoorbeeld nadat een aanbesteding aan dit project is gekoppeld.
+  const notStarted = isStartDraft(draft)
+  useEffect(() => {
+    if (!isStartDraft(draft)) return
+    const next = buildStartDraft(project, documents)
+    if (next !== draft) setDraft(next)
+  }, [draft, documents, project])
+
   const visibleSources = useMemo(() => {
     const list = showAllSources ? documents : documents.filter((doc) => doc.type === activeType)
     return list
@@ -564,12 +588,12 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   )
 
   const stats = useMemo(() => {
-    const words = countWords(draft)
+    const words = notStarted ? 0 : countWords(draft)
     const wordTarget = analysis?.targetWordCount
     const charTarget = analysis?.targetCharCount
     return {
       words,
-      chars: countCharacters(draft),
+      chars: notStarted ? 0 : countCharacters(draft),
       sources: effectiveDocuments.length,
       unresolved: comments.filter((comment) => comment.status === 'open').length,
       score: opportunity.score,
@@ -577,7 +601,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       charTarget,
       leidraad: analysis?.leidraadFound ?? false,
     }
-  }, [analysis, comments, draft, effectiveDocuments.length, opportunity.score])
+  }, [analysis, comments, draft, effectiveDocuments.length, notStarted, opportunity.score])
 
   const [showScoreDetails, setShowScoreDetails] = useState(false)
 
@@ -761,7 +785,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           documents: [...applyDistillates(effectiveDocuments, distilledById), ...lessonDocuments],
           comments: toLegacyComments(comments),
           analysis: result,
-          currentDraft: targetStage === 'brons' ? undefined : stripCommentMarks(draft),
+          currentDraft: targetStage === 'brons' || isStartDraft(draft) ? undefined : stripCommentMarks(draft),
         },
         (accumulated) => {
           updateEditorHtml(accumulated || '<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
@@ -936,10 +960,18 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   // bewust via de knop "Genereer", niet door op een stadium te klikken.
   const selectStage = (targetStage: Stage) => {
     setStage(targetStage)
-    setSyncStatus(`Stadium: ${stageMeta[targetStage].label}. Klik "Genereer" om dit niveau te (her)schrijven.`)
+    setSyncStatus(
+      isStartDraft(draft)
+        ? `Stadium: ${stageMeta[targetStage].label}. Klik "Start schrijfagent" om het concept te laten schrijven.`
+        : `Stadium: ${stageMeta[targetStage].label}. Klik "Genereer" om dit niveau te (her)schrijven.`,
+    )
   }
 
   const applyAiRewrite = async () => {
+    if (isStartDraft(draft)) {
+      setSyncStatus('Start eerst de schrijfagent; opmerkingen verwerk je op een geschreven concept.')
+      return
+    }
     const openComments = comments.filter((comment) => comment.status === 'open')
     if (!openComments.length) {
       setSyncStatus('Geen open opmerkingen om te verwerken.')
@@ -1691,7 +1723,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
             ? ` · Schrijfagent actief${serverWriter.available && !isWriterConfigured() ? ' (server)' : ''}`
             : ' · Schrijfagent niet actief'}
           {companyConfigActive ? ' · Bedrijfsconfig actief' : ''}
-          {styleLibraryActive ? ' · Stijlbibliotheek actief' : ''}
+          {schrijfkaderActive ? ' · Schrijfkader actief' : ' · Schrijfkader: basis'}
         </p>
 
         <Card className="mt-[14px] mb-[14px]">
@@ -1937,7 +1969,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
             />
             <Button disabled={generating} onClick={() => void analyzeAndGenerate(stage)}>
               {generating ? <Loader2 size={17} className="animate-spin" /> : <Sparkles size={17} />}
-              {generating ? 'Genereren…' : 'Genereer'}
+              {generating ? 'Genereren…' : notStarted ? 'Start schrijfagent' : 'Genereer'}
             </Button>
           </div>
         </header>
@@ -2294,17 +2326,30 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-b bg-muted px-3 py-[10px] text-sm text-muted-foreground">
             <div className="flex min-w-0 items-center gap-2">
               {generating ? <Loader2 size={17} className="shrink-0 animate-spin" /> : <Bot size={17} className="shrink-0" />}
-              <span className="min-w-0 break-words">{generating ? 'Concept wordt opgebouwd…' : stagePrompts[stage]}</span>
+              <span className="min-w-0 break-words">
+                {generating
+                  ? 'Concept wordt opgebouwd…'
+                  : notStarted
+                    ? 'De schrijfagent is nog niet gestart — het veld toont alleen een samenvatting van de aanbesteding.'
+                    : stagePrompts[stage]}
+              </span>
             </div>
-            <Button variant="outline" size="sm" className="shrink-0" onClick={() => void applyAiRewrite()} disabled={generating}>
-              {generating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-              <span className="sr-only sm:not-sr-only">{generating ? 'Verwerken…' : 'Verwerk opmerkingen'}</span>
-            </Button>
+            {notStarted ? (
+              <Button size="sm" className="shrink-0" onClick={() => void analyzeAndGenerate(stage)} disabled={generating}>
+                {generating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                {generating ? 'Genereren…' : 'Start schrijfagent'}
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" className="shrink-0" onClick={() => void applyAiRewrite()} disabled={generating}>
+                {generating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                <span className="sr-only sm:not-sr-only">{generating ? 'Verwerken…' : 'Verwerk opmerkingen'}</span>
+              </Button>
+            )}
           </div>
           <div
             ref={editorRef}
             className={cn('document-editor min-w-0 break-words', generating && 'is-generating')}
-            contentEditable={!generating}
+            contentEditable={!generating && !notStarted}
             suppressContentEditableWarning
             onMouseUp={captureSelection}
             onKeyUp={captureSelection}

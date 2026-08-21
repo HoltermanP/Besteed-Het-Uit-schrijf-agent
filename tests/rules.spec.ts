@@ -55,3 +55,62 @@ test('regeldocument uploaden', async ({ page }, testInfo) => {
     section.getByRole('listitem').filter({ hasText: fileName }),
   ).toBeVisible()
 })
+
+test('kopje klikken toont de uitwerking van de sectie', async ({ page }) => {
+  await page.goto('/schrijfregels')
+  const section = page.getByTestId('kader-section-schrijfstijl')
+
+  // Ingeklapt: de uitwerking is niet zichtbaar.
+  await expect(page.getByTestId('kader-uitwerking-schrijfstijl')).toHaveCount(0)
+
+  await section.getByRole('heading', { name: 'Schrijfwijze' }).click()
+
+  const uitwerking = page.getByTestId('kader-uitwerking-schrijfstijl')
+  await expect(uitwerking).toBeVisible()
+  await expect(uitwerking.getByText('Uitwerking — zo schrijft de agent')).toBeVisible()
+  await expect(uitwerking.getByText('Basis (ingebouwd)')).toBeVisible()
+  await expect(uitwerking.getByText(/Actieve zinnen met een duidelijke actor/)).toBeVisible()
+  await expect(uitwerking.getByLabel('Handmatige aanpassingen')).toBeVisible()
+
+  // Nogmaals klikken klapt de uitwerking weer in.
+  await section.getByRole('heading', { name: 'Schrijfwijze' }).click()
+  await expect(page.getByTestId('kader-uitwerking-schrijfstijl')).toHaveCount(0)
+})
+
+test('handmatige aanpassingen opslaan en terugzien na herladen', async ({ page }, testInfo) => {
+  const instructie = `Schrijf in de u-vorm (${testInfo.project.name})`
+  await page.goto('/schrijfregels')
+  const section = page.getByTestId('kader-section-richtlijnen')
+
+  await section.getByRole('heading', { name: 'Schrijfregels' }).click()
+  const uitwerking = page.getByTestId('kader-uitwerking-richtlijnen')
+  await uitwerking.getByLabel('Handmatige aanpassingen').fill(instructie)
+  await uitwerking.getByRole('button', { name: 'Aanpassingen opslaan' }).click()
+  await expect(uitwerking.getByText('Aanpassingen opgeslagen.')).toBeVisible()
+  await expect(section.getByText('eigen aanpassingen actief')).toBeVisible()
+
+  await page.reload()
+  await page.getByTestId('kader-section-richtlijnen').getByRole('heading', { name: 'Schrijfregels' }).click()
+  await expect(
+    page.getByTestId('kader-uitwerking-richtlijnen').getByLabel('Handmatige aanpassingen'),
+  ).toHaveValue(instructie)
+})
+
+test('voorbeeld toont letterlijk wat de schrijfagent ontvangt, inclusief aanpassingen', async ({ page }) => {
+  await page.goto('/schrijfregels')
+
+  const algemeen = page.getByTestId('kader-algemeen')
+  await algemeen.getByLabel('Algemene aanpassingen').fill("Vermijd het woord 'partner'.")
+  await algemeen.getByRole('button', { name: 'Aanpassingen opslaan' }).click()
+  await expect(algemeen.getByText('Aanpassingen opgeslagen.')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Wat de schrijfagent ontvangt' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByText('Schrijfkader — Algemene aanpassingen')).toBeVisible()
+  await expect(dialog.getByText(/SCHRIJFKADER · ALGEMENE AANPASSINGEN/)).toBeVisible()
+  await expect(dialog.getByText(/Vermijd het woord 'partner'\./)).toBeVisible()
+  await expect(dialog.getByText('Schrijfkader — Schrijfregels')).toBeVisible()
+  await expect(dialog.getByText(/SCHRIJFKADER · SCHRIJFREGELS/)).toBeVisible()
+  await expect(dialog.getByText('Schrijfkader — Schrijfwijze')).toBeVisible()
+  await expect(dialog.getByText('Schrijfkader — Kwaliteit')).toBeVisible()
+})

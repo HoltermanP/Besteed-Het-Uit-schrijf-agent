@@ -1,17 +1,18 @@
 import type { SourceType } from '../types/tenderAnalysis'
-import type {
-  StyleDocument,
-  StyleDocumentCategory,
-  StyleDocumentPromptType,
+import {
+  isKaderCategory,
+  type StyleDocument,
+  type StyleDocumentCategory,
+  type StyleDocumentPromptType,
 } from '../types/styleDocument'
+import {
+  emptyAanpassingen,
+  schrijfkaderToSourceDocuments,
+  type KaderSourceDocument,
+  type SchrijfkaderAanpassingen,
+} from './schrijfkader'
 
-export type StyleSourceDocument = {
-  id: string
-  name: string
-  type: SourceType
-  content: string
-  importedAt: string
-}
+export type StyleSourceDocument = KaderSourceDocument
 
 /**
  * Een geanalyseerd document levert een gedistilleerd profiel: de schrijfstijl gaat als
@@ -55,32 +56,49 @@ function analyzedDocumentToSources(doc: StyleDocument): StyleSourceDocument[] {
   return sources
 }
 
-export function styleDocumentsToSourceDocuments(documents: StyleDocument[]): StyleSourceDocument[] {
-  return documents.flatMap((doc) => {
-    const analyzed = analyzedDocumentToSources(doc)
-    if (analyzed.length) return analyzed
+/**
+ * Alle bronnen die de stijlbibliotheek aan de agent levert: eerst het gecompileerde
+ * schrijfkader (basis + regels + handmatige aanpassingen per sectie), daarna de
+ * profielen uit eerdere aanbestedingen en achtergrondstukken.
+ */
+export function styleDocumentsToSourceDocuments(
+  documents: StyleDocument[],
+  aanpassingen: SchrijfkaderAanpassingen = emptyAanpassingen,
+): StyleSourceDocument[] {
+  const kader = schrijfkaderToSourceDocuments(documents, aanpassingen)
 
-    return [
-      {
-        id: `style-doc-${doc.id}`,
-        name: `${doc.name} (${doc.category})`,
-        type: doc.promptType,
-        content: `[${doc.category} | ${doc.fileName}]\n${doc.content}`,
-        importedAt: doc.updatedAt,
-      },
-    ]
-  })
+  const rest = documents
+    .filter((doc) => !isKaderCategory(doc.category))
+    .flatMap((doc) => {
+      const analyzed = analyzedDocumentToSources(doc)
+      if (analyzed.length) return analyzed
+
+      return [
+        {
+          id: `style-doc-${doc.id}`,
+          name: `${doc.name} (${doc.category})`,
+          type: doc.promptType,
+          content: `[${doc.category} | ${doc.fileName}]\n${doc.content}`,
+          importedAt: doc.updatedAt,
+        },
+      ]
+    })
+
+  return [...kader, ...rest]
 }
 
+/**
+ * Voegt het schrijfkader samen met de projectbronnen. Projectspecifieke schrijfregels en
+ * stijlbronnen blijven staan: ze vullen het kader aan voor dit ene project en worden
+ * niet meer verdrongen door de bibliotheek.
+ */
 export function mergeDocumentsWithStyleDocuments<T extends { type: SourceType }>(
   documents: T[],
   styleDocuments: StyleDocument[],
+  aanpassingen: SchrijfkaderAanpassingen = emptyAanpassingen,
 ): T[] {
-  const styleDocs = styleDocumentsToSourceDocuments(styleDocuments)
-  if (!styleDocs.length) return documents
-
-  const withoutStyleTypes = documents.filter((doc) => doc.type !== 'rules' && doc.type !== 'training')
-  return [...withoutStyleTypes, ...(styleDocs as unknown as T[])]
+  const styleDocs = styleDocumentsToSourceDocuments(styleDocuments, aanpassingen)
+  return [...(styleDocs as unknown as T[]), ...documents]
 }
 
 export function categoryForPromptType(promptType: StyleDocumentPromptType): StyleDocumentCategory {

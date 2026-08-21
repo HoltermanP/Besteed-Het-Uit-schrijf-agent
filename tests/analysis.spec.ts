@@ -23,7 +23,7 @@ test('analyseert leidraad met eisen en schrijfstijl', async ({ page }) => {
 })
 
 test('genereert concept met leidraadanalyse-sectie', async ({ page }) => {
-  await page.getByRole('button', { name: 'Genereer' }).click()
+  await page.getByRole('button', { name: 'Start schrijfagent' }).first().click()
   await expect(page.getByText('0. Leidraadanalyse en schrijfstijl')).toBeVisible()
   await expect(page.getByText('Gevraagde inhoud en onderwerpen')).toBeVisible()
   await expect(page.getByText('Vraag achter de vraag (intern — niet indienen)')).toBeVisible()

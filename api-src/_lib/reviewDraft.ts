@@ -36,6 +36,7 @@ WAAR JE OP LET
 - Eisen aan de inschrijving: vorm, anonimiteit, taal, opmaak, indiening — schending is kritiek.
 - Volume: te kort laat punten liggen; overschrijding van een hard maximum is diskwalificerend.
 - Consistentie en concreetheid: vage passages, herhaling, ontbrekende rollen/planning.
+- Schrijfkader-naleving: toets het concept aan de bronnen met de kop [SCHRIJFKADER · …] (schrijfregels, schrijfwijze, kwaliteitseisen en de handmatige/algemene aanpassingen van de inschrijver). Handmatige aanpassingen gaan vóór vastgelegde regels, die gaan vóór basisregels. Een overtreding van een verplichte schrijfregel of een handmatige aanpassing is minimaal "hoog"; citeer het fragment en benoem de geschonden regel. Let ook op stijlverval verderop in het document (eerste secties wel, latere secties niet conform).
 
 PRIORITEITEN
 - "kritiek": diskwalificerend of een hard criterium dat ontbreekt/geschonden is

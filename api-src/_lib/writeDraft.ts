@@ -24,10 +24,10 @@ Schrijf het concrete inschrijfstuk dat de opdrachtgever vraagt — geen generiek
 
 BRONHIËRARCHIE (streng, van hoog naar laag)
 1. Leidraad / aanbestedingsstukken — gevraagde stukken, onderwerpen, woord- en paginalimieten, beoordelingscriteria
-2. Schrijfregels & kwaliteitsstandaarden — verplichte formulering, kwaliteitsnormen, verboden formuleringen
+2. Schrijfkader: schrijfregels, kwaliteitsstandaarden en handmatige aanpassingen van de inschrijver — verplichte formulering, kwaliteitsnormen, verboden formuleringen (documenten met de kop [SCHRIJFKADER · …])
 3. Lessons learned uit eerdere aanbestedingen — toegepaste leerpunten: pas toe wat aantoonbaar punten opleverde en vermijd wat eerder punten kostte; laat ze de uitwerking sturen, maar nooit de leidraad-eisen overrulen
 4. Bedrijfsinformatie — alleen feitelijke claims over het inschrijvende bedrijf
-5. Schrijfstijl & voorbeeldteksten — toon, zinsbouw, opmaak; geen nieuwe inhoud verzinnen
+5. Schrijfwijze & voorbeeldteksten (Schrijfkader) — toon, zinsbouw, opmaak; geen nieuwe inhoud verzinnen
 
 INHOUDELIJKE REGELS
 - VOLG DE LEIDRAAD LETTERLIJK: neem de hoofdstuk-/vraagindeling over die de leidraad voor het in te dienen stuk voorschrijft — dezelfde (sub)gunningscriteria of vraagnummers, dezelfde titels, dezelfde volgorde. Verzin geen eigen hoofdstukindeling; de beoordelaar moet het stuk 1-op-1 naast de leidraad kunnen leggen
@@ -44,7 +44,15 @@ INHOUDELIJKE REGELS
 
 STIJL
 - Nederlands, formeel, toetsbaar, actief waar passend
-- Volg schrijfregels en de gecombineerde schrijfstijl uit de analyse
+- Volg het schrijfkader (hieronder) en de gecombineerde schrijfstijl uit de analyse
+
+SCHRIJFKADER (verplicht — schrijfregels, schrijfwijze, kwaliteit)
+- In de bronnen staan documenten met de kop [SCHRIJFKADER · …]. Dit zijn de harde instructies van de inschrijver voor HOE er geschreven wordt; ze gelden voor elke zin van het stuk, van de eerste tot de laatste sectie
+- Elk schrijfkader-document bevat drie lagen met oplopende prioriteit: BASISREGELS < VASTGELEGDE REGELS < HANDMATIGE AANPASSINGEN. Een apart document "ALGEMENE AANPASSINGEN" staat boven alle secties. Bij strijdigheid wint de hogere laag; alleen een expliciete eis uit de leidraad gaat boven het schrijfkader
+- Handmatige en algemene aanpassingen zijn recente, bewuste bijsturingen van de gebruiker: pas ze letterlijk en overal toe, ook als ze afwijken van de basis of van je eigen voorkeur
+- Pas de schrijfwijze (toon, perspectief, zinslengte, alinea-opbouw, woordkeuze) actief toe en houd dat vol tot de laatste zin — niet alleen in de eerste secties
+- Controleer vóór je afrondt elke sectie expliciet op: verboden formuleringen, verplichte terminologie en perspectief, kwaliteitseisen (onderbouwing, toetsbaarheid, SMART) — en corrigeer overtredingen in de tekst zelf
+- Noem het schrijfkader, de regels of de aanpassingen nooit in het stuk
 
 VOLUME (cruciaal)
 - Als de leidraad een maximum aantal woorden, karakters of pagina's noemt: blijf daar STRIKT onder, maar gebruik het budget bijna volledig — schrijf richting het maximum (97–100%), niet een korte samenvatting
@@ -437,10 +445,10 @@ ${docsByType(request, 'tender') || '- geen'}
 Bedrijfsinformatie (feiten voor onderbouwing):
 ${docsByType(request, 'company') || '- geen'}
 
-Schrijfregels & kwaliteitsstandaarden (verplicht — formulering en kwaliteit):
+Schrijfregels & kwaliteitsstandaarden — SCHRIJFKADER (verplicht na te leven in elke zin; handmatige aanpassingen gaan vóór vastgelegde regels, die gaan vóór basisregels):
 ${docsByType(request, 'rules') || '- geen'}
 
-Schrijfstijl & voorbeeldteksten (toon/structuur — geen nieuwe inhoud):
+Schrijfwijze & voorbeeldteksten — SCHRIJFKADER (toon/structuur, consequent tot de laatste zin; geen nieuwe inhoud):
 ${docsByType(request, 'training') || '- geen'}
 
 Lessons learned uit eerdere aanbestedingen (toepassen wat werkte, vermijden wat punten kostte; nooit de leidraad-eisen overrulen):
