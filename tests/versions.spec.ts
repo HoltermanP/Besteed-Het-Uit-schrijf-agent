@@ -6,6 +6,9 @@ import { createProject, resetWorkspace } from './helpers'
 
 const EIGEN_ZIN = 'Eigen aanvulling van de schrijver.'
 
+// Statusregel waarmee de werkplek meldt dat het (lokaal opgebouwde) concept klaar is.
+const GEREED = /Analyse en concept opgeslagen|Analyse, concept en Neon-sync gereed/
+
 test.beforeEach(async ({ page }) => {
   await resetWorkspace(page)
 })
@@ -16,6 +19,7 @@ test('bewaart elke ronde, vergelijkt twee versies en herstelt een oudere versie'
   // 1. Generatie → eerste versie.
   await page.getByRole('button', { name: 'Start schrijfagent' }).first().click()
   await expect(page.getByText('Brons versie')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByText(GEREED)).toBeVisible({ timeout: 15000 })
   await page.getByRole('button', { name: /^Versies/ }).click()
   await expect(page.getByTestId('version-entry')).toHaveCount(1)
   await page.keyboard.press('Escape')
@@ -32,7 +36,7 @@ test('bewaart elke ronde, vergelijkt twee versies en herstelt een oudere versie'
 
   // 3. Opnieuw genereren gooit het handwerk niet weg: de bewerking blijft als versie staan.
   await page.getByRole('button', { name: 'Genereer' }).click()
-  await expect(page.getByText(/Analyse en concept|concept lokaal opgeslagen/i)).toBeVisible({ timeout: 15000 })
+  await expect(page.getByText(GEREED)).toBeVisible({ timeout: 15000 })
   await expect(editor).not.toContainText(EIGEN_ZIN)
   await page.getByRole('button', { name: /^Versies/ }).click()
   await expect(page.getByTestId('version-entry')).toHaveCount(3)
@@ -58,7 +62,7 @@ test('bewaart elke ronde, vergelijkt twee versies en herstelt een oudere versie'
 test('bewaart de versies per project na herladen', async ({ page }) => {
   await createProject(page, 'Versies bewaren')
   await page.getByRole('button', { name: 'Start schrijfagent' }).first().click()
-  await expect(page.getByText('Brons versie')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByText(GEREED)).toBeVisible({ timeout: 15000 })
 
   await page.reload()
   await page.getByRole('button', { name: /^Versies/ }).click()

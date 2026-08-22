@@ -285,7 +285,7 @@ export const proposalDocumentCss = `
 }
 
 /* Visuele modellen — allemaal tabel-gebaseerd zodat ze overal werken: op
-   scherm, in de PDF (html2canvas) én in de Word-export. Kaartopmaak (afgeronde
+   scherm, in de tekst-PDF (pdfExport) én in de Word-export. Kaartopmaak (afgeronde
    hoeken, badges, lijnen) degradeert in Word netjes naar bloktekst met randen.
    Gedeelde wrapper <figure class="doc-model"> met een type-specifieke <table>. */
 .proposal-doc .doc-model {

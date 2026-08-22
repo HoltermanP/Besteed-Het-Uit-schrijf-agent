@@ -621,7 +621,7 @@ function SubmissionRow({ item, uploading, exportingId, workspaceHref, onStatus, 
       data-section={item.section}
       data-status={item.status}
       className={cn(
-        'grid gap-2 border-t py-3 first:border-t-0 md:grid-cols-[minmax(0,1fr)_132px_150px_minmax(0,280px)] md:gap-3',
+        'grid items-start gap-2 border-t py-3 first:border-t-0 md:grid-cols-[minmax(0,1fr)_132px_150px_minmax(0,280px)] md:gap-3',
         item.status === 'nvt' && 'opacity-60',
         item.attention && !done && 'bg-amber-50/60 dark:bg-amber-950/20',
         item.overLimit && 'bg-red-50/60 dark:bg-red-950/20',

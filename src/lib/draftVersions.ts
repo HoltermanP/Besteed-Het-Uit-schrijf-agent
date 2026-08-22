@@ -66,9 +66,18 @@ export function pruneRemovedDrafts(history: DraftVersionHistory, draftIds: strin
 
 const makeId = () => `v-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
-/** Vergelijking zonder ruisverschillen (witruimte), zodat identieke tekst geen dubbele versie oplevert. */
+/**
+ * Vergelijkbare vorm van een concept. De editor levert de HTML anders geserialiseerd op dan
+ * de schrijfagent (aanhalingstekens, lege elementen, inspringing), dus wordt de tekst eerst
+ * door de browser genormaliseerd. Zo levert dezelfde inhoud nooit een dubbele versie op —
+ * bijvoorbeeld na het herladen van de pagina.
+ */
 function fingerprint(html: string): string {
-  return html.replace(/\s+/g, ' ').trim()
+  const collapsed = html.replace(/\s+/g, ' ').trim()
+  if (typeof document === 'undefined') return collapsed
+  const template = document.createElement('template')
+  template.innerHTML = collapsed
+  return template.innerHTML
 }
 
 export type NewDraftVersion = {
