@@ -1,5 +1,6 @@
 import { completeChat, resolveAiFromRequest } from './aiClient'
 import type {
+  ClaimCheckItem,
   ReviewDraftRequest,
   ReviewDraftResponse,
   ReviewFindingItem,
@@ -18,6 +19,9 @@ const MAX_FINDINGS = 14
 const MAX_REQUIREMENT_CHECKS = 40
 const MAX_INFORMATION_REQUESTS = 10
 const MAX_PROPOSALS = 8
+// Bewijscheck: meer claims dan dit maakt het oordeel oppervlakkig en de JSON onbetrouwbaar.
+const MAX_CLAIM_CHECKS = 25
+const CLAIM_FRAGMENT_CHARS = 220
 
 const PRIORITY_RANK: Record<ReviewPriority, number> = {
   kritiek: 0,
@@ -64,7 +68,14 @@ Je krijgt een lijst eisen (elk met een id) die aan de tekst van dit stuk toetsba
 Gebruik uitsluitend de gegeven ids. Een niet-voldane verplichte eis is ook een bevinding ("kritiek").
 
 FEITENCHECK (hard)
-Elke claim in het concept — cijfers, referenties, certificaten, namen, resultaten, toezeggingen, werkwijzen — moet terug te voeren zijn op de bronnen of op de aanvullende informatie van het bidteam (vorige ronde). Is dat niet zo: stel een informationRequest ("Onderbouw of schrap: …") met wat precies nodig is. Verzin NOOIT onderbouwing en stel nooit voor om iets te beweren dat niet uit de bronnen blijkt.
+Elke claim in het concept — cijfers, referenties, certificaten, namen, resultaten, toezeggingen, werkwijzen — moet terug te voeren zijn op de bronnen, op een bewijsbouwsteen of op de aanvullende informatie van het bidteam (vorige ronde). Is dat niet zo: stel een informationRequest ("Onderbouw of schrap: …") met wat precies nodig is. Verzin NOOIT onderbouwing en stel nooit voor om iets te beweren dat niet uit de bronnen blijkt.
+
+BEWIJSCHECK (claimChecks) — claims zonder bewijs markeren
+Je krijgt de BEWIJSBIBLIOTHEEK van de inschrijver: vastgelegde referenties, cases en cijfers, elk met een korte verwijzing zoals B4F19C. De schrijfagent hoort daaruit te citeren; een geciteerd feit staat in het concept als "… [bewijs:B4F19C]".
+Loop het concept langs op feitelijke claims — cijfers, percentages, bedragen, aantallen, doorlooptijden, certificaten en normen, referenties, resultaten en absolute uitspraken ("altijd", "marktleider", "gegarandeerd", "aantoonbaar") — en oordeel per claim:
+- status "onderbouwd": de claim is herleidbaar tot een bouwsteen, een bron of een antwoord van het bidteam. Zet in "evidence" de verwijzing (B4F19C) of de naam van de bron.
+- status "onbewezen": er is geen bouwsteen, bron of antwoord die deze claim draagt — of het concept citeert een bouwsteen die iets anders zegt dan er staat. Zet in "note" wat er precies ontbreekt en wat het bidteam moet aanleveren.
+Neem in "fragment" het LETTERLIJKE fragment uit het concept over (één zin, maximaal ${CLAIM_FRAGMENT_CHARS} tekens), zodat het in de tekst terug te vinden is. Je krijgt een deterministische voorselectie van claims mee; herbeoordeel die en vul aan met claims die zij niet ziet. Elke onbewezen claim krijgt ook een informationRequest of moet volgens jou geschrapt worden. Maximaal ${MAX_CLAIM_CHECKS} claims, onbewezen eerst.
 
 INFORMATIEVRAGEN (informationRequests) — gericht uitvragen bij het bidteam
 Eén concrete vraag per item, beantwoordbaar door het bidteam, met reason (welke claim/sectie/eis er zonder dit antwoord niet feitelijk kan), section (sectie in het concept) en requirementId (alleen als de vraag een open eis uit het register afdekt; gebruik dan exact die id). Bronnen: (1) open eisen van het bidteam die niet uit de bronnen blijken, (2) claims zonder onderbouwing, (3) input die een voorstel nodig heeft. Herhaal geen vraag die in de vorige ronde al is beantwoord of bewust overgeslagen. Maximaal ${MAX_INFORMATION_REQUESTS}, belangrijkste eerst.
@@ -99,6 +110,9 @@ Antwoord uitsluitend met geldig JSON in exact deze vorm:
   ],
   "proposals": [
     { "kind": "verbeteren|overtreffen", "title": "", "detail": "", "rationale": "", "section": "", "criterion": "", "needsInput": "" }
+  ],
+  "claimChecks": [
+    { "fragment": "", "status": "onderbouwd|onbewezen", "evidence": "", "note": "" }
   ]
 }`
 
@@ -108,8 +122,17 @@ function trimSource(text: string, max = DOC_CHAR_LIMIT): string {
   return `${cleaned.slice(0, max)}…`
 }
 
+/**
+ * Concept naar platte tekst voor de reviewer. Citaten van bewijsbouwstenen zitten als
+ * onzichtbare `data-bewijs`-spans in de HTML; die worden hier zichtbaar gemaakt als
+ * "[bewijs:B4F19C]", zodat de reviewer kan nagaan of het citaat de claim ook echt draagt.
+ */
 function draftToPlainText(html: string): string {
   return html
+    .replace(
+      /<span\b[^>]*\bdata-bewijs="([^"]*)"[^>]*>([\s\S]*?)<\/span>/gi,
+      (_match, handle: string, inner: string) => `${inner} [bewijs:${handle}]`,
+    )
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
@@ -172,6 +195,24 @@ function formatOpenUserRequirements(request: ReviewDraftRequest): string {
   return list
     .map((req) => `- id=${req.id} [${req.category}${req.mandatory ? ', verplicht' : ''}] ${req.text}${req.question ? ` — vraag: ${req.question}` : ''}`)
     .join('\n')
+}
+
+/** De bouwstenen waaruit de schrijfagent mocht citeren, met hun verwijzing. */
+function formatEvidence(request: ReviewDraftRequest): string {
+  const blocks = request.evidence ?? []
+  if (!blocks.length) {
+    return '- (geen bewijsbouwstenen meegegeven; toets claims dan tegen de bronnen en de antwoorden van het bidteam)'
+  }
+  return blocks
+    .map((block) => `- ${block.handle} [${block.kind}] ${block.title}: ${block.summary}`)
+    .join('\n')
+}
+
+/** Wat de deterministische bewijscheck al vond; de reviewer herbeoordeelt en vult aan. */
+function formatClaimBaseline(request: ReviewDraftRequest): string {
+  const claims = (request.claimBaseline ?? []).slice(0, MAX_CLAIM_CHECKS)
+  if (!claims.length) return '- (geen)'
+  return claims.map((claim) => `- [${claim.status}] "${claim.fragment}" — ${claim.note}`).join('\n')
 }
 
 function formatPreviousRound(request: ReviewDraftRequest): string {
@@ -267,6 +308,12 @@ ${formatRequirements(reviewableRequirements(request))}
 Open eisen die het bidteam zelf moet afdekken (kandidaat-informatievragen; blijkt de eis al uit de bronnen, stel dan geen vraag):
 ${formatOpenUserRequirements(request)}
 
+Bewijsbibliotheek — hiernaar mag het concept verwijzen met [bewijs:…]:
+${formatEvidence(request)}
+
+Bewijscheck-baseline (deterministisch gevonden claims — herbeoordeel en vul aan):
+${formatClaimBaseline(request)}
+
 Vorige verbeterronde:
 ${formatPreviousRound(request)}
 
@@ -336,6 +383,32 @@ function parseProposals(value: unknown): ReviewProposal[] {
     .slice(0, MAX_PROPOSALS)
 }
 
+function parseClaimChecks(value: unknown): ClaimCheckItem[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  return value
+    .map((raw): ClaimCheckItem | null => {
+      if (!raw || typeof raw !== 'object') return null
+      const item = raw as Record<string, unknown>
+      const fragment = str(item.fragment).slice(0, CLAIM_FRAGMENT_CHARS)
+      if (!fragment) return null
+      const key = fragment.toLowerCase()
+      if (seen.has(key)) return null
+      seen.add(key)
+      // Bij twijfel geldt een claim als onbewezen: liever een keer te veel uitvragen dan
+      // met een onbewijsbare bewering indienen.
+      const status = str(item.status) === 'onderbouwd' ? 'onderbouwd' : 'onbewezen'
+      return {
+        fragment,
+        status,
+        evidence: str(item.evidence) || undefined,
+        note: str(item.note) || (status === 'onbewezen' ? 'Geen bron of bouwsteen gevonden die deze claim draagt.' : ''),
+      }
+    })
+    .filter((item): item is ClaimCheckItem => item !== null)
+    .slice(0, MAX_CLAIM_CHECKS)
+}
+
 function parseReview(
   content: string,
   requirements: Requirement[],
@@ -345,13 +418,20 @@ function parseReview(
   requirementChecks: RequirementCheck[]
   informationRequests: ReviewInformationRequest[]
   proposals: ReviewProposal[]
+  claimChecks: ClaimCheckItem[]
 } {
   const jsonText = content.match(/```json?\s*([\s\S]*?)```/i)?.[1]?.trim() ?? content.trim()
-  let parsed: { findings?: unknown; requirementChecks?: unknown; informationRequests?: unknown; proposals?: unknown }
+  let parsed: {
+    findings?: unknown
+    requirementChecks?: unknown
+    informationRequests?: unknown
+    proposals?: unknown
+    claimChecks?: unknown
+  }
   try {
     parsed = JSON.parse(jsonText) as typeof parsed
   } catch {
-    return { findings: [], requirementChecks: [], informationRequests: [], proposals: [] }
+    return { findings: [], requirementChecks: [], informationRequests: [], proposals: [], claimChecks: [] }
   }
 
   const findings = Array.isArray(parsed.findings)
@@ -372,7 +452,20 @@ function parseReview(
     requirementChecks: normalizeRequirementChecks(parsed.requirementChecks, requirements),
     informationRequests: parseInformationRequests(parsed.informationRequests, knownRequirementIds),
     proposals: parseProposals(parsed.proposals),
+    claimChecks: parseClaimChecks(parsed.claimChecks),
   }
+}
+
+/** Onbewezen claims worden ook bevindingen: zonder bewijs indienen is een reëel risico. */
+function findingsFromClaims(claims: ClaimCheckItem[]): ReviewFindingItem[] {
+  return claims
+    .filter((claim) => claim.status === 'onbewezen')
+    .slice(0, 5)
+    .map((claim) => ({
+      priority: 'hoog' as const,
+      title: `Claim zonder bewijs: ${claim.fragment.length > 80 ? `${claim.fragment.slice(0, 77)}…` : claim.fragment}`,
+      detail: `${claim.note} Koppel er een bouwsteen uit de bewijsbibliotheek aan of schrap de claim.`,
+    }))
 }
 
 /** Niet-voldane eisen worden ook als bevinding zichtbaar: verplicht = kritiek, wens = hoog. */
@@ -457,20 +550,30 @@ export async function handleReviewDraftRequest(request: ReviewDraftRequest): Pro
 
     const requirements = reviewableRequirements(request)
     const knownRequirementIds = new Set((request.analysis?.requirements ?? []).map((req) => req.id))
-    const { findings: aiFindings, requirementChecks, informationRequests, proposals } = parseReview(
+    const { findings: aiFindings, requirementChecks, informationRequests, proposals, claimChecks } = parseReview(
       content,
       requirements,
       knownRequirementIds,
     )
 
     return Response.json({
-      findings: mergeFindings(baseline, [...findingsFromChecks(requirementChecks, requirements), ...aiFindings]),
+      findings: mergeFindings(baseline, [
+        ...findingsFromChecks(requirementChecks, requirements),
+        ...findingsFromClaims(claimChecks),
+        ...aiFindings,
+      ]),
       provider: ai.provider,
       model: ai.model,
-      enriched: aiFindings.length > 0 || requirementChecks.length > 0 || informationRequests.length > 0 || proposals.length > 0,
+      enriched:
+        aiFindings.length > 0 ||
+        requirementChecks.length > 0 ||
+        informationRequests.length > 0 ||
+        proposals.length > 0 ||
+        claimChecks.length > 0,
       requirementChecks,
       informationRequests,
       proposals,
+      claimChecks,
     } satisfies ReviewDraftResponse)
   } catch {
     // AI-call mislukt → val terug op de baseline zodat de review altijd iets oplevert.

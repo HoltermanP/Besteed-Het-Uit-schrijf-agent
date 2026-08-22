@@ -5,6 +5,7 @@ import type {
   CompareProjectInput,
   CompareProjectsResponse,
 } from '../types/compareProjects'
+import { usageHeaders } from './usageScope'
 
 type ApiError = { error: string }
 
@@ -105,7 +106,7 @@ export async function compareProjectsViaApi(
 ): Promise<CompareProjectsResponse> {
   const response = await fetch('/api/insights?action=compare', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...usageHeaders() },
     body: JSON.stringify({ projects, ai: buildAi() }),
   })
   const data = (await response.json()) as CompareProjectsResponse | ApiError

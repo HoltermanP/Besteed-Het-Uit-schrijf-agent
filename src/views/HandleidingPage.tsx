@@ -15,6 +15,7 @@ import {
   FolderOpen,
   GitCompareArrows,
   GraduationCap,
+  Library,
   HelpCircle,
   LayoutGrid,
   Lightbulb,
@@ -117,6 +118,7 @@ const tocItems = [
   { href: '#indiening', label: 'Indiening & deadline' },
   { href: '#configuratie', label: 'Bedrijfsconfiguratie' },
   { href: '#schrijfkader', label: 'Schrijfkader' },
+  { href: '#bewijs', label: 'Bewijsbibliotheek' },
   { href: '#lessons', label: 'Lessons learned' },
   { href: '#vergelijken', label: 'Projecten vergelijken' },
   { href: '#beheer', label: 'Beheer & API-instellingen' },
@@ -642,6 +644,36 @@ export default function HandleidingPage() {
         </Section>
 
         <Section
+          id="bewijs"
+          icon={<Library size={17} />}
+          title="Bewijsbibliotheek"
+          intro="Referenties, cases en cijfers als losse bouwstenen. De agent citeert eruit in plaats van te verzinnen."
+        >
+          <ol className="space-y-4">
+            <Step n={1} title="Leg bewijs één keer vast">
+              Op de pagina <Term>Bewijsbibliotheek</Term> voeg je bouwstenen toe: een{' '}
+              <Badge variant="secondary">referentie</Badge>, een <Badge variant="secondary">case</Badge> of een{' '}
+              <Badge variant="secondary">cijfer</Badge>. Per bouwsteen leg je vast wélk feit geciteerd mag worden en{' '}
+              <strong>waar het bewijs staat</strong>: een contract, een referentieverklaring, een dashboard of een
+              contactpersoon. Een bouwsteen zonder bewijs blijft staan, maar is niet citeerbaar en gaat níét naar de
+              schrijfagent. Met een houdbaarheidsdatum vervalt een cijfer vanzelf.
+            </Step>
+            <Step n={2} title="De agent citeert, hij verzint niet">
+              Bij het schrijven kiest de agent de bouwstenen die bij dat stuk horen — je ziet ze in de projectomgeving
+              onder <strong>Bewijs waaruit dit stuk mag citeren</strong>. Elk geciteerd feit krijgt een onzichtbare
+              verwijzing in de tekst; die is niet zichtbaar voor de lezer en verdwijnt bij de export naar PDF of Word.
+              Is er geen bouwsteen voor een feit, dan schrijft de agent de zin zonder die claim.
+            </Step>
+            <Step n={3} title="De review markeert claims zonder bewijs">
+              De AI-review legt elke feitelijke claim — cijfers, certificaten, referenties, absolute uitspraken — terug
+              op een bouwsteen of bron. Wat nergens op steunt, staat in het paneel <Term>Bewijscheck</Term> én rood
+              gemarkeerd in het concept. Onderbouw zo&apos;n claim met een nieuwe bouwsteen of schrap hem vóór je
+              indient.
+            </Step>
+          </ol>
+        </Section>
+
+        <Section
           id="lessons"
           icon={<GraduationCap size={17} />}
           title="Lessons learned"
@@ -707,6 +739,17 @@ export default function HandleidingPage() {
               API-sleutel. Zonder eigen sleutels gebruikt de app de server-side configuratie (indien aanwezig).
             </li>
             <li>
+              <strong>Volledige export:</strong> <Term>Back-up downloaden</Term> levert één zip met alles wat de
+              applicatie bewaart — elk project met zijn concepten, bronnen en documentenlijst, plus schrijfkader,
+              stijlbibliotheek, leerpunten en bewijsbouwstenen. De concepten zitten er ook als los te openen HTML
+              in; API-sleutels blijven er bewust buiten.
+            </li>
+            <li>
+              <strong>Prullenbak:</strong> een verwijderd project blijft dertig dagen staan, compleet met bronnen,
+              concepten, opmerkingen en versiegeschiedenis, en is met <Term>Terugzetten</Term> in één klik terug.
+              Daarna ruimt de prullenbak zichzelf op.
+            </li>
+            <li>
               Log na afloop uit met <Term>Uitloggen</Term>; de adminsessie verloopt automatisch na 8 uur.
             </li>
           </ul>
@@ -722,6 +765,12 @@ export default function HandleidingPage() {
               Projecten, dossiers, bronnen en concepten worden centraal in de database (Neon/PostgreSQL)
               opgeslagen. Je kunt dus op een andere computer of in een andere browser verder werken waar je
               gebleven was. Ook de stijlbibliotheek en leerpunten staan in dezelfde database.
+            </Faq>
+            <Faq question="Ik heb per ongeluk een project verwijderd.">
+              De melding direct na het verwijderen heeft tien seconden lang een knop <Term>Ongedaan maken</Term>.
+              Ben je die kwijt, dan staat het project nog dertig dagen in de prullenbak op de adminpagina
+              (<Term>Prullenbak</Term>): daar zet een beheerder het terug, inclusief bronnen, concepten,
+              opmerkingen en versiegeschiedenis.
             </Faq>
             <Faq question="De knop Genereer doet niets of geeft een foutmelding.">
               Controleer de statusregel in de linkerkolom: staat &ldquo;Schrijfagent actief&rdquo; op niet actief, dan

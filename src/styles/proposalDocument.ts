@@ -44,6 +44,29 @@ export const proposalDocumentCss = `
   box-shadow: none;
 }
 
+/* Claim die de review niet op een bouwsteen of bron kon terugvoeren. Alleen voor het
+   scherm; wordt net als de opmerkingmarkering vóór export verwijderd. */
+.claim-mark {
+  background: #ffe3e3;
+  box-shadow: inset 0 -2px 0 #e03131;
+  border-radius: 2px;
+  cursor: help;
+}
+
+.claim-mark-flash {
+  animation: claim-mark-flash 1.2s ease;
+}
+
+@keyframes claim-mark-flash {
+  0%,
+  100% {
+    background: #ffe3e3;
+  }
+  35% {
+    background: #ffa8a8;
+  }
+}
+
 .comment-mark-flash {
   animation: comment-mark-flash 1.2s ease;
 }

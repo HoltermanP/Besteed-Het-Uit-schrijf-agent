@@ -10,6 +10,7 @@ import type {
   LessonOutcome,
   SelectLessonsResponse,
 } from '../types/lessonLearned'
+import { usageHeaders } from './usageScope'
 
 type LessonsResponse = { lessons: LessonLearned[] }
 type LessonResponse = { lesson: LessonLearned }
@@ -45,7 +46,7 @@ export async function fetchLessons(): Promise<LessonLearned[]> {
 export async function createLesson(input: LessonLearnedInput): Promise<LessonLearned> {
   const response = await fetch('/api/insights', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...usageHeaders() },
     body: JSON.stringify({ ...input, companyId: getActiveCompanyId() }),
   })
   const data = (await response.json()) as LessonResponse | ApiError
@@ -68,7 +69,7 @@ export async function updateLesson(input: {
 }): Promise<LessonLearned> {
   const response = await fetch('/api/insights', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...usageHeaders() },
     body: JSON.stringify({ ...input, companyId: getActiveCompanyId() }),
   })
   const data = (await response.json()) as LessonResponse | ApiError
@@ -99,7 +100,7 @@ export async function evaluateProjectViaApi(args: {
 }): Promise<EvaluateProjectResponse> {
   const response = await fetch('/api/insights?action=evaluate', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...usageHeaders() },
     body: JSON.stringify({ ...args, ai: buildAi() }),
   })
   const data = (await response.json()) as EvaluateProjectResponse | ApiError
@@ -124,7 +125,7 @@ export async function selectRelevantLessons(args: {
   try {
     const response = await fetch('/api/insights?action=select', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...usageHeaders() },
       body: JSON.stringify({
         project: args.project,
         analysis: args.analysis,

@@ -5,6 +5,7 @@ import type {
   DistillDocumentResponse,
 } from '../types/distillDocument'
 import type { SourceDocument } from '../types/tenderAnalysis'
+import { usageHeaders } from './usageScope'
 
 function resolveAiConfig(): DistillDocumentRequest['ai'] {
   const apiConfig = getApiConfig()
@@ -30,7 +31,7 @@ export async function distillDocumentViaApi(
   try {
     const response = await fetch('/api/distill-document', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...usageHeaders() },
       body: JSON.stringify(payload),
     })
 

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { prisma, isDatabaseConfigured } from './prisma'
+import { runWithUsageContext, DEFAULT_COMPANY_ID } from './usageContext'
 import { resolveAiFromRequest, type AiRuntimeConfig } from './aiClient'
 import {
   assembleFromCheckpoint,
@@ -42,7 +43,9 @@ export type WriteJobStatus = 'lopend' | 'gereed' | 'mislukt'
 
 export type WriteJobRecord = {
   id: string
+  companyId: string
   projectId: string
+  projectTitle: string | null
   draftId: string
   draftTitle: string
   stage: string
@@ -130,7 +133,9 @@ export function isJobStale(job: WriteJobRecord): boolean {
 
 export async function createWriteJob(input: {
   request: WriteDraftRequest
+  companyId: string
   projectId: string
+  projectTitle: string | null
   draftId: string
   draftTitle: string
   kind: string
@@ -139,7 +144,9 @@ export async function createWriteJob(input: {
   const now = new Date()
   const job: WriteJobRecord = {
     id: randomUUID(),
+    companyId: input.companyId || DEFAULT_COMPANY_ID,
     projectId: input.projectId,
+    projectTitle: input.projectTitle,
     draftId: input.draftId,
     draftTitle: input.draftTitle,
     stage: input.request.stage,
@@ -234,6 +241,24 @@ export async function runWriteJob(id: string): Promise<void> {
   const job = await claimWriteJob(id)
   if (!job) return
 
+  // De opdracht draait na het antwoord door, buiten het verzoek dat hem startte. De
+  // verbruikscontext komt daarom uit de opdracht zelf, zodat het schrijfwerk alsnog bij
+  // het juiste bedrijf, project en stuk wordt geteld.
+  return runWithUsageContext(
+    {
+      companyId: job.companyId || DEFAULT_COMPANY_ID,
+      projectId: job.projectId,
+      projectTitle: job.projectTitle ?? undefined,
+      draftId: job.draftId,
+      draftTitle: job.draftTitle,
+    },
+    () => runClaimedWriteJob(job),
+  )
+}
+
+/** Het eigenlijke schrijfwerk van een al overgenomen opdracht. */
+async function runClaimedWriteJob(job: WriteJobRecord): Promise<void> {
+  const id = job.id
   const deadline = Date.now() + RUN_BUDGET_MS
   let request: WriteDraftRequest
   try {

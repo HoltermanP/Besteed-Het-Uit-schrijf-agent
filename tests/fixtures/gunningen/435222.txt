@@ -1,0 +1,216 @@
+Publicatie
+Pagina 1 van 4	TN-604695 - 31 jul 2026
+1. Koper
+1.1 Koper
+Officiële naam: Havenbedrijf Rotterdam
+Activiteit van de
+aanbestedende instantie
+:
+Havenactiviteiten
+2. Procedure
+2.1 Procedure
+Titel: Raamovereenkomst Onderhoud maritieme E-installaties
+Beschrijving:
+De vloot van Havenbedrijf Rotterdam (HbR) bestaat uit meerdere patrouille, peil en
+incidentbestrijdingsvaartuigen. Deze worden door de divisie havenmeester in dag-, semi- en
+continudiensten ingezet voor beheer, inspectie en incidentbestrijdingstaken. Daarnaast omvat
+de vloot ook hydrografische meetvaartuigen een RHIB en het representatievaartuig de Nieuwe
+Maze. Aan boord van deze vaartuigen bevinden zich een verscheidenheid aan elektrische
+installaties van uiteenlopende leveranciers en producenten. Deze installaties dienen
+onderhouden te worden. De huidige overeenkomst loopt 31 december 2025 ten einde. Met dit
+project zet HbR een nieuwe raamovereenkomst in de markt voor het onderhoud van de
+elektrische installaties van haar vloot. Het onderhoud kan worden onderverdeeld in de volgende
+soorten: Preventief onderhoud: Gepland onderhoud van de installaties a.d.h.v. inspectielijsten
+en daardoor voorspelbaar. Correctief onderhoud: Niet geplande vervolgacties volgend uit het
+preventieve onderhoud. Herstellen van schades. Vervangingsonderhoud: Het vervangen of
+ombouwen van onderdelen of volledige installaties. Verrichten van services: advies inzake
+levensduur, verduurzaming, digitalisering en elektrische aandrijving.
+Identificatiecode van de
+procedure: 2fa7c71b-42fe-4095-8425-ea6575c8816f
+Interne identificatiecode: 4fce1304-9f17-433c-aa2e-83f6286ef697
+Type procedure: Onderhandelingsprocedure met voorafgaande oproep tot mededinging /
+mededingingsprocedure met onderhandeling
+2.1.1 Doel
+Aard van het contract: Diensten
+Belangrijkste classificatie
+(cpv): 50241000 Reparatie en onderhoud van schepen
+2.1.2 Plaats van uitvoering
+Land: Nederland
+Overal in het desbetreffende land
+Aanvullende informatie: Zie documentatie
+2.1.3 Waarde
+Geraamde waarde
+exclusief btw: 1 Euro
+2.1.4 Algemene informatie
+Rechtsgrondslag:
+Richtlijn 2014/25/EU
+5. Perceel
+5.1 Technische ID van het kavel: LOT-0000
+Titel: Raamovereenkomst Onderhoud maritieme E-installaties
+De vloot van Havenbedrijf Rotterdam (HbR) bestaat uit meerdere patrouille, peil en
+incidentbestrijdingsvaartuigen. Deze worden door de divisie havenmeester in dag-, semi- en
+continudiensten ingezet voor beheer, inspectie en incidentbestrijdingstaken. Daarnaast omvat
+de vloot ook hydrografische meetvaartuigen een RHIB en het representatievaartuig de Nieuwe
+Maze. Aan boord van deze vaartuigen bevinden zich een verscheidenheid aan elektrische
+
+-- 1 of 4 --
+
+Publicatie
+Pagina 2 van 4	TN-604695 - 31 jul 2026
+Beschrijving:
+installaties van uiteenlopende leveranciers en producenten. Deze installaties dienen
+onderhouden te worden. De huidige overeenkomst loopt 31 december 2025 ten einde. Met dit
+project zet HbR een nieuwe raamovereenkomst in de markt voor het onderhoud van de
+elektrische installaties van haar vloot. Het onderhoud kan worden onderverdeeld in de volgende
+soorten: Preventief onderhoud: Gepland onderhoud van de installaties a.d.h.v. inspectielijsten
+en daardoor voorspelbaar. Correctief onderhoud: Niet geplande vervolgacties volgend uit het
+preventieve onderhoud. Herstellen van schades. Vervangingsonderhoud: Het vervangen of
+ombouwen van onderdelen of volledige installaties. Verrichten van services: advies inzake
+levensduur, verduurzaming, digitalisering en elektrische aandrijving.
+Interne identificatiecode: fa8cc76e-827b-4b05-87e0-029ce34a56e5
+5.1.1 Doel
+Aard van het contract: Diensten
+Belangrijkste classificatie
+(cpv): 50241000 Reparatie en onderhoud van schepen
+5.1.2 Plaats van uitvoering
+Land: Nederland
+Overal in het desbetreffende land
+Aanvullende informatie: Zie documentatie
+5.1.5 Waarde
+Geraamde waarde
+exclusief btw: 1 Euro
+5.1.6 Algemene informatie
+De aanbesteding valt
+onder de Overeenkomst
+inzake
+overheidsopdrachten
+(GPA):
+ja
+5.1.15 Technieken
+Raamovereenkomst:
+Raamovereenkomst, zonder hernieuwde oproep tot mededinging
+Informatie over het dynamische aankoopsysteem:
+Geen dynamisch aankoopsysteem
+5.1.16 Nadere inlichtingen, bemiddeling en evaluatie
+Organisatie voor
+beroepsprocedures: Rechtbank Rotterdam
+Informatie over de
+termijnen voor beroep: Zie documentatie
+Organisatie die nadere
+inlichtingen over de
+aanbestedingsprocedure
+verstrekt:
+Havenbedrijf Rotterdam
+6. Resultaten
+6.1 ID resultaat perceel: LOT-0000
+Raamovereenkomst:
+Maximumwaarde van de
+raamovereenkomst: 4 000 000 Euro
+Opnieuw geraamde
+waarde van de
+raamovereenkomst:
+4 000 000 Euro
+6.1.3 Niet-winnende inschrijvers:
+
+-- 2 of 4 --
+
+Publicatie
+Pagina 3 van 4	TN-604695 - 31 jul 2026
+Inschrijver:
+Officiële naam: Gebhard B.V.
+6.1.4 Statistische informatie
+Samenvatting van de door de koper ontvangen beroepen:
+Aantal klagers: 0
+Ontvangen inschrijvingen of verzoeken tot deelname:
+Type van de ontvangen
+inschrijvingen: Inschrijvingen
+8. Organisaties
+8.1 ORG-0001
+Officiële naam: Havenbedrijf Rotterdam
+Registratienummer: 24354561
+Postadres: Wilhelminakade 909
+Stad: Rotterdam
+Postcode: 3072AP
+Onderverdeling land
+(NUTS): Groot-Rijnmond (NL366)
+Land: Nederland
+Contactpunt: Jeffrey Koks
+E-mail: j.koks@portofrotterdam.com
+Telefoon: +31 650161354
+Internetadres: https://www.portofrotterdam.com/
+Kopersprofiel: https://s2c.mercell.com/buyer/1893
+Rollen van deze organisatie:
+Koper
+Organisatie die nadere inlichtingen over de aanbestedingsprocedure verstrekt
+8.1 ORG-0002
+Officiële naam: Rechtbank Rotterdam
+Registratienummer: 82947740
+Postadres: Wilhelminaplein 100-125
+Stad: Rotterdam
+Postcode: 3072AK
+Onderverdeling land
+(NUTS): Groot-Rijnmond (NL366)
+Land: Nederland
+Contactpunt: Centrale Informatiebalie
+E-mail: rechtbankrotterdam@rechtspraak.nl
+Telefoon: +3188 3616161
+Internetadres: https://www.rechtspraak.nl/Organisatie-en-contact/Contact
+Rollen van deze organisatie:
+Organisatie voor beroepsprocedures
+8.1 ORG-0003
+Officiële naam: Alewijnse Netherlands B.V.
+Omvang van de
+ondernemer: Micro, klein of middelgroot
+Registratienummer: 55752713
+
+-- 3 of 4 --
+
+Publicatie
+Pagina 4 van 4	TN-604695 - 31 jul 2026
+Postadres: Energieweg 44
+Stad: Nijmegen
+Postcode: 6541CX
+Onderverdeling land
+(NUTS): Groot-Rijnmond (NL366)
+Land: Nederland
+Contactpunt: R. Hendriks
+E-mail: r.hendriks@alewijnse.com
+Telefoon: 0031651093577
+Internetadres: https://www.alewijnse.nl/
+Rollen van deze organisatie:
+Inschrijver
+Winnaar van deze
+percelen: LOT-0000
+8.1 ORG-0004
+Officiële naam: Gebhard B.V.
+Omvang van de
+ondernemer: Micro, klein of middelgroot
+Registratienummer: 71543813
+Postadres: Innovatiepark 14
+Stad: Oosterhout
+Postcode: 4906AA
+Onderverdeling land
+(NUTS): Groot-Rijnmond (NL366)
+Land: Nederland
+Contactpunt: Gerard Kraaij
+E-mail: gjk@gebhard.nl
+Telefoon: +31610879067
+Internetadres: https://www.gebhardelectro.com/
+Rollen van deze organisatie:
+Inschrijver
+Informatie over een aankondiging
+Identificatiecode/versie
+van de aankondiging: 6cfd8942-05ee-468b-b737-77eca5f4cf09 - 01
+Type formulier: Resultaat
+Type aankondiging: Aankondiging van een gegunde opdracht of concessie – standaardregeling
+Verzenddatum van de
+aankondiging: 30/07/2026 11:46 +00:00
+Aankondiging datum
+verzending (eSender): 30/07/2026 11:47 +00:00
+Talen waarin deze
+aankondiging officieel
+beschikbaar is:
+Nederlands
+
+-- 4 of 4 --
+

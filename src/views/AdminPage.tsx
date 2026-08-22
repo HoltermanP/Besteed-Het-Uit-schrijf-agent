@@ -1,22 +1,36 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import {
   ArrowLeft,
   Brain,
   Building2,
+  Coins,
   Database,
+  Download,
   FlaskConical,
   Import,
   LogOut,
   PenLine,
+  RotateCcw,
   Save,
   Sparkles,
+  Trash2,
 } from 'lucide-react'
 import { getApiConfig, saveApiConfig } from '../lib/apiConfig'
 import { aiProviderDefaults } from '../lib/aiProviderDefaults'
 import { logoutAdmin } from '../lib/adminAuth'
+import { downloadBackup } from '../lib/backup'
+import {
+  listTrashedProjects,
+  purgeTrashedProject,
+  restoreTrashedProject,
+  TRASH_RETENTION_DAYS,
+  type TrashedProjectView,
+} from '../lib/projectTrash'
+import { notifyError, notifySuccess } from '../lib/notify'
+import { flushStorage } from '../lib/storage'
 import { type AiProvider, type ApiConfig } from '../types/apiConfig'
 import { Button } from '@/components/ui/button'
 import {
@@ -36,12 +50,32 @@ import {
   SelectContent,
   SelectItem,
 } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
 import { ModeToggle } from '@/components/mode-toggle'
+import ConfirmDialog from '@/components/ConfirmDialog'
 
 const providerLabels: Record<AiProvider, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic',
   custom: 'Custom endpoint',
+}
+
+function formatMoment(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso || 'onbekend'
+  return date.toLocaleString('nl-NL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 export default function AdminPage() {
@@ -77,6 +111,65 @@ export default function AdminPage() {
     window.location.href = '/'
   }
 
+  // ── Volledige export ───────────────────────────────────────────────────────
+  // Eén zip met alles: projecten, concepten en documenten leesbaar, plus een
+  // machineleesbare back-up waarmee de werkruimte terug te zetten is.
+  const [exporting, setExporting] = useState(false)
+  const [exportResult, setExportResult] = useState<string | null>(null)
+  const handleExport = async () => {
+    setExporting(true)
+    setExportResult(null)
+    try {
+      // Eerst openstaand werk wegschrijven, anders mist de back-up de laatste wijzigingen.
+      await flushStorage()
+      const summary = await downloadBackup()
+      setExportResult(
+        `${summary.fileName} — ${summary.projects} project(en), ${summary.drafts} concept(en), ` +
+          `${summary.documents} document(en), ${formatBytes(summary.bytes)}.`,
+      )
+      notifySuccess('Back-up gedownload.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Back-up mislukt.'
+      setExportResult(null)
+      notifyError(`Back-up mislukt: ${message}`, { retry: () => void handleExport() })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  // ── Prullenbak ─────────────────────────────────────────────────────────────
+  // Verwijderde projecten blijven dertig dagen staan; hier zijn ze terug te halen of
+  // eerder definitief weg te gooien.
+  const [trash, setTrash] = useState<TrashedProjectView[]>([])
+  const [trashStatus, setTrashStatus] = useState<string | null>(null)
+  const [purgeTarget, setPurgeTarget] = useState<TrashedProjectView | null>(null)
+  useEffect(() => {
+    setTrash(listTrashedProjects())
+  }, [])
+
+  const handleRestore = (entry: TrashedProjectView) => {
+    const result = restoreTrashedProject(entry.meta.id)
+    setTrash(listTrashedProjects())
+    if (result === 'hersteld') {
+      setTrashStatus(`"${entry.meta.title}" staat weer bij de projecten.`)
+      notifySuccess('Project teruggezet.')
+      return
+    }
+    setTrashStatus(
+      result === 'bestaat-al'
+        ? `"${entry.meta.title}" kan niet terug: er bestaat alweer een project met hetzelfde id.`
+        : `"${entry.meta.title}" staat niet meer in de prullenbak.`,
+    )
+  }
+
+  const confirmPurge = () => {
+    if (!purgeTarget) return
+    purgeTrashedProject(purgeTarget.meta.id)
+    setTrash(listTrashedProjects())
+    setTrashStatus(`"${purgeTarget.meta.title}" is definitief verwijderd.`)
+    setPurgeTarget(null)
+  }
+
   return (
     <main className="min-h-screen bg-background p-4 text-foreground sm:p-6">
       <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -90,6 +183,11 @@ export default function AdminPage() {
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button asChild variant="outline">
+            <Link href="/verbruik">
+              <Coins size={16} /> <span className="sr-only sm:not-sr-only">AI-verbruik</span>
+            </Link>
+          </Button>
           <Button asChild variant="outline">
             <Link href="/configuratie">
               <Building2 size={16} /> <span className="sr-only sm:not-sr-only">Bedrijfsconfiguratie</span>
@@ -374,6 +472,114 @@ export default function AdminPage() {
           </CardContent>
         </Card>
       </form>
+
+      <section className="mt-4 grid gap-4">
+        <Card>
+          <CardHeader>
+            <div className="flex items-start gap-3">
+              <Download size={20} className="mt-0.5 shrink-0" />
+              <div>
+                <CardTitle>Volledige export</CardTitle>
+                <CardDescription>
+                  Eén zip met alles wat de applicatie bewaart: elk project met zijn concepten,
+                  bronnen en documentenlijst, plus schrijfkader, stijldocumenten, leerpunten en
+                  bewijsbouwstenen. De concepten zitten er ook als los te openen HTML in, zodat
+                  de back-up ook zonder deze applicatie bruikbaar is. API-sleutels blijven
+                  bewust achter.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center gap-3">
+            <Button type="button" onClick={() => void handleExport()} disabled={exporting}>
+              <Download size={16} /> {exporting ? 'Back-up wordt gemaakt…' : 'Back-up downloaden'}
+            </Button>
+            {exportResult ? (
+              <p className="min-w-0 break-words text-sm text-muted-foreground">{exportResult}</p>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-start gap-3">
+              <Trash2 size={20} className="mt-0.5 shrink-0" />
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  Prullenbak
+                  <Badge variant="secondary">{trash.length}</Badge>
+                </CardTitle>
+                <CardDescription>
+                  Verwijderde projecten blijven {TRASH_RETENTION_DAYS} dagen staan — mét bronnen,
+                  concepten, opmerkingen en versiegeschiedenis. Daarna worden ze definitief
+                  opgeruimd. Eén foute klik kost dus geen tender.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {trash.length ? (
+              <ul className="grid list-none gap-2 p-0">
+                {trash.map((entry) => (
+                  <li
+                    key={entry.meta.id}
+                    className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-3 py-2.5"
+                    data-testid="trash-entry"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-semibold">{entry.meta.title}</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        {entry.meta.buyer || 'Geen opdrachtgever'} · verwijderd {formatMoment(entry.deletedAt)} ·{' '}
+                        {entry.drafts} stuk(ken), {entry.sources} bron(nen), {entry.files} bestand(en)
+                      </div>
+                    </div>
+                    <Badge variant={entry.daysLeft <= 3 ? 'destructive' : 'outline'} className="shrink-0">
+                      nog {entry.daysLeft} dag(en)
+                    </Badge>
+                    <div className="flex shrink-0 gap-2">
+                      <Button type="button" size="sm" onClick={() => handleRestore(entry)}>
+                        <RotateCcw size={14} /> Terugzetten
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="text-destructive"
+                        aria-label={`Verwijder ${entry.meta.title} definitief`}
+                        onClick={() => setPurgeTarget(entry)}
+                      >
+                        <Trash2 size={14} /> Definitief
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">De prullenbak is leeg.</p>
+            )}
+            {trashStatus ? <p className="text-xs text-muted-foreground">{trashStatus}</p> : null}
+          </CardContent>
+        </Card>
+      </section>
+
+      <ConfirmDialog
+        open={purgeTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setPurgeTarget(null)
+        }}
+        title={`"${purgeTarget?.meta.title ?? ''}" definitief verwijderen?`}
+        description="Hierna is het project niet meer terug te halen. Maak eerst een back-up als je de inhoud wilt bewaren."
+        details={
+          purgeTarget
+            ? [
+                `${purgeTarget.drafts} stuk(ken), ${purgeTarget.sources} bron(nen), ${purgeTarget.files} bestand(en)`,
+                `Zou vanzelf verdwijnen over ${purgeTarget.daysLeft} dag(en)`,
+              ]
+            : []
+        }
+        confirmLabel="Definitief verwijderen"
+        onConfirm={confirmPurge}
+      />
     </main>
   )
 }

@@ -18,8 +18,8 @@ model AppState {
 }
 
 model StyleDocument {
-  id         String   @id @default(cuid())
-  companyId  String   @default("default")
+  id         String    @id @default(cuid())
+  companyId  String    @default("default")
   name       String
   fileName   String
   mimeType   String
@@ -61,33 +61,136 @@ model LessonLearned {
 // geschreven secties) maakt hervatting mogelijk als een serverfunctie haar tijdslimiet
 // bereikt; een volgende run schrijft alleen wat nog ontbreekt.
 model WriteJob {
-  id          String    @id
-  projectId   String
-  draftId     String
-  draftTitle  String
-  stage       String
+  id           String    @id
+  // Herkomst voor de verbruiksadministratie: de opdracht draait los van het verzoek
+  // dat hem startte, dus bedrijf en projecttitel moeten mee in de opdracht zelf.
+  companyId    String    @default("default")
+  projectId    String
+  projectTitle String?
+  draftId      String
+  draftTitle   String
+  stage        String
   // 'schrijven' | 'opmerkingen' | 'verbeterronde' — alleen voor de statusmelding.
-  kind        String
+  kind         String
   // 'lopend' | 'gereed' | 'mislukt'
-  status      String
-  message     String    @db.Text
+  status       String
+  message      String    @db.Text
   // De volledige WriteDraftRequest (JSON), nodig om de opdracht te kunnen hervatten.
-  request     String    @db.Text
-  checkpoint  String?   @db.Text
-  partialHtml String?   @db.Text
-  resultHtml  String?   @db.Text
-  error       String?   @db.Text
-  provider    String?
-  model       String?
+  request      String    @db.Text
+  checkpoint   String?   @db.Text
+  partialHtml  String?   @db.Text
+  resultHtml   String?   @db.Text
+  error        String?   @db.Text
+  provider     String?
+  model        String?
   // Loopt op bij elke voortgangsschrijving; de client haalt alleen nieuwe versies op.
-  version     Int       @default(0)
-  runs        Int       @default(0)
-  origin      String?
-  heartbeatAt DateTime
-  createdAt   DateTime  @default(now())
-  finishedAt  DateTime?
-  updatedAt   DateTime  @updatedAt
+  version      Int       @default(0)
+  runs         Int       @default(0)
+  origin       String?
+  heartbeatAt  DateTime
+  createdAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  updatedAt    DateTime  @updatedAt
 
   @@index([projectId, draftId])
   @@index([status, heartbeatAt])
+}
+
+// Herbruikbare bewijsbouwsteen: één referentie, case of cijfer met de bron erbij.
+// De schrijfagent citeert hieruit in plaats van feiten te verzinnen; de reviewer legt
+// elke claim in het concept terug op een bouwsteen. Bedrijfsbreed, niet projectgebonden.
+model EvidenceBlock {
+  id         String   @id @default(cuid())
+  companyId  String   @default("default")
+  // referentie | case | cijfer
+  kind       String
+  title      String
+  client     String? // opdrachtgever/klant
+  period     String? // periode of peilmoment, bijv. "2023-2025"
+  category   String? // thema/tag
+  situation  String   @db.Text // context: wat speelde er / wat hield de opdracht in
+  claim      String   @db.Text // het feit zoals het geciteerd mag worden
+  result     String   @db.Text // aantoonbaar resultaat of effect
+  value      String? // cijfer: de waarde
+  unit       String? // cijfer: de eenheid
+  proof      String   @db.Text // waar het bewijs vandaan komt; leeg = niet citeerbaar
+  verifiedOn String? // YYYY-MM-DD
+  validUntil String? // YYYY-MM-DD; daarna niet meer citeerbaar
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([companyId])
+}
+
+// Gelezen gunningsaankondiging van TenderNed: wie won er, met hoeveel inschrijvers.
+// Een gunning verandert niet meer en de gegevens zijn publiek, dus dit is een gedeelde
+// cache zonder companyId — het dure werk (PDF downloaden en uitlezen) hoeft per
+// publicatie maar één keer te gebeuren, voor alle projecten en bedrijven samen.
+model AwardNotice {
+  publicatieId String   @id
+  // Aanbestedingskenmerk; koppelt de gunning aan de oorspronkelijke aankondiging.
+  kenmerk      Int?
+  buyer        String
+  // Genormaliseerde opdrachtgeversnaam waarop gezocht en gegroepeerd wordt.
+  buyerKey     String
+  title        String
+  // Publicatiedatum van de gunning (YYYY-MM-DD).
+  publishedOn  String?
+  // JSON: CpvCode[]
+  cpvCodes     String   @db.Text
+  // ok | niet-gegund | onleesbaar
+  status       String
+  // eforms | ted
+  format       String?
+  // JSON: AwardLot[] — winnaars, afvallers en aantal inschrijvers per perceel.
+  lots         String   @db.Text
+  note         String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([buyerKey])
+}
+
+// Verbruiksregel van één AI-aanroep. Elke aanroep die de app doet, wordt hier vastgelegd
+// met tokens, model en kosten, gekoppeld aan bedrijf, project en stuk. Daarmee is achteraf
+// te verantwoorden waar het geld heen ging én te zien of prompt caching werkt: een taak die
+// om caching vraagt (cacheRequested) maar geen cacheReadTokens laat zien, cachet niet echt.
+// Kosten staan in micro-dollars omdat Anthropic in dollars factureert; de omrekening naar
+// euro's gebeurt bij het tonen, met de koers uit AiBudget.
+model AiUsage {
+  id               String   @id @default(cuid())
+  companyId        String   @default("default")
+  projectId        String?
+  projectTitle     String?
+  draftId          String?
+  draftTitle       String?
+  // Taaknaam zoals meegegeven aan de AI-aanroep, bijv. 'schrijfagent' of 'ai-review'.
+  task             String
+  provider         String
+  model            String
+  inputTokens      Int      @default(0)
+  outputTokens     Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  cacheReadTokens  Int      @default(0)
+  // null = tarief van dit model onbekend; de tokens tellen dan wel mee, het bedrag niet.
+  costUsdMicros    Int?
+  cacheRequested   Boolean  @default(false)
+  // 'JJJJ-MM'; maakt het maandplafond een indexlookup in plaats van een datumberekening.
+  month            String
+  createdAt        DateTime @default(now())
+
+  @@index([companyId, month])
+  @@index([companyId, projectId])
+  @@index([month])
+}
+
+// Maandplafond per bedrijf. Het plafond waarschuwt, het blokkeert niet: werk dat al loopt
+// mag altijd afmaken. De koers hoort hierbij omdat plafond en verbruik in dezelfde
+// eenheid vergeleken moeten worden.
+model AiBudget {
+  companyId     String   @id
+  // Maandplafond in euro's; 0 = geen plafond ingesteld.
+  monthlyCapEur Float    @default(0)
+  usdToEur      Float    @default(0.92)
+  updatedAt     DateTime @updatedAt
 }

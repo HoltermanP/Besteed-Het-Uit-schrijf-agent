@@ -1,0 +1,187 @@
+Publicatie
+Pagina 1 van 4	TN-597112 - 19 jun 2026
+1. Koper
+1.1 Koper
+Officiële naam: Gemeente Rotterdam
+Rechtsvorm van de koper: Lokale overheid
+Activiteit van de aanbestedende
+dienst: Algemene overheidsdiensten
+2. Procedure
+2.1 Procedure
+Titel: BHV- en blusmiddelen
+Beschrijving: De Opdracht omvat het adviseren over, en het leveren en onderhouden van de
+bedrijfshulpverlenings- en blusmiddelen.
+Identificatiecode van de
+procedure: 1203b9d9-cb39-4339-a2f1-a91862b676eb
+Eerdere aankondiging: 03d79ee4-88f0-43a2-9294-5b5651ec8ffd-01
+Interne identificatiecode: 740ce0a5-99b4-4e7c-9480-f1a917dbccc9
+Type procedure: Openbaar
+De procedure wordt versneld: neen
+2.1.1 Doel
+Aard van het contract: Leveringen
+Belangrijkste classificatie (cpv): 33100000 Medische apparatuur
+Aanvullende classificatie (cpv): 33140000 Medische verbruiksartikelen
+Aanvullende classificatie (cpv): 33141000 Niet-chemische medische gebruiksgoederen voor eenmalig gebruik en
+verbruiksartikelen voor hematologie
+Aanvullende classificatie (cpv): 33141623 EHBO-trommels
+Aanvullende classificatie (cpv): 33182100 Defibrillator
+Aanvullende classificatie (cpv): 35111000 Brandblusuitrusting
+Aanvullende classificatie (cpv): 35111320 Draagbare brandblusapparaten
+Aanvullende classificatie (cpv): 35112300 Oogdouche
+Aanvullende classificatie (cpv): 35113440 Reflecterende vesten
+Aanvullende classificatie (cpv): 50000000 Reparatie- en onderhoudsdiensten
+Aanvullende classificatie (cpv): 71317100 Advies inzake brand- en explosiebeveiliging en -controle
+2.1.2 Plaats van uitvoering
+Land: Nederland
+Overal in het desbetreffende land
+Aanvullende informatie: Zie documentatie
+2.1.3 Waarde
+Geraamde waarde exclusief btw: 1 000 000 Euro
+2.1.4 Algemene informatie
+Rechtsgrondslag:
+Richtlijn 2014/24/EU
+5. Perceel
+5.1 Technische ID van het kavel: LOT-0000
+Titel: BHV- en blusmiddelen
+Beschrijving: De Opdracht omvat het adviseren over, en het leveren en onderhouden van de
+bedrijfshulpverlenings- en blusmiddelen.
+Interne identificatiecode: b58e9715-df52-4ea5-b041-0932cb091925
+
+-- 1 of 4 --
+
+Publicatie
+Pagina 2 van 4	TN-597112 - 19 jun 2026
+5.1.1 Doel
+Aard van het contract: Leveringen
+Belangrijkste classificatie (cpv): 33100000 Medische apparatuur
+Aanvullende classificatie (cpv): 33140000 Medische verbruiksartikelen
+Aanvullende classificatie (cpv): 33141000 Niet-chemische medische gebruiksgoederen voor eenmalig gebruik en
+verbruiksartikelen voor hematologie
+Aanvullende classificatie (cpv): 33141623 EHBO-trommels
+Aanvullende classificatie (cpv): 33182100 Defibrillator
+Aanvullende classificatie (cpv): 35111000 Brandblusuitrusting
+Aanvullende classificatie (cpv): 35111320 Draagbare brandblusapparaten
+Aanvullende classificatie (cpv): 35112300 Oogdouche
+Aanvullende classificatie (cpv): 35113440 Reflecterende vesten
+Aanvullende classificatie (cpv): 50000000 Reparatie- en onderhoudsdiensten
+Aanvullende classificatie (cpv): 71317100 Advies inzake brand- en explosiebeveiliging en -controle
+5.1.2 Plaats van uitvoering
+Land: Nederland
+Overal in het desbetreffende land
+Aanvullende informatie: Zie documentatie
+5.1.3 Geraamde duur
+Begindatum: 01/07/2026
+Einddatum van de duur: 30/06/2028
+5.1.4 Verlenging
+Maximumaantal verlengingen: 2
+Overige informatie over
+verlengingen:
+De Overeenkomst betreft een raamovereenkomst met begindatum die naar verwachting
+op 1 juli 2026 ligt. De initiële looptijd van de Overeenkomst is 2 (twee) jaar, waarna de
+Overeenkomst maximaal 2 (twee) maal eenzijdig door Opdrachtgever verlengd kan
+worden voor de duur van 1 (één) jaar.
+5.1.5 Waarde
+Geraamde waarde exclusief btw: 1 000 000 Euro
+5.1.6 Algemene informatie
+Aanbestedingsproject dat niet uit EU-fondsen wordt gefinancierd
+De aanbesteding valt onder de
+Overeenkomst inzake
+overheidsopdrachten (GPA):
+ja
+5.1.10 Gunningscriteria
+Criterium:
+Type: Kwaliteit
+Naam: Gunnen op waarde
+Beschrijving: Zie beschrijvend document.
+Criterium:
+Type: Prijs
+Naam: Gunnen op waarde
+Beschrijving: Zie beschrijvend document.
+Beschrijving van de methode die
+moet worden gebruikt als de
+weging niet aan de hand van
+criteria kan worden uitgedrukt:
+Gunnen op waarde methodiek. Zie het beschrijvend document.
+
+-- 2 of 4 --
+
+Publicatie
+Pagina 3 van 4	TN-597112 - 19 jun 2026
+5.1.15 Technieken
+Raamovereenkomst:
+Raamovereenkomst, zonder hernieuwde oproep tot mededinging
+Informatie over het dynamische aankoopsysteem:
+Geen dynamisch aankoopsysteem
+5.1.16 Nadere inlichtingen, bemiddeling en evaluatie
+Organisatie voor
+beroepsprocedures: Rechtbank Rotterdam
+Informatie over de termijnen
+voor beroep:
+Inschrijvers die bezwaar hebben tegen het gunningsvoornemen moeten dit bezwaar
+binnen twintig (20) kalenderdagen na dagtekening van het gunningsvoornemen in een
+civielrechtelijk kort geding aanhangig maken. Dit moet gebeuren bij de civiele rechter
+van de rechtbank te Rotterdam. Deze termijn geldt als vervaltermijn.
+6. Resultaten
+6.1 ID resultaat perceel: LOT-0000
+Er is geen winnaar gekozen en de mededinging is gesloten.
+De reden waarom geen winnaar
+is gekozen:
+Besluit van de koper, niet volgend op een verzoek van een inschrijver tot herziening van
+de gunning, vanwege technische of procedurele fouten
+6.1.4 Statistische informatie
+Samenvatting van de door de koper ontvangen beroepen:
+Aantal klagers: 0
+Ontvangen inschrijvingen of verzoeken tot deelname:
+Type van de ontvangen
+inschrijvingen: Inschrijvingen
+Aantal ontvangen inschrijvingen
+of verzoeken tot deelname: 10
+8. Organisaties
+8.1 ORG-0001
+Officiële naam: Gemeente Rotterdam
+Registratienummer: 24483298
+Postadres: Coolsingel 40
+Stad: Rotterdam
+Postcode: 3011AD
+Onderverdeling land (NUTS): Groot-Rijnmond (NL366)
+Land: Nederland
+Contactpunt: Sander Clement
+E-mail: s.clement@rotterdam.nl
+Telefoon: +31 0623941906
+Internetadres: https://www.rotterdam.nl
+Kopersprofiel: https://s2c.mercell.com/buyer/1315
+Rollen van deze organisatie:
+Koper
+8.1 ORG-0002
+Officiële naam: Rechtbank Rotterdam
+Registratienummer: 82947740
+Postadres: Wilhelminaplein 125
+Stad: Rotterdam
+Postcode: 3072 AK
+
+-- 3 of 4 --
+
+Publicatie
+Pagina 4 van 4	TN-597112 - 19 jun 2026
+Onderverdeling land (NUTS): Groot-Rijnmond (NL366)
+Land: Nederland
+E-mail: rechtbankrotterdam@rechtspraak.nl
+Telefoon: +31 883626000
+Internetadres: https://www.rechtspraak.nl/Organisatie-en-contact/Organisatie/Rechtbanken/Rechtbank-
+Rotterdam
+Rollen van deze organisatie:
+Organisatie voor beroepsprocedures
+Informatie over een aankondiging
+Identificatiecode/versie van de
+aankondiging: 9e864e8d-5528-46f4-bc8a-c26073eab9d7 - 01
+Type formulier: Resultaat
+Type aankondiging: Aankondiging van een gegunde opdracht of concessie – standaardregeling
+Verzenddatum van de
+aankondiging: 19/06/2026 11:53 +00:00
+Aankondiging datum verzending
+(eSender): 19/06/2026 11:54 +00:00
+Talen waarin deze aankondiging
+officieel beschikbaar is: Nederlands
+
+-- 4 of 4 --
+

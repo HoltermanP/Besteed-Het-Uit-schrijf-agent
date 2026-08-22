@@ -4,6 +4,7 @@ import type {
   RewriteFragmentRequest,
   RewriteFragmentResponse,
 } from '../types/rewriteFragment'
+import { usageHeaders } from './usageScope'
 
 function buildPayload(request: Omit<RewriteFragmentRequest, 'ai'>): RewriteFragmentRequest {
   const payload: RewriteFragmentRequest = { ...request }
@@ -25,7 +26,7 @@ export async function rewriteFragmentViaApi(
 ): Promise<RewriteFragmentResponse> {
   const response = await fetch('/api/rewrite-fragment', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...usageHeaders() },
     body: JSON.stringify(buildPayload(request)),
   })
 

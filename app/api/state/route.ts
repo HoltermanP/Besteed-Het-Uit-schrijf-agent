@@ -1,4 +1,5 @@
 import { readAllState, writeState, clearState, type StateWriteRequest } from '@api-lib/appState'
+import { clearMemoryUsage } from '@api-lib/aiUsage'
 
 export const maxDuration = 30
 
@@ -32,6 +33,9 @@ export const POST = applyWrite
 export async function DELETE() {
   try {
     await clearState()
+    // Draait de app op de geheugenopslag (tests), dan hoort het verbruik van die sessie
+    // er ook bij. Een echte verbruiksadministratie blijft staan; die is bedoeld om te bewaren.
+    clearMemoryUsage()
     return Response.json({ ok: true })
   } catch (error) {
     return errorResponse(error, 'Werkruimte-opslag kon niet worden geleegd.')

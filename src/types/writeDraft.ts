@@ -11,7 +11,8 @@ export type WriteDraftAiConfig = {
 
 export type WriteDraftDocument = {
   name: string
-  type: 'tender' | 'company' | 'rules' | 'training' | 'lessons'
+  /** 'evidence' = bouwstenen uit de bewijsbibliotheek; alleen hieruit mogen feiten geciteerd worden. */
+  type: 'tender' | 'company' | 'rules' | 'training' | 'lessons' | 'evidence'
   content: string
 }
 

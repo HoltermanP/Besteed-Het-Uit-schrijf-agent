@@ -9,6 +9,8 @@ const nextConfig: NextConfig = {
     '/api/extract-text': ['./node_modules/pdf-parse/**', './node_modules/officeparser/**', './node_modules/word-extractor/**', './node_modules/xlsx/**', './node_modules/cfb/**'],
     '/api/style-documents': ['./node_modules/pdf-parse/**', './node_modules/officeparser/**', './node_modules/word-extractor/**', './node_modules/xlsx/**', './node_modules/cfb/**'],
     '/api/tender-documents': ['./node_modules/pdf-parse/**', './node_modules/officeparser/**', './node_modules/word-extractor/**', './node_modules/xlsx/**', './node_modules/cfb/**'],
+    // Het opdrachtgeversbeeld leest de gunnings-PDF's van TenderNed uit.
+    '/api/insights': ['./node_modules/pdf-parse/**', './node_modules/officeparser/**', './node_modules/word-extractor/**', './node_modules/xlsx/**', './node_modules/cfb/**'],
   },
   async rewrites() {
     return [

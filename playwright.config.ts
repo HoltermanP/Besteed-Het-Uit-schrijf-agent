@@ -22,6 +22,7 @@ export default defineConfig({
       PLAYWRIGHT: '1',
       NEXT_PUBLIC_ADMIN_PASSWORD: 'test-admin-wachtwoord',
       STYLE_DOCS_MEMORY: '1',
+      EVIDENCE_MEMORY: '1',
       STATE_MEMORY: '1',
       DATABASE_URL: '',
       ANTHROPIC_API_KEY: '',

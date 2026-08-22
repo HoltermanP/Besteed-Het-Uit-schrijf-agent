@@ -75,9 +75,10 @@ Dezelfde stem, terminologie, nummeringsstijl en opmaakklassen in elke sectie; de
 BRONHIËRARCHIE (streng, van hoog naar laag)
 1. Leidraad / aanbestedingsstukken — gevraagde stukken, onderwerpen, woord- en paginalimieten, beoordelingscriteria
 2. Schrijfkader: schrijfregels, kwaliteitsstandaarden en handmatige aanpassingen van de inschrijver — verplichte formulering, kwaliteitsnormen, verboden formuleringen (documenten met de kop [SCHRIJFKADER · …])
-3. Lessons learned uit eerdere aanbestedingen — toegepaste leerpunten: pas toe wat aantoonbaar punten opleverde en vermijd wat eerder punten kostte; laat ze de uitwerking sturen, maar nooit de leidraad-eisen overrulen
-4. Bedrijfsinformatie — alleen feitelijke claims over het inschrijvende bedrijf
-5. Schrijfwijze & voorbeeldteksten (Schrijfkader) — toon, zinsbouw, opmaak; geen nieuwe inhoud verzinnen
+3. Bewijsbibliotheek — vastgelegde referenties, cases en cijfers met bron: dit is de harde feitenbasis voor elke onderbouwing
+4. Lessons learned uit eerdere aanbestedingen — toegepaste leerpunten: pas toe wat aantoonbaar punten opleverde en vermijd wat eerder punten kostte; laat ze de uitwerking sturen, maar nooit de leidraad-eisen overrulen
+5. Bedrijfsinformatie — alleen feitelijke claims over het inschrijvende bedrijf
+6. Schrijfwijze & voorbeeldteksten (Schrijfkader) — toon, zinsbouw, opmaak; geen nieuwe inhoud verzinnen
 
 INHOUDELIJKE REGELS
 - SCHRIJF ALLEEN DIT STUK: beantwoord de vraag die de leidraad voor dit stuk stelt, volledig en gericht. Inhoud die bij een ander stuk van de inschrijving hoort (zie "Andere stukken" in de taakcontext) werk je hier NIET uit; hooguit één zin met verwijzing als de leidraad dat toestaat
@@ -90,6 +91,13 @@ INHOUDELIJKE REGELS
 - Respecteer de specifieke eisen aan de inschrijving (vorm, opmaak, indiening, geschiktheid) uit de analyse: schrijf bijvoorbeeld anoniem als dat vereist is, in het Nederlands, en houd je aan format-/structuureisen
 - Onderbouw uitspraken met feiten uit bedrijfsbronnen; geen lege superlatieven
 - FEITEN (hard): schrijf geen cijfers, namen, referenties, certificaten, resultaten, werkwijzen of toezeggingen die niet letterlijk in de bronnen of in de aanvullende informatie van het bidteam (taakcontext "VERBETERRONDE") staan. Ontbreekt onderbouwing: laat de claim weg of formuleer zonder feitelijke claim — nooit invullen met aannames; de reviewer vraagt die informatie bij het bidteam op
+
+BEWIJSBIBLIOTHEEK CITEREN (verplicht bij elk hard feit)
+- In de bronnen staat een blok BEWIJSBIBLIOTHEEK met vastgelegde bouwstenen: referenties, cases en cijfers, elk met een korte verwijzing tussen blokhaken, bijvoorbeeld [B4F19C]. Dit zijn de enige feiten van de inschrijver die als bewezen gelden
+- Gebruik voor elke onderbouwing bij voorkeur een bouwsteen — dat is beter bewijs dan een algemene passage uit de bedrijfsinformatie — en neem het feit over zoals het er staat: verander geen getallen, jaartallen, namen of resultaten
+- Markeer elk geciteerd feit met een onzichtbare verwijzing in de tekst: <span data-bewijs="B4F19C">de zin of zinsnede met het feit</span>. Dat is de bewijsvoetnoot van dit stuk: hij is niet zichtbaar voor de lezer en verdwijnt bij export, maar de reviewer controleert er de claims mee. Zet de span om de zinsnede zelf, nooit om een hele sectie of alinea
+- Combineer meerdere bouwstenen in één zin als data-bewijs="B4F19C B77A20"
+- Staat er geen bouwsteen voor een feit dat je wilt beweren, dan bewéér je het niet: geen cijfer, geen referentie, geen resultaat zonder bouwsteen of bron. Schrijf de zin zonder feitelijke claim of laat hem weg
 - Verwijs niet naar het schrijfproces, AI, prompts of interne review
 
 STIJL
@@ -197,6 +205,7 @@ const DOC_CHAR_LIMITS: Record<WriteDraftDocument['type'], number> = {
   rules: 40_000,
   training: 30_000,
   lessons: 15_000,
+  evidence: 30_000,
 }
 
 /** Streefdoel t.o.v. leidraad-maximum (secties schieten elk iets uit; 95% laat daar ruimte voor). */
@@ -642,6 +651,9 @@ function buildSourcesPrompt(request: WriteDraftRequest): string {
 Aanbestedingsstukken (leidraad — leidend voor structuur en eisen):
 ${docsByType(request, 'tender') || '- geen'}
 
+Bewijsbibliotheek — vastgelegde referenties, cases en cijfers (de harde feitenbasis; citeer met <span data-bewijs="…">):
+${docsByType(request, 'evidence') || '- geen'}
+
 Bedrijfsinformatie (feiten voor onderbouwing):
 ${docsByType(request, 'company') || '- geen'}
 
@@ -1084,7 +1096,8 @@ function buildSectionPrompt(
     `- Omvang: ${low}–${high} woorden zichtbare tekst${charsHint}${target.hardMax ? ` — ${high} is een HARD maximum (leidraadlimiet)` : ' — schrijf tot dicht bij het budget'}`,
     `- Opmaak (verplicht in deze sectie): ${formattingRequirement(section.words, section.model)}`,
     `- Managementmodel: ${modelInstruction(section)}`,
-    '- Ritme: kernzin met ons antwoord → hoe wij dat concreet doen (wie, wat, wanneer, hoe vaak) → bewijs uit bedrijfsbronnen → wat het de opdrachtgever oplevert',
+    '- Ritme: kernzin met ons antwoord → hoe wij dat concreet doen (wie, wat, wanneer, hoe vaak) → bewijs → wat het de opdrachtgever oplevert',
+    '- Bewijs: citeer bij voorkeur een bouwsteen uit de bewijsbibliotheek en markeer die met <span data-bewijs="…">; zonder bouwsteen of bron géén cijfer, referentie of resultaat',
   )
 
   const others = plan.sections.filter((item) => item.number !== section.number)
@@ -1133,7 +1146,7 @@ function buildRepairPrompt(section: SectionPlan, html: string, missing: string[]
 De onderstaande sectie is inhoudelijk klaar maar mist de verplichte opmaak: ${missing.join(' en ')}.
 Herschrijf de sectie met dezelfde inhoud, feiten en toezeggingen (geen nieuwe feiten), dezelfde omvang (±10% woorden) en voeg toe: ${missing.join(' en ')}. Zet gestructureerde gegevens uit de alinea's (stappen, rollen, KPI's, maatregelen, eis-vs-invulling) in die opsomming/tabel; de alinea's blijven de drager van de inhoud.
 Managementmodel: ${modelInstruction(section)}
-Behoud <h2> en <p class="section-subtitle"> letterlijk.
+Behoud <h2> en <p class="section-subtitle"> letterlijk, en laat elke <span data-bewijs="…"> om het bijbehorende feit staan.
 
 ${html}
 
@@ -1142,7 +1155,7 @@ OUTPUT: uitsluitend de bijgewerkte <section class="doc-section">…</section>.`
 
 function buildTrimPrompt(section: SectionPlan, html: string, targetWords: number): string {
   return `INKORTEN — sectie ${section.number} "${section.title}"
-De onderstaande sectie telt circa ${countVisibleWords(html)} woorden zichtbare tekst; het budget voor deze sectie is ${targetWords} woorden (hard maximum door de leidraadlimiet). Kort in tot maximaal ${targetWords} woorden door herhaling, omhaal en bijzinnen te schrappen — laat geen verplichte eis, feit of toezegging weg en behoud ALLE opmaak (opsommingen, tabellen, managementmodel), <h2> en <p class="section-subtitle">.
+De onderstaande sectie telt circa ${countVisibleWords(html)} woorden zichtbare tekst; het budget voor deze sectie is ${targetWords} woorden (hard maximum door de leidraadlimiet). Kort in tot maximaal ${targetWords} woorden door herhaling, omhaal en bijzinnen te schrappen — laat geen verplichte eis, feit of toezegging weg en behoud ALLE opmaak (opsommingen, tabellen, managementmodel), <h2>, <p class="section-subtitle"> en de <span data-bewijs="…">-markeringen bij de feiten die blijven staan.
 
 ${html}
 

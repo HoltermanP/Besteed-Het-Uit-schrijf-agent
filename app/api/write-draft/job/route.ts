@@ -3,6 +3,7 @@ import { prepareWriteDraftRequest } from '@api-lib/writeDraft'
 import { resolveAiFromRequest, type AiRuntimeConfig } from '@api-lib/aiClient'
 import { createWriteJob, isJobStale, readWriteJob, runWriteJob, toJobSnapshot } from '@api-lib/writeJobs'
 import type { WriteDraftJobStart, WriteDraftRequest } from '@/types/writeDraft'
+import { usageContextFromRequest } from '@api-lib/usageContext'
 
 // De opdracht draait ná het antwoord door (after), tot aan deze limiet; daarna hervat een
 // volgende beurt de opdracht vanaf het checkpoint.
@@ -44,9 +45,15 @@ export async function POST(request: Request) {
     // terug op een lokaal concept. Achteraf zou dat pas bij de eerste statuscheck blijken.
     resolveAiFromRequest(draft.ai as AiRuntimeConfig | undefined, 'WRITER_MODEL')
 
+    // De opdracht draait straks buiten dit verzoek door; de herkomst voor de
+    // verbruiksadministratie moet daarom nú mee de opdracht in.
+    const scope = usageContextFromRequest(request)
+
     const job = await createWriteJob({
       request: draft,
-      projectId: body.projectId?.trim() || 'onbekend',
+      companyId: scope.companyId,
+      projectId: body.projectId?.trim() || scope.projectId || 'onbekend',
+      projectTitle: scope.projectTitle ?? draft.project.title ?? null,
       draftId: body.draftId?.trim() || draft.targetDocument?.id || 'onbekend',
       draftTitle: body.draftTitle?.trim() || draft.targetDocument?.title || draft.project.title,
       kind: body.kind ?? 'schrijven',

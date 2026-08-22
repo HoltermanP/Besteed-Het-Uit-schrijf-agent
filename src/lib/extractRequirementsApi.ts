@@ -5,6 +5,7 @@ import type {
   ExtractRequirementsResponse,
 } from '../types/extractRequirements'
 import type { Requirement, SourceDocument } from '../types/tenderAnalysis'
+import { usageHeaders } from './usageScope'
 
 function resolveAiConfig(): ExtractRequirementsRequest['ai'] {
   const apiConfig = getApiConfig()
@@ -32,7 +33,7 @@ export async function extractRequirementsViaApi(
   try {
     const response = await fetch('/api/extract-requirements', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...usageHeaders() },
       body: JSON.stringify(payload),
     })
 

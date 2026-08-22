@@ -93,10 +93,24 @@ function activeCompanyId(): string {
   }
 }
 
-function scopeKey(key: string): string {
+/**
+ * De sleutel zoals die voor één bepaald bedrijf in de opslag staat. Nodig buiten de
+ * actieve werkruimte om: de back-up-export leest de sleutels van álle bedrijven.
+ */
+export function scopedStorageKey(key: string, companyId: string): string {
   if (GLOBAL_KEYS.has(key)) return key
-  const company = activeCompanyId()
-  return company === DEFAULT_COMPANY_ID ? key : `${key}${COMPANY_SEPARATOR}${company}`
+  return companyId === DEFAULT_COMPANY_ID ? key : `${key}${COMPANY_SEPARATOR}${companyId}`
+}
+
+/** Omgekeerde van scopedStorageKey: uit welke logische sleutel en welk bedrijf komt deze rij? */
+export function splitStorageKey(stored: string): { key: string; companyId: string } {
+  const index = stored.indexOf(COMPANY_SEPARATOR)
+  if (index < 0) return { key: stored, companyId: DEFAULT_COMPANY_ID }
+  return { key: stored.slice(0, index), companyId: stored.slice(index + COMPANY_SEPARATOR.length) }
+}
+
+function scopeKey(key: string): string {
+  return scopedStorageKey(key, activeCompanyId())
 }
 
 /** Verwijdert alle werkdata van één bedrijf (gebruikt bij het verwijderen ervan). */

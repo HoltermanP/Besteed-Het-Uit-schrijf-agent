@@ -4,6 +4,7 @@ import type {
   CompanyEnrichRequest,
   CompanyEnrichResponse,
 } from '../types/companyEnrich'
+import { usageHeaders } from './usageScope'
 
 async function readApiJson<T>(response: Response): Promise<T | CompanyEnrichError> {
   const raw = await response.text()
@@ -43,7 +44,7 @@ export async function enrichCompanyFromWebsite(website: string): Promise<Company
 
   const response = await fetch('/api/company-enrich', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...usageHeaders() },
     body: JSON.stringify(payload),
   })
 

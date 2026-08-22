@@ -9,6 +9,7 @@ import type {
   TenderScoreRequest,
   TenderScoreResponse,
 } from '../types/tenderScore'
+import { usageHeaders } from './usageScope'
 
 const STORAGE_KEY = 'bid-agent-tender-scores'
 // Batchgrootte gelijk aan het servermaximum: minder aanroepen betekent minder
@@ -98,7 +99,7 @@ async function scoreBatch(companyText: string, batch: TenderScoreInput[]): Promi
 
   const response = await fetch('/api/score-tenders', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...usageHeaders() },
     body: JSON.stringify(payload),
   })
 

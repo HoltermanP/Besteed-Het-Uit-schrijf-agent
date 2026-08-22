@@ -24,8 +24,9 @@ import {
   ShieldCheck,
   Trash2,
 } from 'lucide-react'
-import { listProjects, removeProject, renameProject, upsertProject, type ProjectMeta } from '../lib/projects'
-import { loadDossier, saveDossier } from '../lib/dossier'
+import { listProjects, renameProject } from '../lib/projects'
+import { restoreTrashedProject, trashProject, TRASH_RETENTION_DAYS } from '../lib/projectTrash'
+import { loadDossier } from '../lib/dossier'
 import { getSavedTenders } from '../lib/tenderDatabase'
 import { createBlankProject, createProjectFromTender } from '../lib/projectFactory'
 import { getActiveCompanyId, getCompanies, setActiveCompanyId } from '../lib/companies'
@@ -174,8 +175,9 @@ export default function ProjectsOverviewPage() {
     setStatus('Projectnaam aangepast.')
   }
 
-  // Verwijderen vraagt eerst om bevestiging, mét wat er verdwijnt, en is daarna nog
-  // tien seconden terug te draaien.
+  // Verwijderen vraagt eerst om bevestiging, mét wat er verdwijnt. Daarna gaat het project
+  // naar de prullenbak: tien seconden lang direct terug te draaien via de melding, en
+  // daarna nog dertig dagen terug te halen door een beheerder.
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string; details: string[] } | null>(null)
   const startDelete = (project: (typeof projects)[number]) => {
     setDeleteTarget({
@@ -191,21 +193,14 @@ export default function ProjectsOverviewPage() {
   const confirmDelete = () => {
     if (!deleteTarget) return
     const { id, title } = deleteTarget
-    const meta = projects.find((project) => project.id === id)
-    // Het volledige dossier vastleggen vóór verwijderen, zodat "Ongedaan maken" alles terugzet.
-    const snapshot = loadDossier<DossierSnapshot>(id)
-    const restoreMeta: ProjectMeta | null = meta
-      ? { id: meta.id, title: meta.title, buyer: meta.buyer, updatedAt: meta.updatedAt, source: meta.source }
-      : null
-    removeProject(id)
+    trashProject(id)
     setDeleteTarget(null)
     setVersion((v) => v + 1)
-    setStatus('Project verwijderd.')
+    setStatus(`Project naar de prullenbak — nog ${TRASH_RETENTION_DAYS} dagen terug te halen via API-beheer.`)
     notifyUndo(`Project "${title}" verwijderd`, () => {
-      if (snapshot) saveDossier(id, snapshot)
-      if (restoreMeta) upsertProject(restoreMeta)
+      const result = restoreTrashedProject(id)
       setVersion((v) => v + 1)
-      setStatus('Project teruggezet.')
+      setStatus(result === 'hersteld' ? 'Project teruggezet.' : 'Terugzetten lukte niet: er bestaat al een project met dit id.')
     })
   }
 
@@ -522,7 +517,7 @@ export default function ProjectsOverviewPage() {
             if (!open) setDeleteTarget(null)
           }}
           title={`Project "${deleteTarget?.title ?? ''}" verwijderen?`}
-          description="Het hele dossier verdwijnt: bronnen, concepten, opmerkingen en versies. Je kunt dit tien seconden lang terugdraaien via de melding."
+          description={`Het dossier verdwijnt uit het overzicht: bronnen, concepten, opmerkingen en versies. Het gaat naar de prullenbak en is daar nog ${TRASH_RETENTION_DAYS} dagen terug te halen (API-beheer), of direct via de melding.`}
           details={deleteTarget?.details ?? []}
           confirmLabel="Project verwijderen"
           onConfirm={confirmDelete}

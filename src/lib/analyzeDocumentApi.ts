@@ -5,6 +5,7 @@ import type {
   AnalyzeDocumentResponse,
 } from '../types/analyzeDocument'
 import type { DocumentExtract, SourceDocument } from '../types/tenderAnalysis'
+import { usageHeaders } from './usageScope'
 
 function resolveAiConfig(): AnalyzeDocumentRequest['ai'] {
   const apiConfig = getApiConfig()
@@ -32,7 +33,7 @@ export async function analyzeDocumentViaApi(
   try {
     const response = await fetch('/api/analyze-document', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...usageHeaders() },
       body: JSON.stringify(payload),
     })
 

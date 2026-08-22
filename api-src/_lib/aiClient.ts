@@ -1,4 +1,5 @@
 import type { AiProvider } from '../../src/types/apiConfig'
+import { recordAiUsage } from './aiUsage'
 
 export type AiRuntimeConfig = {
   provider: AiProvider
@@ -121,21 +122,63 @@ type AnthropicUsage = {
   cache_read_input_tokens?: number
 }
 
-// Verbruikslog per aanroep (zichtbaar in de serverlogs): maakt meetbaar waar
-// tokens heengaan en of prompt caching daadwerkelijk hits oplevert.
-function logUsage(label: string | undefined, model: string, usage: AnthropicUsage | undefined) {
+// Verbruik per aanroep: naar de serverlogs én naar de verbruiksadministratie, waar het
+// per bedrijf, project en stuk optelt (zie aiUsage.ts). Zo is achteraf te verantwoorden
+// waar tokens heen gingen en of prompt caching daadwerkelijk hits oplevert.
+//
+// Het vastleggen gebeurt bewust zonder await en met een eigen vangnet: een trage of
+// haperende database mag een generatie die de gebruiker minuten kost nooit laten klappen.
+function logUsage(ai: AiRuntimeConfig, options: AiCompletionOptions, usage: AnthropicUsage | undefined) {
   if (!usage) return
+  const tokens = {
+    inputTokens: usage.input_tokens ?? 0,
+    outputTokens: usage.output_tokens ?? 0,
+    cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+  }
+
   console.log(
     '[ai-verbruik]',
     JSON.stringify({
-      taak: label ?? 'onbekend',
-      model,
-      input: usage.input_tokens ?? 0,
-      output: usage.output_tokens ?? 0,
-      cacheWrite: usage.cache_creation_input_tokens ?? 0,
-      cacheRead: usage.cache_read_input_tokens ?? 0,
+      taak: options.label ?? 'onbekend',
+      model: ai.model,
+      input: tokens.inputTokens,
+      output: tokens.outputTokens,
+      cacheWrite: tokens.cacheWriteTokens,
+      cacheRead: tokens.cacheReadTokens,
     }),
   )
+
+  void recordAiUsage({
+    provider: ai.provider,
+    model: ai.model,
+    task: options.label ?? 'onbekend',
+    ...tokens,
+    cacheRequested: Boolean(options.cachePrompt),
+    cacheTtl: options.cacheTtl ?? '5m',
+  }).catch(() => undefined)
+}
+
+/**
+ * Verbruik van een OpenAI-compatibel endpoint. De velden heten daar anders; gecachete
+ * invoer zit in prompt_tokens_details en is bij OpenAI al van prompt_tokens afgetrokken,
+ * dus die telt hier apart mee zonder dubbeltelling.
+ */
+type OpenAiUsage = {
+  prompt_tokens?: number
+  completion_tokens?: number
+  prompt_tokens_details?: { cached_tokens?: number }
+}
+
+function logOpenAiUsage(ai: AiRuntimeConfig, options: AiCompletionOptions, usage: OpenAiUsage | undefined) {
+  if (!usage) return
+  const cacheReadTokens = usage.prompt_tokens_details?.cached_tokens ?? 0
+  const inputTokens = Math.max(0, (usage.prompt_tokens ?? 0) - cacheReadTokens)
+  logUsage(ai, options, {
+    input_tokens: inputTokens,
+    output_tokens: usage.completion_tokens ?? 0,
+    cache_read_input_tokens: cacheReadTokens,
+  })
 }
 
 /**
@@ -223,7 +266,7 @@ async function completeAnthropic(
     content?: Array<{ type?: string; text?: string }>
     usage?: AnthropicUsage
   }
-  logUsage(options.label, ai.model, payload.usage)
+  logUsage(ai, options, payload.usage)
   const text = payload.content
     ?.filter((block) => block.type === 'text')
     .map((block) => block.text ?? '')
@@ -346,7 +389,7 @@ async function* streamAnthropic(
     }
   }
 
-  if (Object.keys(usageTotals).length) logUsage(options.label, ai.model, usageTotals)
+  if (Object.keys(usageTotals).length) logUsage(ai, options, usageTotals)
 }
 
 async function* streamOpenAiCompatible(
@@ -363,15 +406,26 @@ async function* streamOpenAiCompatible(
     stream: true,
   }
 
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${ai.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(options.timeoutMs ?? 180_000),
-  })
+  const call = (payload: Record<string, unknown>) =>
+    fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${ai.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(options.timeoutMs ?? 180_000),
+    })
+
+  // Zonder stream_options stuurt een OpenAI-compatibel endpoint bij streaming geen
+  // verbruiksgegevens mee en blijft de aanroep onzichtbaar in de administratie. Niet elk
+  // "compatibel" endpoint kent het veld echter, en sommige weigeren onbekende velden met
+  // een 400. Het bijhouden van verbruik mag geen generatie kosten: bij een geweigerd
+  // verzoek gaat dezelfde aanroep zonder het veld alsnog door — dan zonder tellingen.
+  let response = await call({ ...body, stream_options: { include_usage: true } })
+  if (response.status === 400) {
+    response = await call(body)
+  }
 
   if (!response.ok) {
     const detail = await response.text()
@@ -383,6 +437,8 @@ async function* streamOpenAiCompatible(
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  // Komt in het laatste event binnen, ná de tekst; daarom pas aan het einde loggen.
+  let usage: OpenAiUsage | undefined
 
   while (true) {
     const { done, value } = await reader.read()
@@ -399,7 +455,9 @@ async function* streamOpenAiCompatible(
       try {
         const event = JSON.parse(payload) as {
           choices?: Array<{ delta?: { content?: string } }>
+          usage?: OpenAiUsage
         }
+        if (event.usage) usage = event.usage
         const text = event.choices?.[0]?.delta?.content
         if (text) yield text
       } catch {
@@ -407,6 +465,8 @@ async function* streamOpenAiCompatible(
       }
     }
   }
+
+  logOpenAiUsage(ai, options, usage)
 }
 
 export async function* streamChat(
@@ -454,7 +514,9 @@ async function completeOpenAiCompatible(
 
   const payload = (await response.json()) as {
     choices?: Array<{ message?: { content?: string } }>
+    usage?: OpenAiUsage
   }
+  logOpenAiUsage(ai, options, payload.usage)
   const content = payload.choices?.[0]?.message?.content?.trim()
   if (!content) throw new Error('AI gaf geen resultaat terug.')
   return content

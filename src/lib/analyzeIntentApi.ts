@@ -5,6 +5,7 @@ import type {
   AnalyzeIntentResponse,
 } from '../types/analyzeIntent'
 import type { SourceDocument, UnderlyingIntent } from '../types/tenderAnalysis'
+import { usageHeaders } from './usageScope'
 
 async function readApiJson<T>(response: Response): Promise<T | AnalyzeIntentError> {
   const raw = await response.text()
@@ -48,7 +49,7 @@ export async function enrichIntentViaApi(
   try {
     const response = await fetch('/api/analyze-intent', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...usageHeaders() },
       body: JSON.stringify(payload),
     })
 

@@ -6,6 +6,7 @@ import type {
   WriteDraftRequest,
   WriteDraftResponse,
 } from '../types/writeDraft'
+import { usageHeaders } from './usageScope'
 
 /*
  * Het schrijven van een stuk is een opdracht op de server, geen browserverbinding.
@@ -97,7 +98,12 @@ export async function startDraftJob(
 ): Promise<WriteDraftJobSnapshot> {
   const response = await fetch('/api/write-draft/job', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      // Het schrijfwerk is verreweg de duurste taak; het stuk waar het bij hoort staat
+      // hier expliciet in de opdracht en gaat vóór de open werkplek.
+      ...usageHeaders({ projectId: job.projectId, draftId: job.draftId, draftTitle: job.draftTitle }),
+    },
     body: JSON.stringify(buildPayload(request, job)),
   })
 

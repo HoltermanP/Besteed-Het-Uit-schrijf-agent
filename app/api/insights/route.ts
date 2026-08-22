@@ -2,16 +2,23 @@ import { handleLessonsLearnedRequest } from '@api-lib/lessonsLearned'
 import { handleEvaluateProjectRequest } from '@api-lib/evaluateProject'
 import { handleSelectLessonsRequest } from '@api-lib/selectLessons'
 import { handleCompareProjectsRequest } from '@api-lib/compareProjects'
+import { handleBuyerHistoryRequest } from '@api-lib/buyerHistory'
 import type { EvaluateProjectRequest, SelectLessonsRequest } from '@/types/lessonLearned'
 import type { CompareProjectsRequest } from '@/types/compareProjects'
+import { withUsageContext } from '@api-lib/usageContext'
 
 // Gecombineerde "insights"-route: bundelt lessons-learned (CRUD), projectevaluatie,
-// leerpunt-selectie en projectvergelijking. De AI-acties worden gekozen via
-// ?action=evaluate|select|compare; zonder action draait de lessons-learned-CRUD.
+// leerpunt-selectie, projectvergelijking en het opdrachtgeversbeeld. De acties worden
+// gekozen via ?action=evaluate|select|compare|buyer; zonder action draait de
+// lessons-learned-CRUD.
 export const maxDuration = 120
 
 async function handle(request: Request): Promise<Response> {
   const action = new URL(request.url).searchParams.get('action') ?? ''
+
+  // Het opdrachtgeversbeeld leest zelf de aanvraag uit; het scant TenderNed en
+  // downloadt gunnings-PDF's, dus het duurt langer dan de andere acties.
+  if (action === 'buyer') return handleBuyerHistoryRequest(request)
 
   if (action === 'evaluate' || action === 'select' || action === 'compare') {
     if (request.method !== 'POST') {
@@ -29,7 +36,7 @@ async function handle(request: Request): Promise<Response> {
 
 async function run(request: Request) {
   try {
-    return await handle(request)
+    return await withUsageContext(request, () => handle(request))
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Interne serverfout bij insights.'
     return Response.json({ error: message }, { status: 500 })

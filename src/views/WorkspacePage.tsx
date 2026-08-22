@@ -28,6 +28,7 @@ import {
   FolderOpen,
   GitCompareArrows,
   GraduationCap,
+  Library,
   Highlighter,
   History,
   Import,
@@ -50,6 +51,8 @@ import {
 } from 'lucide-react'
 import { buildHtmlDraft, buildStartDraft, isStartDraft } from '../lib/buildDraft'
 import { revealDraftProgressively } from '../lib/draftProgress'
+import { clearUsageScope, setUsageScope } from '../lib/usageScope'
+import BudgetWarning from '../components/BudgetWarning'
 import { analyzeTenderDocuments, countCharacters, countWords, reviewAgainstAnalysis } from '../lib/tenderAnalysis'
 import {
   checkVolume,
@@ -80,7 +83,13 @@ import type {
   TenderAnalysis,
 } from '../types/tenderAnalysis'
 import { exportPdfFromHtml, measureProposalPdf, type ProposalPdfMeasure } from '../lib/pdfExport'
-import { slugForFile, stripCommentMarks } from '../lib/draftHtml'
+import {
+  clearClaimMarks,
+  markUnprovenClaims,
+  slugForFile,
+  stripCommentMarks,
+  stripEvidenceMarks,
+} from '../lib/draftHtml'
 import { shortDeadlineLabel, splitClosingDateTime } from '../lib/submission'
 import {
   documentLimits,
@@ -114,6 +123,7 @@ import { extractRequirementsViaApi } from '../lib/extractRequirementsApi'
 import { applyRequirementChecks, resolveRequirementStatuses } from '../lib/requirements'
 import { normalizeStoredAnalysis } from '../lib/storedAnalysis'
 import RequirementsCard from '../components/RequirementsCard'
+import BuyerProfileCard from '../components/BuyerProfileCard'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { notifyError, notifySuccess, notifyUndo, notifyWarning } from '../lib/notify'
 import ImprovementRoundPanel from '../components/ImprovementRoundPanel'
@@ -146,6 +156,10 @@ import EvaluationDialog from '../components/EvaluationDialog'
 import SaveStatusIndicator from '../components/SaveStatusIndicator'
 import { fetchLessons, lessonsToPromptContent, selectRelevantLessons } from '../lib/lessonsLearnedApi'
 import type { LessonLearned } from '../types/lessonLearned'
+import { fetchEvidenceBlocks, selectRelevantEvidence } from '../lib/evidenceBlocksApi'
+import { evidenceHandle, evidenceToPromptContent, evidenceValueLabel, isCitable } from '../lib/evidence'
+import { checkClaims, mergeClaimChecks, unprovenClaims, type ClaimCheck } from '../lib/claimCheck'
+import { evidenceKindLabels, type EvidenceBlock } from '../types/evidenceBlock'
 import type {
   WriteDraftDocument,
   WriteDraftJobSnapshot,
@@ -638,6 +652,12 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   const [styleDocuments, setStyleDocuments] = useState<StyleDocument[]>([])
   const [lessonsLibrary, setLessonsLibrary] = useState<LessonLearned[]>([])
   const [appliedLessons, setAppliedLessons] = useState<LessonLearned[]>([])
+  // Bewijsbibliotheek: alle bouwstenen van dit bedrijf, en de bouwstenen die bij het
+  // laatst geschreven stuk zijn meegegeven (waaruit de agent dus mocht citeren).
+  const [evidenceLibrary, setEvidenceLibrary] = useState<EvidenceBlock[]>([])
+  const [appliedEvidence, setAppliedEvidence] = useState<EvidenceBlock[]>([])
+  // Uitkomst van de bewijscheck van de laatste review: welke claims staan er zonder bewijs.
+  const [claimChecks, setClaimChecks] = useState<ClaimCheck[]>([])
   // Handmatige aanpassingen uit het Schrijfkader; eenmalig gelezen bij het openen van het project.
   const kaderAanpassingen = useMemo(() => getSchrijfkaderAanpassingen(), [])
   const effectiveDocuments = useMemo(
@@ -676,6 +696,14 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
 
   useEffect(loadLessons, [])
 
+  const loadEvidence = () => {
+    void fetchEvidenceBlocks()
+      .then(setEvidenceLibrary)
+      .catch(() => setEvidenceLibrary([]))
+  }
+
+  useEffect(loadEvidence, [])
+
   // Laat de AI de relevante leerpunten kiezen en lever ze als bron voor de schrijfagent.
   const gatherLessonDocuments = async (result: TenderAnalysis | null): Promise<WriteDraftDocument[]> => {
     if (!lessonsLibrary.length) {
@@ -701,6 +729,44 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         name: 'Toegepaste leerpunten uit eerdere aanbestedingen',
         type: 'lessons',
         content: lessonsToPromptContent(relevant),
+      },
+    ]
+  }
+
+  /**
+   * Kies de bouwstenen die bij dít stuk horen en lever ze als bron aan de schrijfagent.
+   * Alleen citeerbare bouwstenen (bewijs vastgelegd, niet verlopen) doen mee: wat niet
+   * bewezen is, hoort de agent niet te zien — anders verzint hij er alsnog omheen.
+   */
+  const gatherEvidenceDocuments = async (
+    result: TenderAnalysis | null,
+    requested?: RequestedDocument,
+  ): Promise<WriteDraftDocument[]> => {
+    const citable = evidenceLibrary.filter((block) => isCitable(block))
+    if (!citable.length) {
+      setAppliedEvidence([])
+      return []
+    }
+    setSyncStatus('Bewijsbouwstenen kiezen die bij dit stuk passen…')
+    const tenderSummary = effectiveDocuments
+      .filter((doc) => doc.type === 'tender')
+      .map((doc) => doc.content)
+      .join('\n\n')
+      .slice(0, 6_000)
+    const relevant = await selectRelevantEvidence({
+      project: { title: project.title, buyer: project.buyer },
+      analysis: result,
+      document: requested ? { title: requested.title, question: requested.question } : undefined,
+      tenderSummary,
+      candidates: citable,
+    })
+    setAppliedEvidence(relevant)
+    if (!relevant.length) return []
+    return [
+      {
+        name: 'Bewijsbouwstenen voor dit stuk (citeer met data-bewijs)',
+        type: 'evidence',
+        content: evidenceToPromptContent(relevant),
       },
     ]
   }
@@ -758,6 +824,18 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     () => drafts.find((item) => item.id === activeDraftId) ?? drafts[0] ?? null,
     [drafts, activeDraftId],
   )
+
+  // Elke AI-aanroep vanuit de werkplek wordt toegerekend aan het project en het stuk dat
+  // hier open staat, zodat de verbruikspagina kan tonen wat een stuk heeft gekost.
+  useEffect(() => {
+    setUsageScope({
+      projectId,
+      projectTitle: project.title,
+      draftId: activeDraft?.id,
+      draftTitle: activeDraft?.title,
+    })
+    return clearUsageScope
+  }, [projectId, project.title, activeDraft?.id, activeDraft?.title])
 
   // Schrijf een nieuwe stukkenlijst weg (state + ref), zodat vervolgstappen in dezelfde
   // async flow direct de actuele lijst zien.
@@ -1012,6 +1090,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     const result = analysis ?? (await runAnalysis())
     const { requested, scoped, siblings } = briefFor(activeDraft, result)
     const lessonDocuments = await gatherLessonDocuments(result)
+    const evidenceDocuments = await gatherEvidenceDocuments(result, requested)
     const distilledById = await gatherDistilledDocuments()
 
     try {
@@ -1019,7 +1098,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         {
           stage: target,
           project,
-          documents: [...applyDistillates(effectiveDocuments, distilledById), ...lessonDocuments],
+          documents: [...applyDistillates(effectiveDocuments, distilledById), ...evidenceDocuments, ...lessonDocuments],
           comments: toLegacyComments(comments),
           analysis: scoped,
           targetDocument: requested,
@@ -1598,20 +1677,25 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
 
     const { requested, scoped, siblings } = briefFor(doc, result)
     const lessonDocuments = await gatherLessonDocuments(result)
+    const evidenceDocuments = await gatherEvidenceDocuments(result, requested)
     const distilledById = await gatherDistilledDocuments()
     updateEditorHtml('<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
 
     try {
+      const extras = [
+        evidenceDocuments.length ? 'bewijsbouwstenen' : '',
+        lessonDocuments.length ? 'toegepaste leerpunten' : '',
+      ].filter(Boolean)
       setSyncStatus(
-        lessonDocuments.length
-          ? `Schrijfagent schrijft "${doc.title}" met toegepaste leerpunten…`
+        extras.length
+          ? `Schrijfagent schrijft "${doc.title}" met ${extras.join(' en ')}…`
           : `Schrijfagent schrijft "${doc.title}"…`,
       )
       const aiResult = await generateDraftViaApi(
         {
           stage: targetStage,
           project,
-          documents: [...applyDistillates(effectiveDocuments, distilledById), ...lessonDocuments],
+          documents: [...applyDistillates(effectiveDocuments, distilledById), ...evidenceDocuments, ...lessonDocuments],
           comments: toLegacyComments(docComments),
           analysis: scoped,
           targetDocument: requested,
@@ -2058,6 +2142,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     const result = analysis ?? (await runAnalysis())
     const { requested, scoped, siblings } = briefFor(activeDraft, result)
     const lessonDocuments = await gatherLessonDocuments(result)
+    const evidenceDocuments = await gatherEvidenceDocuments(result, requested)
     const distilledById = await gatherDistilledDocuments()
 
     try {
@@ -2065,7 +2150,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         {
           stage: 'zilver',
           project,
-          documents: [...applyDistillates(effectiveDocuments, distilledById), ...lessonDocuments],
+          documents: [...applyDistillates(effectiveDocuments, distilledById), ...evidenceDocuments, ...lessonDocuments],
           comments: toLegacyComments(comments),
           analysis: scoped,
           targetDocument: requested,
@@ -2417,6 +2502,13 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       ).filter((req) => req.checkBy === 'gebruiker' && (req.status === 'open' || req.status === 'aandacht'))
       const currentDraftId = activeDraftIdRef.current
       const previousRound = draftsRef.current.find((item) => item.id === currentDraftId)?.round ?? null
+      // Bewijscheck: welke harde claims staan er in het concept en zijn ze terug te voeren
+      // op een bouwsteen of bron? Deterministisch, dus ook zonder AI-reviewagent.
+      const evidenceForClaims = appliedEvidence.length ? appliedEvidence : evidenceLibrary.filter((block) => isCitable(block))
+      const claimBaseline = checkClaims(html, {
+        documents: effectiveDocuments.map((doc) => ({ name: doc.name, content: doc.content })),
+        evidence: evidenceForClaims,
+      })
       const ai = await reviewDraftViaApi({
         stage,
         project,
@@ -2428,7 +2520,19 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         baseline,
         openUserRequirements,
         round: roundToReviewContext(previousRound),
+        evidence: evidenceForClaims,
+        claimBaseline: claimBaseline.map(({ fragment, status, evidence, note }) => ({ fragment, status, evidence, note })),
       })
+      // De reviewer mag een claim herbeoordelen, maar niet laten verdwijnen: wat de
+      // heuristiek vond blijft staan tenzij de reviewer hem onderbouwd verklaart.
+      const claims = mergeClaimChecks(claimBaseline, ai?.claimChecks ?? [])
+      setClaimChecks(claims)
+      const unproven = unprovenClaims(claims)
+      const claimNote = unproven.length ? ` · ${unproven.length} claim(s) zonder bewijs` : ''
+      if (editorRef.current) {
+        markUnprovenClaims(editorRef.current, unproven)
+        syncDraftFromEditor()
+      }
       // Het oordeel van de reviewer per eis landt in het eisenregister (voldaan/aandacht).
       const checks = ai?.requirementChecks ?? []
       if (checks.length) {
@@ -2449,12 +2553,12 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         setFindings(ai.findings.map((finding) => ({ id: makeId(), ...finding })))
         setSyncStatus(
           ai.enriched
-            ? `AI-review uitgevoerd met ${ai.provider} (${ai.model})${checks.length ? ` · ${checks.length} eisen getoetst` : ''}${roundNote}`
-            : `Review uitgevoerd (heuristisch — AI gaf geen extra punten)${roundNote}`,
+            ? `AI-review uitgevoerd met ${ai.provider} (${ai.model})${checks.length ? ` · ${checks.length} eisen getoetst` : ''}${claimNote}${roundNote}`
+            : `Review uitgevoerd (heuristisch — AI gaf geen extra punten)${claimNote}${roundNote}`,
         )
       } else {
         setFindings(baselineFindings)
-        setSyncStatus(`AI-review niet beschikbaar — heuristische review getoond${roundNote}`)
+        setSyncStatus(`AI-review niet beschikbaar — heuristische review getoond${claimNote}${roundNote}`)
       }
     } catch {
       setFindings(reviewDraft(html, effectiveDocuments, scopedAnalysis))
@@ -2478,7 +2582,22 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   }, [commentPopover])
 
   // Markeringen en herschrijf-ankers zijn editor-only; verwijder ze uit de export.
-  const getExportHtml = () => stripCommentMarks(liveDraftHtml())
+  // Markeringen zijn editor-only en de bewijsverwijzingen zijn interne administratie:
+  // beide horen niet in het bestand dat de opdrachtgever krijgt.
+  const getExportHtml = () => stripEvidenceMarks(stripCommentMarks(liveDraftHtml()))
+
+  const claimCheckSummary = useMemo(
+    () => ({ unproven: unprovenClaims(claimChecks).length }),
+    [claimChecks],
+  )
+
+  /** Haal de rode claimmarkeringen uit het concept (de bevindingen blijven in het paneel staan). */
+  const clearClaimHighlights = () => {
+    const editor = editorRef.current
+    if (!editor) return
+    clearClaimMarks(editor)
+    updateEditorHtml(editor.innerHTML)
+  }
 
   const deadlineLabel = useMemo(() => shortDeadlineLabel(project), [project])
 
@@ -2918,11 +3037,19 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           </CardContent>
         </Card>
 
+        <BuyerProfileCard
+          buyer={project.buyer}
+          cpvCodes={(savedTenders.find((tender) => tender.publicatieId === activeTenderId)?.cpvCodes ?? []).map(
+            (cpv) => cpv.code,
+          )}
+          lessons={lessonsLibrary}
+        />
 
         <nav className="mb-4 grid grid-cols-2 gap-1.5" aria-label="Onderdelen">
           {[
             { href: '/configuratie', label: 'Bedrijfsconfiguratie', Icon: Building2, count: 0 },
             { href: '/schrijfregels', label: 'Schrijfkader', Icon: ClipboardList, count: 0 },
+            { href: '/bewijs', label: 'Bewijsbibliotheek', Icon: Library, count: evidenceLibrary.length },
             { href: '/leerpunten', label: 'Lessons learned', Icon: GraduationCap, count: lessonsLibrary.length },
             { href: '/vergelijken', label: 'Projecten vergelijken', Icon: GitCompareArrows, count: 0 },
             { href: '/handleiding', label: 'Handleiding', Icon: BookOpen, count: 0 },
@@ -3149,6 +3276,9 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       </aside>
 
       <section className="h-auto min-w-0 overflow-auto p-4 sm:p-6 xl:h-screen">
+        {/* Het maandplafond blokkeert niet; de melding hoort daarom te staan waar de
+            kosten ontstaan, niet alleen op de verbruikspagina. */}
+        <BudgetWarning />
         <header className="mb-[14px] flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="mb-[5px] text-xs font-bold uppercase text-muted-foreground">Besteed Het Uit · AI-Schrijfagent</p>
@@ -3419,6 +3549,31 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
             onApply={() => void applyImprovements()}
             onReview={() => void runAiReview()}
           />
+        ) : null}
+
+        {appliedEvidence.length ? (
+          <div className="mb-[14px] rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/30">
+            <p className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+              <Library size={14} /> Bewijs waaruit dit stuk mag citeren ({appliedEvidence.length})
+            </p>
+            <ul className="grid gap-1 text-sm text-emerald-900 dark:text-emerald-100" data-testid="applied-evidence">
+              {appliedEvidence.map((block) => {
+                const value = evidenceValueLabel(block)
+                return (
+                  <li key={block.id} className="flex gap-1.5">
+                    <Check size={15} className="mt-0.5 flex-none text-emerald-600" />
+                    <span className="min-w-0">
+                      <span className="font-mono text-xs text-emerald-700 dark:text-emerald-300">
+                        {evidenceHandle(block.id)}
+                      </span>{' '}
+                      <strong>{evidenceKindLabels[block.kind]}:</strong> {value ? `${value} — ` : ''}
+                      {block.title}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
         ) : null}
 
         {appliedLessons.length ? (
@@ -3734,6 +3889,62 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
                 verbeterronde onder de schrijfstadia; na jouw antwoord en goedkeuring verwerkt de schrijfagent ze in de
                 volgende versie.
               </p>
+
+              {claimChecks.length ? (
+                <section className="grid gap-2 rounded-md border bg-muted/40 p-[10px]" data-testid="claim-check">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="flex items-center gap-2 text-sm font-semibold text-primary">
+                      <Library size={16} /> Bewijscheck
+                    </h3>
+                    <span className="text-xs text-muted-foreground">
+                      {claimChecks.length - claimCheckSummary.unproven} van {claimChecks.length} claims onderbouwd
+                    </span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    Elke feitelijke claim is teruggelegd op een bouwsteen uit de bewijsbibliotheek of op een bron.
+                    Claims zonder bewijs staan hieronder én zijn rood gemarkeerd in het concept: onderbouw ze met een
+                    bouwsteen of schrap ze vóór indiening.
+                  </p>
+                  <div className="grid gap-[7px]">
+                    {claimChecks.map((claim) => (
+                      <article
+                        key={claim.id}
+                        data-testid={claim.status === 'onbewezen' ? 'claim-unproven' : 'claim-proven'}
+                        className={cn(
+                          'rounded-md border bg-card p-[9px]',
+                          claim.status === 'onbewezen'
+                            ? 'border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/40'
+                            : 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-900 dark:bg-emerald-950/30',
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          {claim.status === 'onbewezen' ? <Flag size={14} /> : <BadgeCheck size={14} />}
+                          <strong className="text-xs uppercase tracking-wide">
+                            {claim.status === 'onbewezen' ? 'Zonder bewijs' : 'Onderbouwd'}
+                          </strong>
+                          {claim.evidence ? (
+                            <Badge variant="outline" className="font-mono text-[10px]">
+                              {claim.evidence}
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <p className="mt-1 break-words text-xs italic leading-relaxed">&laquo;{claim.fragment}&raquo;</p>
+                        <p className="mt-1 break-words text-xs leading-relaxed text-muted-foreground">{claim.note}</p>
+                      </article>
+                    ))}
+                  </div>
+                  {claimCheckSummary.unproven ? (
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={clearClaimHighlights}>
+                        Markeringen in de tekst wissen
+                      </Button>
+                      <Button asChild variant="outline" size="sm">
+                        <Link href="/bewijs">Bewijs toevoegen</Link>
+                      </Button>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
               <div className="grid gap-[9px]">
                 {findings.map((finding) => (
                   <article

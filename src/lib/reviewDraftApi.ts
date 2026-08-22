@@ -1,12 +1,16 @@
 import { getApiConfig, isReviewConfigured, isWriterConfigured } from './apiConfig'
 import type {
+  ClaimCheckItem,
   ReviewDraftError,
   ReviewDraftRequest,
   ReviewDraftResponse,
   ReviewFindingItem,
   ReviewRoundContext,
 } from '../types/reviewDraft'
+import type { EvidenceBlock } from '../types/evidenceBlock'
+import { evidenceForReview } from './evidence'
 import type { RequestedDocument, Requirement, SourceDocument, TenderAnalysis } from '../types/tenderAnalysis'
+import { usageHeaders } from './usageScope'
 
 type ReviewComment = {
   fragment: string
@@ -46,6 +50,10 @@ export async function reviewDraftViaApi(args: {
   openUserRequirements?: Requirement[]
   /** Vorige verbeterronde van dit stuk. */
   round?: ReviewRoundContext
+  /** De bouwstenen die bij dit stuk zijn toegepast; hiertegen toetst de reviewer de claims. */
+  evidence?: EvidenceBlock[]
+  /** Wat de deterministische bewijscheck al vond. */
+  claimBaseline?: ClaimCheckItem[]
 }): Promise<ReviewDraftResponse | null> {
   const payload: ReviewDraftRequest = {
     stage: args.stage,
@@ -66,6 +74,8 @@ export async function reviewDraftViaApi(args: {
     baseline: args.baseline,
     openUserRequirements: args.openUserRequirements,
     round: args.round,
+    evidence: args.evidence?.length ? evidenceForReview(args.evidence) : undefined,
+    claimBaseline: args.claimBaseline?.length ? args.claimBaseline : undefined,
   }
 
   const apiConfig = getApiConfig()
@@ -88,7 +98,7 @@ export async function reviewDraftViaApi(args: {
   try {
     const response = await fetch('/api/review-draft', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...usageHeaders() },
       body: JSON.stringify(payload),
     })
 

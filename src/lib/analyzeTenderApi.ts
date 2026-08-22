@@ -6,6 +6,7 @@ import type {
   TenderDocumentExtract,
 } from '../types/analyzeTender'
 import type { SourceDocument, TenderAnalysis } from '../types/tenderAnalysis'
+import { usageHeaders } from './usageScope'
 
 async function readApiJson<T>(response: Response): Promise<T | AnalyzeTenderError> {
   const raw = await response.text()
@@ -51,7 +52,7 @@ export async function analyzeTenderViaApi(
   try {
     const response = await fetch('/api/analyze-tender', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...usageHeaders() },
       body: JSON.stringify(payload),
     })
 

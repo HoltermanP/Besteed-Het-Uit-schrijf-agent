@@ -1,6 +1,7 @@
 import { getApiConfig, isWriterConfigured } from './apiConfig'
 import type { CompanyConfig } from '../types/companyConfig'
 import type { CpvSuggestError, CpvSuggestRequest, CpvSuggestResponse } from '../types/cpvSuggest'
+import { usageHeaders } from './usageScope'
 
 const MAX_EXTRA_CONTEXT_CHARS = 6_000
 
@@ -64,7 +65,7 @@ export async function suggestCpvCodesForCompany(config: CompanyConfig): Promise<
 
   const response = await fetch('/api/cpv-suggest', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...usageHeaders() },
     body: JSON.stringify(payload),
   })
 
