@@ -114,6 +114,8 @@ import { extractRequirementsViaApi } from '../lib/extractRequirementsApi'
 import { applyRequirementChecks, resolveRequirementStatuses } from '../lib/requirements'
 import { normalizeStoredAnalysis } from '../lib/storedAnalysis'
 import RequirementsCard from '../components/RequirementsCard'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { notifyError, notifySuccess, notifyUndo, notifyWarning } from '../lib/notify'
 import ImprovementRoundPanel from '../components/ImprovementRoundPanel'
 import VersionHistoryDialog from '../components/VersionHistoryDialog'
 import {
@@ -566,6 +568,12 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   const versionsRef = useRef<DraftVersionHistory>(initial.versions)
   const [versionDialogOpen, setVersionDialogOpen] = useState(false)
   const [batchRunning, setBatchRunning] = useState(false)
+  // Voortgang van "schrijf alle ontbrekende stukken": zichtbaar boven het concept, met
+  // de mogelijkheid om na het lopende stuk te stoppen.
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number; title: string } | null>(null)
+  const batchStopRef = useRef(false)
+  // Stuk dat op bevestiging wacht voordat het wordt verwijderd.
+  const [draftToRemove, setDraftToRemove] = useState<{ id: string; title: string; details: string[] } | null>(null)
   const [customDocOpen, setCustomDocOpen] = useState(false)
   const [customDocTitle, setCustomDocTitle] = useState('')
   const [customDocQuestion, setCustomDocQuestion] = useState('')
@@ -837,6 +845,16 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   }
 
   /**
+   * Een mislukking hoort niet weg te zakken in de statusregel: die blijft het logboek,
+   * maar de gebruiker krijgt de fout ook als melding in beeld — met, waar dat kan, een
+   * knop om dezelfde actie opnieuw te proberen.
+   */
+  const reportError = (message: string, retry?: () => void, retryLabel?: string) => {
+    setSyncStatus(message)
+    notifyError(message, retry ? { retry, retryLabel } : {})
+  }
+
+  /**
    * Een mislukt kanaal is geen mislukte opdracht: valt de verbinding weg of stoppen we
    * bewust met meekijken, dan blijft de opdracht op de server staan en wordt hij later
    * opgepakt. Geeft true als de fout zo is afgehandeld.
@@ -874,10 +892,13 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       // De opdracht is echt afgelopen (mislukt) of niet meer bekend: verwijzing opruimen,
       // anders blijft het stuk eeuwig "bezig" lijken. De geschreven tekst blijft staan.
       persistDraft(draftId, { job: null })
-      setSyncStatus(
+      const target = draftsRef.current.find((item) => item.id === draftId)
+      reportError(
         error instanceof DraftJobLost
           ? `De schrijfopdracht voor "${title}" is niet meer bekend bij de server. Start de schrijfagent opnieuw.`
           : `Genereren van "${title}" mislukt: ${error instanceof Error ? error.message : 'onbekende fout'}`,
+        target ? () => void analyzeAndGenerate(job.stage, target) : undefined,
+        'Opnieuw schrijven',
       )
     } finally {
       watchedJobsRef.current.delete(job.id)
@@ -1069,7 +1090,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         setSyncStatus('Verbeterronde lokaal verwerkt (geen AI geconfigureerd)')
         return
       }
-      setSyncStatus(message)
+      reportError(`Verbeterronde verwerken mislukt: ${message}`, () => void applyImprovements())
     } finally {
       setGenerating(false)
     }
@@ -1094,12 +1115,15 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     setSyncStatus(`Eigen stuk toegevoegd: ${created.title}. Klik "Start schrijfagent" om het te laten schrijven.`)
   }
 
-  const removeDraft = (id: string) => {
-    if (generating || draftsRef.current.length <= 1) return
-    const target = draftsRef.current.find((item) => item.id === id)
-    if (!target) return
-    const written = !isStartDraft(id === activeDraftIdRef.current ? liveDraftHtml() : target.html)
-    if (written && !window.confirm(`"${target.title}" bevat een geschreven concept. Dit stuk verwijderen?`)) return
+  // Verwijderen zelf: legt eerst vast wát er verdwijnt, zodat de melding het stuk
+  // (inclusief zijn versiegeschiedenis) binnen het undo-venster kan terugzetten.
+  const performRemoveDraft = (id: string) => {
+    const index = draftsRef.current.findIndex((item) => item.id === id)
+    if (index < 0) return
+    const target = draftsRef.current[index]
+    const wasActive = id === activeDraftIdRef.current
+    const removed: DraftDocument = wasActive ? { ...target, html: liveDraftHtml(), comments } : target
+    const removedVersions = versionsRef.current[id] ?? []
     const next = draftsRef.current.filter((item) => item.id !== id)
     commitDrafts(next)
     const history = pruneRemovedDrafts(versionsRef.current, next.map((item) => item.id))
@@ -1108,8 +1132,47 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       setVersionHistory(history)
       saveVersionHistory(projectId, history)
     }
-    if (id === activeDraftIdRef.current) activateDraft(next[0])
+    if (wasActive) activateDraft(next[0])
     setSyncStatus(`Stuk verwijderd: ${target.title}`)
+    notifyUndo(`Stuk verwijderd: ${target.title}`, () => {
+      const restored = [...draftsRef.current]
+      restored.splice(Math.min(index, restored.length), 0, removed)
+      commitDrafts(restored)
+      if (removedVersions.length) {
+        const withHistory = { ...versionsRef.current, [id]: removedVersions }
+        versionsRef.current = withHistory
+        setVersionHistory(withHistory)
+        saveVersionHistory(projectId, withHistory)
+      }
+      if (wasActive) activateDraft(removed)
+      setSyncStatus(`Stuk teruggezet: ${removed.title}`)
+    })
+  }
+
+  // Een leeg stuk verdwijnt direct (met undo); een geschreven stuk vraagt eerst om
+  // bevestiging, met de omvang die je kwijtraakt erbij.
+  const removeDraft = (id: string) => {
+    if (generating || draftsRef.current.length <= 1) return
+    const target = draftsRef.current.find((item) => item.id === id)
+    if (!target) return
+    const html = id === activeDraftIdRef.current ? liveDraftHtml() : target.html
+    if (isStartDraft(html)) {
+      performRemoveDraft(id)
+      return
+    }
+    const versions = versionsRef.current[id]?.length ?? 0
+    const openComments = (id === activeDraftIdRef.current ? comments : target.comments ?? []).filter(
+      (comment) => comment.status !== 'akkoord',
+    ).length
+    setDraftToRemove({
+      id,
+      title: target.title,
+      details: [
+        `${countWords(html).toLocaleString('nl-NL')} geschreven woorden`,
+        `${versions} bewaarde versie(s)`,
+        ...(openComments ? [`${openComments} openstaande opmerking(en)`] : []),
+      ],
+    })
   }
 
   useEffect(() => {
@@ -1611,7 +1674,11 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       }
       // Generatie mislukt om een andere reden: zet de vorige tekst terug i.p.v. een leeg vel.
       updateEditorHtml(previousDraft)
-      setSyncStatus(`Genereren mislukt — vorige tekst hersteld. ${message}`)
+      reportError(
+        `Genereren van "${doc.title}" mislukt — vorige tekst hersteld. ${message}`,
+        () => void analyzeAndGenerate(targetStage, doc),
+        'Opnieuw schrijven',
+      )
     } finally {
       setGenerating(false)
     }
@@ -1642,12 +1709,23 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         setSyncStatus('Alle stukken zijn al geschreven.')
         return
       }
+      let written = 0
       for (const [index, item] of missing.entries()) {
+        setBatchProgress({ done: index, total: missing.length, title: item.title })
         setSyncStatus(`Stuk ${index + 1}/${missing.length}: ${item.title}…`)
         await analyzeAndGenerate('brons', item, result)
+        written += 1
+        if (batchStopRef.current) break
       }
-      setSyncStatus(`${missing.length} stuk(ken) geschreven. Beoordeel elk stuk apart en verwerk opmerkingen per stuk.`)
+      const stopped = written < missing.length
+      const summary = stopped
+        ? `Gestopt na ${written} van ${missing.length} stukken. De overige zijn nog niet geschreven.`
+        : `${written} stuk(ken) geschreven. Beoordeel elk stuk apart en verwerk opmerkingen per stuk.`
+      setSyncStatus(summary)
+      notifySuccess(summary)
     } finally {
+      batchStopRef.current = false
+      setBatchProgress(null)
       setBatchRunning(false)
     }
   }
@@ -1893,8 +1971,9 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       const downloaded = await downloadTenderToDatabase(detail)
       attachTender(downloaded)
     } catch (error) {
-      setSyncStatus(
+      reportError(
         error instanceof Error ? `Ophalen bij TenderNed mislukt: ${error.message}` : 'Ophalen bij TenderNed mislukt.',
+        () => void importTenderned(),
       )
     } finally {
       setImportingTender(false)
@@ -1962,11 +2041,11 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         )
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Verwerken mislukt.'
-        setSyncStatus(
-          isNoAiConfigError(message)
-            ? 'Geen AI geconfigureerd — stel de schrijfagent in via API-beheer om opmerkingen te verwerken.'
-            : message,
-        )
+        if (isNoAiConfigError(message)) {
+          setSyncStatus('Geen AI geconfigureerd — stel de schrijfagent in via API-beheer om opmerkingen te verwerken.')
+        } else {
+          reportError(`Opmerkingen verwerken mislukt: ${message}`, () => void applyAiRewrite())
+        }
       } finally {
         setGenerating(false)
       }
@@ -2043,7 +2122,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         setSyncStatus('Opmerkingen lokaal verwerkt (geen AI geconfigureerd)')
         return
       }
-      setSyncStatus(message)
+      reportError(`Opmerkingen verwerken mislukt: ${message}`, () => void applyAiRewrite())
     } finally {
       setGenerating(false)
     }
@@ -2149,11 +2228,11 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       setSyncStatus(`Onderdeel herschreven met ${rewrite.provider} (${rewrite.model}) — beoordeel: akkoord of terugdraaien`)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Herschrijven mislukt.'
-      setSyncStatus(
-        isNoAiConfigError(message)
-          ? 'Geen AI geconfigureerd — stel de schrijfagent in via API-beheer om opmerkingen gericht te verwerken.'
-          : message,
-      )
+      if (isNoAiConfigError(message)) {
+        setSyncStatus('Geen AI geconfigureerd — stel de schrijfagent in via API-beheer om opmerkingen gericht te verwerken.')
+      } else {
+        reportError(`Herschrijven mislukt: ${message}`, () => void applyTargetedRewrite(comment))
+      }
     } finally {
       setRewritingId(null)
     }
@@ -2380,6 +2459,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     } catch {
       setFindings(reviewDraft(html, effectiveDocuments, scopedAnalysis))
       setSyncStatus('AI-review mislukt — heuristische review getoond')
+      notifyWarning('AI-review mislukt — heuristische review getoond.', { retry: () => void runAiReview() })
     } finally {
       setReviewing(false)
     }
@@ -2413,7 +2493,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       setSyncStatus('PDF gedownload.')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'PDF genereren mislukt.'
-      setSyncStatus(`PDF genereren mislukt: ${message}`)
+      reportError(`PDF genereren mislukt: ${message}`, () => void exportPdf())
     } finally {
       setExportingPdf(false)
     }
@@ -2431,7 +2511,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     } catch (error) {
       console.error('[word-export]', error)
       const message = error instanceof Error ? error.message : 'Word-export mislukt.'
-      setSyncStatus(`Word-export mislukt: ${message}`)
+      reportError(`Word-export mislukt: ${message}`, () => void exportWord())
     }
   }
 
@@ -2863,14 +2943,69 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           ))}
         </nav>
 
-        <p className="mt-[10px] text-xs leading-snug text-muted-foreground">
+        {/* Laatste actie (logboek) en de systeemstatus staan los van elkaar: de ene wisselt
+            per handeling, de andere zegt of de agent überhaupt goed staat ingesteld. */}
+        <p
+          className="mt-[10px] text-xs leading-snug text-muted-foreground"
+          data-testid="sync-status"
+          role="status"
+          aria-live="polite"
+        >
           {syncStatus}
-          {writerActive
-            ? ` · Schrijfagent actief${serverWriter.available && !isWriterConfigured() ? ' (server)' : ''}`
-            : ' · Schrijfagent niet actief'}
-          {companyConfigActive ? ' · Bedrijfsconfig actief' : ''}
-          {schrijfkaderActive ? ' · Schrijfkader actief' : ' · Schrijfkader: basis'}
         </p>
+        <div className="mt-2 flex flex-wrap gap-1.5" data-testid="system-status">
+          {[
+            {
+              href: '/admin',
+              label: 'Schrijfagent',
+              active: writerActive,
+              value: writerActive
+                ? serverWriter.available && !isWriterConfigured()
+                  ? 'server'
+                  : 'actief'
+                : 'niet actief',
+              hint: writerActive ? 'Schrijfagent staat ingesteld' : 'Stel de schrijfagent in via API-beheer',
+            },
+            {
+              href: '/configuratie',
+              label: 'Bedrijfsprofiel',
+              active: companyConfigActive,
+              value: companyConfigActive ? 'actief' : 'niet ingesteld',
+              hint: companyConfigActive
+                ? 'Het centrale bedrijfsprofiel wordt meegegeven aan de schrijfagent'
+                : 'Zonder bedrijfsprofiel schrijft de agent zonder bedrijfsfeiten',
+            },
+            {
+              href: '/schrijfregels',
+              label: 'Schrijfkader',
+              active: schrijfkaderActive,
+              value: schrijfkaderActive ? 'eigen kader' : 'basis',
+              hint: schrijfkaderActive
+                ? 'Eigen aanpassingen op het schrijfkader zijn actief'
+                : 'Het ingebouwde basiskader wordt gebruikt',
+            },
+          ].map(({ href, label, active, value, hint }) => (
+            <Link
+              key={label}
+              href={href}
+              title={hint}
+              data-active={active}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors',
+                active
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
+                  : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300',
+              )}
+            >
+              <span
+                className={cn('size-1.5 rounded-full', active ? 'bg-emerald-500' : 'bg-amber-500')}
+                aria-hidden
+              />
+              {label}
+              <span className="font-normal opacity-80">{value}</span>
+            </Link>
+          ))}
+        </div>
 
         <Card className="mt-[14px] mb-[14px]">
           <CardContent className="space-y-[10px]">
@@ -3675,6 +3810,41 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           </Dialog>
         </div>
 
+        {batchProgress ? (
+          <div
+            className="mb-[10px] rounded-md border border-primary/30 bg-primary/5 p-3"
+            data-testid="batch-progress"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="flex min-w-0 items-center gap-2 text-sm font-semibold text-primary">
+                <Loader2 size={15} className="shrink-0 animate-spin" />
+                <span className="min-w-0 break-words">
+                  Stuk {batchProgress.done + 1} van {batchProgress.total}: {batchProgress.title}
+                </span>
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={batchStopRef.current}
+                onClick={() => {
+                  batchStopRef.current = true
+                  setSyncStatus('Stoppen na dit stuk…')
+                  setBatchProgress((current) => (current ? { ...current } : current))
+                }}
+              >
+                {batchStopRef.current ? 'Stopt na dit stuk…' : 'Stoppen na dit stuk'}
+              </Button>
+            </div>
+            <Progress value={(batchProgress.done / batchProgress.total) * 100} className="mt-2" />
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {batchProgress.done} van {batchProgress.total} klaar — je kunt dit tabblad sluiten; de stukken worden op
+              de server geschreven.
+            </p>
+          </div>
+        ) : null}
+
         <div className="overflow-hidden rounded-md border bg-card">
           <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-b bg-muted px-3 py-[10px] text-sm text-muted-foreground">
             <div className="flex min-w-0 items-center gap-2">
@@ -3724,6 +3894,21 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
             onBlur={syncDraftFromEditor}
           />
         </div>
+
+        <ConfirmDialog
+          open={draftToRemove !== null}
+          onOpenChange={(open) => {
+            if (!open) setDraftToRemove(null)
+          }}
+          title={`"${draftToRemove?.title ?? 'Stuk'}" verwijderen?`}
+          description="Dit stuk is geschreven. Na verwijderen kun je het tien seconden lang terughalen via de melding; daarna is het weg."
+          details={draftToRemove?.details ?? []}
+          confirmLabel="Stuk verwijderen"
+          onConfirm={() => {
+            if (draftToRemove) performRemoveDraft(draftToRemove.id)
+            setDraftToRemove(null)
+          }}
+        />
 
         <VersionHistoryDialog
           open={versionDialogOpen}

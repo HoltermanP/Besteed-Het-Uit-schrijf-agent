@@ -1067,7 +1067,7 @@ export default function TenderBrowserPage() {
             <Card
               key={item.publicatieId}
               className={cn(
-                'cursor-pointer flex-row items-start gap-3 p-3.5 transition-colors hover:border-ring',
+                'min-w-0 cursor-pointer flex-row items-start gap-3 p-3.5 transition-colors hover:border-ring',
                 isSelected && 'border-primary bg-accent ring-2 ring-ring/30',
               )}
               onClick={(event) => {
@@ -1185,7 +1185,7 @@ export default function TenderBrowserPage() {
                   </Button>
                 )}
 
-                <div className="mt-3 flex items-center gap-2.5">
+                <div className="mt-3 flex flex-wrap items-center gap-2.5">
                   <Button
                     variant="outline"
                     size="sm"

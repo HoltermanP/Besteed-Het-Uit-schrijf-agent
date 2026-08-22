@@ -24,8 +24,8 @@ import {
   ShieldCheck,
   Trash2,
 } from 'lucide-react'
-import { listProjects, removeProject, renameProject } from '../lib/projects'
-import { loadDossier } from '../lib/dossier'
+import { listProjects, removeProject, renameProject, upsertProject, type ProjectMeta } from '../lib/projects'
+import { loadDossier, saveDossier } from '../lib/dossier'
 import { getSavedTenders } from '../lib/tenderDatabase'
 import { createBlankProject, createProjectFromTender } from '../lib/projectFactory'
 import { getActiveCompanyId, getCompanies, setActiveCompanyId } from '../lib/companies'
@@ -51,6 +51,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { ModeToggle } from '@/components/mode-toggle'
+import ConfirmDialog from '@/components/ConfirmDialog'
+import { notifyUndo } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 
 const stageLabels: Record<Stage, string> = {
@@ -157,18 +159,54 @@ export default function ProjectsOverviewPage() {
 
   const openProject = (id: string) => router.push(`/projecten/${encodeURIComponent(id)}`)
 
-  const handleRename = (id: string, currentTitle: string) => {
-    const next = window.prompt('Nieuwe naam voor dit project', currentTitle)
-    if (next == null) return
-    renameProject(id, next)
+  // Hernoemen in de app zelf in plaats van een browserpop-up.
+  const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const startRename = (id: string, currentTitle: string) => {
+    setRenameTarget({ id, title: currentTitle })
+    setRenameValue(currentTitle)
+  }
+  const confirmRename = () => {
+    if (!renameTarget) return
+    renameProject(renameTarget.id, renameValue)
+    setRenameTarget(null)
     setVersion((v) => v + 1)
+    setStatus('Projectnaam aangepast.')
   }
 
-  const handleDelete = (id: string, title: string) => {
-    if (!window.confirm(`Project "${title}" verwijderen? Dit kan niet ongedaan worden gemaakt.`)) return
+  // Verwijderen vraagt eerst om bevestiging, mét wat er verdwijnt, en is daarna nog
+  // tien seconden terug te draaien.
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string; details: string[] } | null>(null)
+  const startDelete = (project: (typeof projects)[number]) => {
+    setDeleteTarget({
+      id: project.id,
+      title: project.title,
+      details: [
+        `${project.sourceCount} bron(nen) en ${project.fileCount} bestand(en)`,
+        `Stadium: ${stageLabels[project.stage]}`,
+        ...(project.buyer ? [`Opdrachtgever: ${project.buyer}`] : []),
+      ],
+    })
+  }
+  const confirmDelete = () => {
+    if (!deleteTarget) return
+    const { id, title } = deleteTarget
+    const meta = projects.find((project) => project.id === id)
+    // Het volledige dossier vastleggen vóór verwijderen, zodat "Ongedaan maken" alles terugzet.
+    const snapshot = loadDossier<DossierSnapshot>(id)
+    const restoreMeta: ProjectMeta | null = meta
+      ? { id: meta.id, title: meta.title, buyer: meta.buyer, updatedAt: meta.updatedAt, source: meta.source }
+      : null
     removeProject(id)
+    setDeleteTarget(null)
     setVersion((v) => v + 1)
     setStatus('Project verwijderd.')
+    notifyUndo(`Project "${title}" verwijderd`, () => {
+      if (snapshot) saveDossier(id, snapshot)
+      if (restoreMeta) upsertProject(restoreMeta)
+      setVersion((v) => v + 1)
+      setStatus('Project teruggezet.')
+    })
   }
 
   const openTenderAsProject = (publicatieId: string) => {
@@ -367,7 +405,8 @@ export default function ProjectsOverviewPage() {
                           size="icon"
                           className="size-8"
                           title="Hernoem project"
-                          onClick={() => handleRename(project.id, project.title)}
+                          aria-label={`Hernoem project ${project.title}`}
+                          onClick={() => startRename(project.id, project.title)}
                         >
                           <Pencil size={13} />
                         </Button>
@@ -376,7 +415,8 @@ export default function ProjectsOverviewPage() {
                           size="icon"
                           className="size-8 text-destructive"
                           title="Verwijder project"
-                          onClick={() => handleDelete(project.id, project.title)}
+                          aria-label={`Verwijder project ${project.title}`}
+                          onClick={() => startDelete(project)}
                         >
                           <Trash2 size={13} />
                         </Button>
@@ -442,6 +482,51 @@ export default function ProjectsOverviewPage() {
             </ul>
           </section>
         ) : null}
+
+        <Dialog
+          open={renameTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) setRenameTarget(null)
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Project hernoemen</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-1.5">
+              <Label htmlFor="rename-project-title">Projectnaam</Label>
+              <Input
+                id="rename-project-title"
+                autoFocus
+                value={renameValue}
+                onChange={(event) => setRenameValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') confirmRename()
+                }}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setRenameTarget(null)}>
+                Annuleren
+              </Button>
+              <Button onClick={confirmRename} disabled={!renameValue.trim()}>
+                <Pencil size={15} /> Naam opslaan
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <ConfirmDialog
+          open={deleteTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) setDeleteTarget(null)
+          }}
+          title={`Project "${deleteTarget?.title ?? ''}" verwijderen?`}
+          description="Het hele dossier verdwijnt: bronnen, concepten, opmerkingen en versies. Je kunt dit tien seconden lang terugdraaien via de melding."
+          details={deleteTarget?.details ?? []}
+          confirmLabel="Project verwijderen"
+          onConfirm={confirmDelete}
+        />
       </div>
     </main>
   )

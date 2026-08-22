@@ -31,6 +31,7 @@ import { suggestCpvCodesForCompany } from '../lib/cpvSuggestApi'
 import { normalizeCpvCode } from '../lib/cpv'
 import { readFileContent } from '../lib/extractTextApi'
 import FileUploadZone from '../components/FileUploadZone'
+import ConfirmDialog from '../components/ConfirmDialog'
 import { acceptedStyleExtensions } from '../types/styleDocument'
 import type { CompanyConfig, CompanyCpvCode, CompanyFile } from '../types/companyConfig'
 import type { CompanyEnrichFields } from '../types/companyEnrich'
@@ -107,14 +108,20 @@ export default function ConfigPage() {
     window.location.reload()
   }
 
-  const handleRemoveCompany = async (id: string) => {
+  // Een bedrijf verwijderen wist alle werkdata van dat bedrijf; dat is niet terug te
+  // draaien, dus de bevestiging noemt expliciet wat er verdwijnt.
+  const [companyToRemove, setCompanyToRemove] = useState<{ id: string; name: string } | null>(null)
+  const handleRemoveCompany = (id: string) => {
     if (companies.length <= 1) return
     const target = companies.find((company) => company.id === id)
     if (!target) return
-    const confirmed = window.confirm(
-      `Bedrijf "${target.name}" verwijderen? Alle projecten, bronnen en opgeslagen aanbestedingen van dit bedrijf worden definitief verwijderd.`,
-    )
-    if (!confirmed) return
+    setCompanyToRemove({ id: target.id, name: target.name })
+  }
+
+  const confirmRemoveCompany = async () => {
+    if (!companyToRemove) return
+    const { id } = companyToRemove
+    setCompanyToRemove(null)
     setCompanyBusy(true)
     removeCompany(id)
     await flushStorage()
@@ -405,7 +412,7 @@ export default function ConfigPage() {
                               ? 'Het laatste bedrijf kan niet worden verwijderd.'
                               : `Verwijder ${company.name} inclusief alle bijbehorende data.`
                           }
-                          onClick={() => void handleRemoveCompany(company.id)}
+                          onClick={() => handleRemoveCompany(company.id)}
                         >
                           <Trash2 size={15} />
                           <span className="sr-only">Verwijder {company.name}</span>
@@ -811,6 +818,22 @@ export default function ConfigPage() {
             <Save size={16} /> Opslaan
           </Button>
         </footer>
+
+        <ConfirmDialog
+          open={companyToRemove !== null}
+          onOpenChange={(open) => {
+            if (!open) setCompanyToRemove(null)
+          }}
+          title={`Bedrijf "${companyToRemove?.name ?? ''}" verwijderen?`}
+          description="Dit kan niet ongedaan worden gemaakt: alle werkdata van dit bedrijf wordt definitief verwijderd."
+          details={[
+            'Alle projecten met hun bronnen, concepten, opmerkingen en versies',
+            'Alle gedownloade aanbestedingen van dit bedrijf',
+            'Bedrijfsprofiel, schrijfkader en lessons learned van dit bedrijf',
+          ]}
+          confirmLabel="Bedrijf verwijderen"
+          onConfirm={() => void confirmRemoveCompany()}
+        />
       </form>
     </main>
   )
