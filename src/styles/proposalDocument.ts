@@ -665,6 +665,62 @@ export const proposalDocumentCss = `
   color: #475569;
 }
 
+/* Versievergelijking: twee versies naast elkaar. De blokken houden de documentopmaak
+   (witte "papier"-achtergrond, dezelfde typografie), maar compacter en met een kleurvlak
+   per soort verschil. */
+.version-pane {
+  background: #ffffff;
+  color: #172033;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-x: auto;
+}
+
+.version-pane.is-empty {
+  background: repeating-linear-gradient(135deg, #f8fafc, #f8fafc 6px, #eef2f6 6px, #eef2f6 12px);
+}
+
+.version-pane.is-added {
+  background: #f0fdf4;
+}
+
+.version-pane.is-removed {
+  background: #fef2f2;
+}
+
+.version-pane.is-changed {
+  background: #fffbeb;
+}
+
+.version-pane h1 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.version-pane h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.version-pane h3 {
+  font-size: 14px;
+}
+
+.version-pane p,
+.version-pane li {
+  font-size: 13px;
+}
+
+.version-pane table {
+  font-size: 12px;
+}
+
+.version-pane .doc-header {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+}
+
 @media print {
   .proposal-doc {
     max-width: none;

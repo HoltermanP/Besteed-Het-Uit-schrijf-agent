@@ -3,6 +3,7 @@ import { loadDossier, saveDossier, setActiveDossierId } from './dossier'
 import { makeProjectId, upsertProject } from './projects'
 import type { DossierSnapshot, SourceDocument, TenderProject } from '../types/dossier'
 import type { SavedTender } from '../types/tenderNed'
+import { splitClosingDateTime } from './submission'
 
 // Aanmaken van projecten (blanco of vanuit een gedownloade aanbesteding), gedeeld
 // door het projectenoverzicht, de TenderNed-catalogus en de werkplek. Elk project
@@ -45,11 +46,13 @@ export function buildTenderSourceDocuments(tender: SavedTender): SourceDocument[
 // Verse werkruimte voor een aanbesteding waar nog niet in is gewerkt.
 export function buildFreshDossier(tender: SavedTender): DossierSnapshot {
   const documents = buildTenderSourceDocuments(tender)
+  const closing = splitClosingDateTime(tender.sluitingsDatum)
   const project: TenderProject = {
     title: tender.aanbestedingNaam,
     buyer: tender.opdrachtgeverNaam,
     tendernedId: `TN-${tender.kenmerk}`,
-    deadline: tender.sluitingsDatum?.slice(0, 10) ?? '',
+    deadline: closing.deadline,
+    deadlineTime: closing.deadlineTime,
   }
   return {
     project,

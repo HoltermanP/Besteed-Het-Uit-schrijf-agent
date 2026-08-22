@@ -29,10 +29,12 @@ import {
   GitCompareArrows,
   GraduationCap,
   Highlighter,
+  History,
   Import,
   Loader2,
   Medal,
   MessageSquarePlus,
+  PackageCheck,
   PenLine,
   Plus,
   RefreshCw,
@@ -49,6 +51,16 @@ import {
 import { buildHtmlDraft, buildStartDraft, isStartDraft } from '../lib/buildDraft'
 import { revealDraftProgressively } from '../lib/draftProgress'
 import { analyzeTenderDocuments, countCharacters, countWords, reviewAgainstAnalysis } from '../lib/tenderAnalysis'
+import {
+  checkVolume,
+  limitsForAnalysis,
+  measureWordsPerPage,
+  overLimitSummary,
+  printedPages,
+  volumeLevel,
+  volumeUnitLabels,
+  type VolumeCheck,
+} from '../lib/volumeLimits'
 import { analyzeTenderViaApi } from '../lib/analyzeTenderApi'
 import { analyzeDocumentViaApi, mapWithConcurrency } from '../lib/analyzeDocumentApi'
 import { distillDocumentViaApi } from '../lib/distillDocumentApi'
@@ -67,8 +79,11 @@ import type {
   RequirementStatusEntry,
   TenderAnalysis,
 } from '../types/tenderAnalysis'
-import { exportPdfFromHtml } from '../lib/documentExport'
+import { exportPdfFromHtml, measureProposalPdf, type ProposalPdfMeasure } from '../lib/pdfExport'
+import { slugForFile, stripCommentMarks } from '../lib/draftHtml'
+import { shortDeadlineLabel, splitClosingDateTime } from '../lib/submission'
 import {
+  documentLimits,
   formatDocumentLimits,
   nonWritableDocuments,
   requestedDocumentKindLabels,
@@ -87,9 +102,20 @@ import { generateDraftViaApi, fetchWriterStatus, isNoAiConfigError, type WriterS
 import { rewriteFragmentViaApi } from '../lib/rewriteFragmentApi'
 import { reviewDraftViaApi } from '../lib/reviewDraftApi'
 import { extractRequirementsViaApi } from '../lib/extractRequirementsApi'
-import { applyRequirementChecks, deriveRequirementsFromAnalysis, resolveRequirementStatuses } from '../lib/requirements'
+import { applyRequirementChecks, resolveRequirementStatuses } from '../lib/requirements'
+import { normalizeStoredAnalysis } from '../lib/storedAnalysis'
 import RequirementsCard from '../components/RequirementsCard'
 import ImprovementRoundPanel from '../components/ImprovementRoundPanel'
+import VersionHistoryDialog from '../components/VersionHistoryDialog'
+import {
+  formatVersionMoment,
+  loadVersionHistory,
+  pruneRemovedDrafts,
+  recordDraftVersion,
+  saveVersionHistory,
+  versionsFor,
+  type NewDraftVersion,
+} from '../lib/draftVersions'
 import {
   markRoundProcessed,
   mergeRound,
@@ -106,6 +132,7 @@ import { mergeDocumentsWithStyleDocuments } from '../lib/styleDocumentMerge'
 import { getSchrijfkaderAanpassingen, hasAanpassingen } from '../lib/schrijfkader'
 import type { StyleDocument } from '../types/styleDocument'
 import EvaluationDialog from '../components/EvaluationDialog'
+import SaveStatusIndicator from '../components/SaveStatusIndicator'
 import { fetchLessons, lessonsToPromptContent, selectRelevantLessons } from '../lib/lessonsLearnedApi'
 import type { LessonLearned } from '../types/lessonLearned'
 import type { WriteDraftDocument, WriteDraftSibling } from '../types/writeDraft'
@@ -117,6 +144,8 @@ import type {
   CommentStatus,
   DossierSnapshot,
   DraftDocument,
+  DraftVersion,
+  DraftVersionHistory,
   ImprovementRound,
   ReviewComment,
   SourceDocument,
@@ -205,6 +234,9 @@ const makeId = () => Math.random().toString(36).slice(2, 10)
 /** Label voor een opmerking zonder gekoppelde tekstselectie. */
 const GENERAL_COMMENT_FRAGMENT = 'Algemene opmerking'
 
+// Rust in de editor waarna eigen bewerkingen als versie worden vastgelegd.
+const MANUAL_EDIT_DELAY_MS = 20_000
+
 /** Normaliseer witruimte zodat een selectie betrouwbaar in de DOM-tekst te vinden is. */
 const normalizeForMatch = (text: string) => text.replace(/\s+/g, ' ').trim()
 
@@ -246,51 +278,6 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`
 }
 
-/** Verwijder editor-only annotaties (markeringen, herschrijf-ankers) uit HTML vóór export/AI. */
-function stripCommentMarks(html: string): string {
-  if (typeof document === 'undefined') return html
-  const template = document.createElement('template')
-  template.innerHTML = html
-  template.content.querySelectorAll('.comment-mark').forEach((mark) => {
-    const parent = mark.parentNode
-    if (!parent) return
-    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark)
-    parent.removeChild(mark)
-  })
-  template.content.querySelectorAll('[data-rewrite-of]').forEach((el) => el.removeAttribute('data-rewrite-of'))
-  return template.innerHTML
-}
-
-// Oudere, opgeslagen analyses (localStorage) missen mogelijk nieuwere array-velden zoals
-// submissionRequirements. Zonder deze normalisatie crasht een `.length`/.map` in de render.
-function normalizeStoredAnalysis(analysis: TenderAnalysis | null): TenderAnalysis | null {
-  if (!analysis) return analysis
-  const normalized: TenderAnalysis = {
-    ...analysis,
-    wordLimits: analysis.wordLimits ?? [],
-    contentRequirements: analysis.contentRequirements ?? [],
-    documentRequirements: analysis.documentRequirements ?? [],
-    requestedDocuments: analysis.requestedDocuments ?? [],
-    submissionRequirements: analysis.submissionRequirements ?? [],
-    evaluationCriteria: analysis.evaluationCriteria ?? [],
-    gaps: analysis.gaps ?? [],
-  }
-  // Analyses van vóór het eisenregister krijgen een afgeleid register, zodat de
-  // checklist direct werkt zonder heranalyse.
-  return { ...normalized, requirements: analysis.requirements ?? deriveRequirementsFromAnalysis(normalized) }
-}
-
-/** Bestandsnaam-veilige variant van een titel voor exports. */
-function slugForFile(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60)
-}
-
 type UploadNotice = { tone: 'ok' | 'warning' | 'error'; message: string }
 
 /** Korte terugkoppeling onder een uploadzone (gelukt, waarschuwing of fout). */
@@ -325,6 +312,7 @@ function loadInitialState(projectId: string) {
     tendernedId: storedProject.tendernedId,
     buyer: storedProject.buyer,
     deadline: storedProject.deadline,
+    deadlineTime: storedProject.deadlineTime,
   }
   const documents = snapshot?.documents ?? []
   const comments = normalizeComments(snapshot?.comments)
@@ -365,6 +353,7 @@ function loadInitialState(projectId: string) {
     requirementStatuses: snapshot?.requirementStatuses ?? {},
     drafts,
     activeDraftId: active.id,
+    versions: loadVersionHistory(projectId),
   }
 }
 
@@ -390,7 +379,68 @@ function keywordScore(text: string, terms: string[]) {
   return terms.reduce((score, term) => score + (normalized.includes(term) ? 1 : 0), 0)
 }
 
-function reviewDraft(html: string, documents: SourceDocument[], analysis: TenderAnalysis | null) {
+/** Wachttijd na de laatste wijziging voordat de PDF opnieuw wordt doorgerekend. */
+const PAGE_COUNT_DELAY_MS = 500
+
+/** "3 pagina's, waarvan de laatste voor 40% gevuld" — zo is te zien hoeveel ruimte er nog is. */
+function pageFillLabel(measure: ProposalPdfMeasure): string {
+  const pages = `${measure.pages} ${measure.pages === 1 ? 'pagina' : "pagina's"}`
+  const lastFill = Math.round((measure.filled - Math.max(0, measure.pages - 1)) * 100)
+  return `${pages}, waarvan de laatste voor ${lastFill}% gevuld`
+}
+
+type VolumeTileData = {
+  unit: VolumeCheck['unit']
+  /** "1.980 / 2.000" of, zonder limiet, alleen de telling. */
+  value: string
+  caption: string
+  level: VolumeCheck['level']
+  title?: string
+}
+
+const volumeTileTone: Record<VolumeCheck['level'], string> = {
+  ok: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-300',
+  krap: 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200',
+  over: 'border-red-400 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/50 dark:text-red-300',
+}
+
+/** Teller met limiet: violet binnen de marge, amber als het krap wordt, rood bij overschrijding. */
+function VolumeTile({ unit, value, caption, level, title }: VolumeTileData) {
+  return (
+    <div
+      data-testid={`volume-${unit}`}
+      data-level={level}
+      title={title}
+      className={cn('min-w-0 rounded-md border p-3', volumeTileTone[level])}
+    >
+      <span className="flex items-baseline gap-1.5">
+        {level === 'over' ? <AlertTriangle size={16} className="shrink-0" aria-hidden /> : null}
+        <span className="block break-words text-[22px] font-extrabold tabular-nums">{value}</span>
+      </span>
+      <p className={cn('mt-1 text-xs', level === 'ok' ? 'text-muted-foreground' : 'font-semibold')}>{caption}</p>
+    </div>
+  )
+}
+
+/**
+ * Wat de PDF-export van dit concept oplevert. De PDF wordt daarvoor echt opgebouwd;
+ * mislukt dat (onvolledige HTML tijdens het streamen), dan liever geen paginagetal dan
+ * een verkeerd getal.
+ */
+function safeMeasurePdf(html: string): ProposalPdfMeasure | undefined {
+  try {
+    const measure = measureProposalPdf(html)
+    return measure.pages ? measure : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function safePageCount(html: string): number | undefined {
+  return safeMeasurePdf(html)?.pages
+}
+
+function reviewDraft(html: string, documents: SourceDocument[], analysis: TenderAnalysis | null, pages?: number) {
   const plain = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
   const findings: ReviewFinding[] = []
   const mustHaves = ['kwaliteit', 'risico', 'duurzaamheid', 'implementatie', 'continuiteit']
@@ -442,7 +492,7 @@ function reviewDraft(html: string, documents: SourceDocument[], analysis: Tender
   }
 
   if (analysis) {
-    reviewAgainstAnalysis(html, analysis).forEach((item) => {
+    reviewAgainstAnalysis(html, analysis, pages ?? safePageCount(html)).forEach((item) => {
       findings.push({ id: makeId(), ...item })
     })
   }
@@ -496,6 +546,10 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   const [activeDraftId, setActiveDraftId] = useState<string>(initial.activeDraftId)
   const draftsRef = useRef<DraftDocument[]>(initial.drafts)
   const activeDraftIdRef = useRef<string>(initial.activeDraftId)
+  // Versiegeschiedenis per stuk (eigen opslagsleutel, zie lib/draftVersions).
+  const [versionHistory, setVersionHistory] = useState<DraftVersionHistory>(initial.versions)
+  const versionsRef = useRef<DraftVersionHistory>(initial.versions)
+  const [versionDialogOpen, setVersionDialogOpen] = useState(false)
   const [batchRunning, setBatchRunning] = useState(false)
   const [customDocOpen, setCustomDocOpen] = useState(false)
   const [customDocTitle, setCustomDocTitle] = useState('')
@@ -711,6 +765,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     const target = draftsRef.current.find((item) => item.id === id)
     if (!target) return
     syncDraftFromEditor()
+    captureManualEdit()
     persistActiveDraft(liveDraftHtml(), stage, comments)
     activateDraft(target)
     setSyncStatus(`Stuk geopend: ${target.title}`)
@@ -786,6 +841,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       return
     }
     const target = nextStageFor(stage)
+    captureManualEdit()
     setGenerating(true)
     setSyncStatus(`Schrijfagent verwerkt de verbeterronde naar ${stageMeta[target].label}…`)
     const result = analysis ?? (await runAnalysis())
@@ -805,6 +861,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           siblingDocuments: siblings,
           improvements,
           currentDraft: stripCommentMarks(html),
+          layout: measureLayout(),
         },
         (accumulated) => {
           updateEditorHtml(accumulated || html)
@@ -813,6 +870,14 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       )
       updateEditorHtml(aiResult.html)
       persistDraft(activeDraftIdRef.current, { html: aiResult.html, stage: target, round: markRoundProcessed(round) })
+      recordVersion(activeDraftIdRef.current, {
+        kind: 'verwerking',
+        label: `Verbeterronde verwerkt naar ${stageMeta[target].label}`,
+        stage: target,
+        html: aiResult.html,
+        provider: aiResult.provider,
+        model: aiResult.model,
+      })
       setStage(target)
       setFindings(reviewDraft(aiResult.html, effectiveDocuments, scoped))
       setSyncStatus(
@@ -834,6 +899,12 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         const next = html.replace('</article>', `<section><h2>Verbeterronde verwerkt</h2>${items}</section></article>`)
         updateEditorHtml(next)
         persistDraft(activeDraftIdRef.current, { html: next, stage: target, round: markRoundProcessed(round) })
+        recordVersion(activeDraftIdRef.current, {
+          kind: 'verwerking',
+          label: `Verbeterronde lokaal verwerkt naar ${stageMeta[target].label}`,
+          stage: target,
+          html: next,
+        })
         setStage(target)
         setFindings(reviewDraft(next, effectiveDocuments, scoped))
         setSyncStatus('Verbeterronde lokaal verwerkt (geen AI geconfigureerd)')
@@ -872,6 +943,12 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     if (written && !window.confirm(`"${target.title}" bevat een geschreven concept. Dit stuk verwijderen?`)) return
     const next = draftsRef.current.filter((item) => item.id !== id)
     commitDrafts(next)
+    const history = pruneRemovedDrafts(versionsRef.current, next.map((item) => item.id))
+    if (history !== versionsRef.current) {
+      versionsRef.current = history
+      setVersionHistory(history)
+      saveVersionHistory(projectId, history)
+    }
     if (id === activeDraftIdRef.current) activateDraft(next[0])
     setSyncStatus(`Stuk verwijderd: ${target.title}`)
   }
@@ -897,6 +974,58 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   const liveDraftHtml = () => {
     const html = editorRef.current?.innerHTML
     return html && html.trim() ? html : draft
+  }
+
+  // ── Versiegeschiedenis ─────────────────────────────────────────────────────
+  // Elke generatie, verwerking, eigen bewerkingsronde en herstelactie wordt als versie
+  // bewaard, zodat "Genereer" nooit werk weggooit en de schrijver kan terugbladeren.
+  const recordVersion = (draftId: string, input: NewDraftVersion) => {
+    const next = recordDraftVersion(versionsRef.current, draftId, input)
+    // Ongewijzigde tekst levert dezelfde geschiedenis op; dan valt er niets te bewaren.
+    if (next === versionsRef.current) return
+    versionsRef.current = next
+    setVersionHistory(next)
+    saveVersionHistory(projectId, next)
+  }
+
+  // Leg het handwerk van de schrijver vast vóór een AI-actie, een wissel van stuk of het
+  // herstellen van een oudere versie.
+  const captureManualEdit = (label = 'Eigen bewerkingsronde') => {
+    const html = liveDraftHtml()
+    if (!html.trim() || isStartDraft(html)) return
+    recordVersion(activeDraftIdRef.current, { kind: 'bewerking', label, stage, html })
+  }
+
+  // Eigen bewerkingen worden ook zonder AI-actie bewaard: na een korte pauze in het typen
+  // gaat de tekst als bewerkingsronde de geschiedenis in.
+  useEffect(() => {
+    if (generating || rewritingId || isStartDraft(draft)) return
+    const timer = setTimeout(() => captureManualEdit(), MANUAL_EDIT_DELAY_MS)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, generating, rewritingId, activeDraftId])
+
+  const activeVersions = useMemo(() => versionsFor(versionHistory, activeDraftId), [versionHistory, activeDraftId])
+
+  // Oudere versie terugzetten in de editor. De huidige tekst gaat er eerst als versie in,
+  // zodat herstellen zelf ook niets weggooit.
+  const restoreVersion = (version: DraftVersion) => {
+    if (generating || rewritingId) return
+    captureManualEdit('Eigen tekst vóór herstel')
+    const draftId = activeDraftIdRef.current
+    updateEditorHtml(version.html)
+    setStage(version.stage)
+    persistDraft(draftId, { html: version.html, stage: version.stage })
+    setFindings(reviewDraft(version.html, effectiveDocuments, scopedAnalysis))
+    recordVersion(draftId, {
+      kind: 'herstel',
+      label: `Hersteld: ${version.label}`,
+      stage: version.stage,
+      html: version.html,
+      restoredFromId: version.id,
+    })
+    setVersionDialogOpen(false)
+    setSyncStatus(`Versie van ${formatVersionMoment(version.createdAt)} hersteld — de vorige tekst staat in de versies.`)
   }
 
   // Zolang de schrijfagent nog niet is gestart, bevat het veld alleen een samenvatting
@@ -935,19 +1064,117 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
 
   const stats = useMemo(() => {
     const words = notStarted ? 0 : countWords(draft)
-    const wordTarget = scopedAnalysis?.targetWordCount
-    const charTarget = scopedAnalysis?.targetCharCount
     return {
       words,
       chars: notStarted ? 0 : countCharacters(draft),
       sources: effectiveDocuments.length,
       unresolved: comments.filter((comment) => comment.status === 'open').length,
       score: opportunity.score,
-      wordTarget,
-      charTarget,
       leidraad: analysis?.leidraadFound ?? false,
     }
-  }, [analysis, scopedAnalysis, comments, draft, effectiveDocuments.length, notStarted, opportunity.score])
+  }, [analysis, comments, draft, effectiveDocuments.length, notStarted, opportunity.score])
+
+  // ── Omvang bewaken ─────────────────────────────────────────────────────────
+  // "Max. 2 A4" is een vormeis: een stuk dat uitloopt kan de inschrijving ongeldig
+  // maken. Het paginagetal komt daarom uit de PDF-bouwer zelf — precies wat er straks
+  // wordt geëxporteerd. Dat is te zwaar voor elke toetsaanslag, dus met vertraging na
+  // de laatste wijziging.
+  const [pdf, setPdf] = useState<ProposalPdfMeasure | undefined>(undefined)
+  useEffect(() => {
+    if (notStarted) {
+      setPdf(undefined)
+      return
+    }
+    const timer = setTimeout(() => setPdf(safeMeasurePdf(draft)), PAGE_COUNT_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [draft, notStarted])
+  const pageCount = pdf?.pages
+
+  const volumeLimits = useMemo(() => limitsForAnalysis(scopedAnalysis), [scopedAnalysis])
+
+  const volume = useMemo(() => {
+    const checks = checkVolume({ words: stats.words, chars: stats.chars, pages: pageCount }, volumeLimits)
+    return { checks, level: volumeLevel(checks), over: overLimitSummary(checks) }
+  }, [pageCount, stats.chars, stats.words, volumeLimits])
+
+  /**
+   * De tellers boven het concept: elke gestelde limiet krijgt een eigen tegel met de
+   * stand ervan. Woorden en pagina's staan er ook zonder limiet — dan puur informatief.
+   */
+  const volumeTiles = useMemo((): VolumeTileData[] => {
+    const byUnit = new Map(volume.checks.map((check) => [check.unit, check]))
+    const caption = (unit: VolumeCheck['unit']) => {
+      const label = volumeUnitLabels[unit]
+      return `${label[0].toUpperCase()}${label.slice(1)}`
+    }
+
+    return (['woorden', 'karakters', 'paginas'] as const).flatMap((unit): VolumeTileData[] => {
+      const check = byUnit.get(unit)
+      if (check) {
+        const used = unit === 'paginas' ? printedPages(check.used) : Math.round(check.used)
+        const geschat = check.estimated ? ' (geschat)' : ''
+        return [
+          {
+            unit,
+            value: `${used.toLocaleString('nl-NL')} / ${check.max.toLocaleString('nl-NL')}`,
+            caption: `${caption(unit)} (max)`,
+            level: check.level,
+            title:
+              unit === 'paginas' && pdf
+                ? `${check.level === 'over' ? 'Over de limiet — ' : ''}${pageFillLabel(pdf)}; de leidraad staat ${check.max} toe.`
+                : `${check.level === 'over' ? 'Over de limiet: ' : ''}${check.label}${geschat}`,
+          },
+        ]
+      }
+      // Zonder limiet: woorden altijd tonen, pagina's zodra de PDF is doorgerekend.
+      if (unit === 'woorden') {
+        return [{ unit, value: stats.words.toLocaleString('nl-NL'), caption: caption(unit), level: 'ok' }]
+      }
+      if (unit === 'paginas' && pdf) {
+        return [{ unit, value: String(pdf.pages), caption: caption(unit), level: 'ok', title: pageFillLabel(pdf) }]
+      }
+      return []
+    })
+  }, [pdf, stats.words, volume.checks])
+
+  /**
+   * Paginagetal per stuk voor de stukkenlijst. Het openstaande stuk gebruikt de live meting;
+   * de andere stukken worden alleen doorgerekend als hun tekst verandert — anders zou elke
+   * toetsaanslag de PDF van álle stukken opnieuw opbouwen.
+   */
+  const otherDraftsKey = drafts
+    .filter((item) => item.id !== activeDraftId)
+    .map((item) => `${item.id}:${item.html.length}`)
+    .join('|')
+  const otherDraftPages = useMemo(() => {
+    const map = new Map<string, number | undefined>()
+    for (const item of draftsRef.current) {
+      if (item.id === activeDraftIdRef.current || isStartDraft(item.html)) continue
+      map.set(item.id, safePageCount(item.html))
+    }
+    return map
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otherDraftsKey])
+
+  /**
+   * Opmaakdichtheid van dit project voor de schrijfagent: hoeveel zichtbare woorden er in
+   * één A4 passen, gemeten aan het langste geschreven stuk. Daarmee rekent de schrijfagent
+   * een paginalimiet om naar een woordbudget dat klopt met de echte export. Nog niets
+   * geschreven → geen meting, dan geldt de geijkte standaard op de server.
+   */
+  const measureLayout = (): { wordsPerPage: number } | undefined => {
+    try {
+      const written = draftsRef.current
+        .map((item) => (item.id === activeDraftIdRef.current ? { ...item, html: liveDraftHtml() } : item))
+        .filter((item) => !isStartDraft(item.html))
+        .sort((a, b) => countWords(b.html) - countWords(a.html))[0]
+      if (!written) return undefined
+      const wordsPerPage = measureWordsPerPage(countWords(written.html), measureProposalPdf(written.html).filled)
+      return wordsPerPage ? { wordsPerPage } : undefined
+    } catch {
+      return undefined
+    }
+  }
 
   const [showScoreDetails, setShowScoreDetails] = useState(false)
 
@@ -1111,6 +1338,9 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   // Schrijf (of herschrijf) één stuk. Zonder `target` is dat het actieve stuk; met `target`
   // wordt dat stuk eerst in de editor gezet (gebruikt door "Schrijf alle stukken").
   const analyzeAndGenerate = async (targetStage = stage, target?: DraftDocument, preAnalysis?: TenderAnalysis) => {
+    // Eerst het handwerk vastleggen: een generatie overschrijft de editor, maar de vorige
+    // tekst blijft als versie terugvindbaar.
+    captureManualEdit()
     setGenerating(true)
     // Hergebruik de bestaande AI-analyse zolang bronnen en opdrachtgever
     // ongewijzigd zijn; dat scheelt de volledige analyse-pijplijn per generatie.
@@ -1162,6 +1392,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           siblingDocuments: siblings,
           currentDraft:
             targetStage === 'brons' || isStartDraft(previousDraft) ? undefined : stripCommentMarks(previousDraft),
+          layout: measureLayout(),
         },
         (accumulated) => {
           updateEditorHtml(accumulated || '<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
@@ -1170,6 +1401,14 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       )
       updateEditorHtml(aiResult.html)
       persistDraft(doc.id, { html: aiResult.html, stage: targetStage })
+      recordVersion(doc.id, {
+        kind: 'generatie',
+        label: `"${doc.title}" gegenereerd (${stageMeta[targetStage].label})`,
+        stage: targetStage,
+        html: aiResult.html,
+        provider: aiResult.provider,
+        model: aiResult.model,
+      })
       setFindings(reviewDraft(aiResult.html, effectiveDocuments, scoped))
       setSyncStatus(
         isNeonConfigured()
@@ -1190,6 +1429,12 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         )
         await revealDraftProgressively(nextDraft, updateEditorHtml)
         persistDraft(doc.id, { html: nextDraft, stage: targetStage })
+        recordVersion(doc.id, {
+          kind: 'generatie',
+          label: `"${doc.title}" lokaal opgebouwd (${stageMeta[targetStage].label})`,
+          stage: targetStage,
+          html: nextDraft,
+        })
         setFindings(reviewDraft(nextDraft, effectiveDocuments, scoped))
         setSyncStatus(isNeonConfigured() ? 'Analyse, concept en Neon-sync gereed' : 'Analyse en concept opgeslagen')
         return
@@ -1435,13 +1680,17 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       const fromTender = tender.documents
       setTenderDocuments((current) => [...current.filter((doc) => doc.source === 'upload'), ...fromTender])
     }
-    setProject((current) => ({
-      ...current,
-      title: current.title && current.title !== 'Nieuw project' ? current.title : tender.aanbestedingNaam,
-      buyer: current.buyer || tender.opdrachtgeverNaam,
-      tendernedId: `TN-${tender.kenmerk}`,
-      deadline: current.deadline || (tender.sluitingsDatum?.slice(0, 10) ?? ''),
-    }))
+    setProject((current) => {
+      const closing = splitClosingDateTime(tender.sluitingsDatum)
+      return {
+        ...current,
+        title: current.title && current.title !== 'Nieuw project' ? current.title : tender.aanbestedingNaam,
+        buyer: current.buyer || tender.opdrachtgeverNaam,
+        tendernedId: `TN-${tender.kenmerk}`,
+        deadline: current.deadline || closing.deadline,
+        deadlineTime: current.deadline ? current.deadlineTime : closing.deadlineTime,
+      }
+    })
     setActiveType('tender')
     setTendernedQuery(`TN-${tender.kenmerk}`)
     setTenderDialogOpen(false)
@@ -1518,6 +1767,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           findSectionForFragment(comment.fragment),
       )
     if (targetable) {
+      captureManualEdit()
       setGenerating(true)
       try {
         const result = analysis ?? (await runAnalysis())
@@ -1525,6 +1775,14 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         for (const comment of openComments) {
           setSyncStatus(`Opmerking ${done + 1}/${openComments.length} gericht verwerken…`)
           if (await rewriteCommentSection(comment, result)) done += 1
+        }
+        if (done) {
+          recordVersion(activeDraftIdRef.current, {
+            kind: 'verwerking',
+            label: `${done} opmerking(en) gericht verwerkt`,
+            stage,
+            html: liveDraftHtml(),
+          })
         }
         setFindings(reviewDraft(liveDraftHtml(), effectiveDocuments, scopeFor(result)))
         setSyncStatus(
@@ -1545,6 +1803,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       return
     }
 
+    captureManualEdit()
     setGenerating(true)
     setSyncStatus('Schrijfagent verwerkt opmerkingen…')
     const result = analysis ?? (await runAnalysis())
@@ -1563,6 +1822,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           targetDocument: requested,
           siblingDocuments: siblings,
           currentDraft: stripCommentMarks(draft),
+          layout: measureLayout(),
         },
         (accumulated) => {
           updateEditorHtml(accumulated || draft)
@@ -1570,6 +1830,14 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       )
       updateEditorHtml(aiResult.html)
       persistDraft(activeDraftIdRef.current, { html: aiResult.html, stage: 'zilver' })
+      recordVersion(activeDraftIdRef.current, {
+        kind: 'verwerking',
+        label: `${openComments.length} opmerking(en) verwerkt (Zilver)`,
+        stage: 'zilver',
+        html: aiResult.html,
+        provider: aiResult.provider,
+        model: aiResult.model,
+      })
       setStage('zilver')
       setComments((current) => current.map((comment) => (comment.status === 'open' ? { ...comment, status: 'akkoord' } : comment)))
       setFindings(reviewDraft(aiResult.html, effectiveDocuments, scoped))
@@ -1583,6 +1851,12 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         const reviewBlock = `<section><h2>AI-verwerking review</h2>${additions}</section>`
         const next = draft.replace('</article>', `${reviewBlock}</article>`)
         updateEditorHtml(next)
+        recordVersion(activeDraftIdRef.current, {
+          kind: 'verwerking',
+          label: `${openComments.length} opmerking(en) lokaal verwerkt`,
+          stage,
+          html: next,
+        })
         setComments((current) => current.map((comment) => (comment.status === 'open' ? { ...comment, status: 'akkoord' } : comment)))
         setFindings(reviewDraft(next, effectiveDocuments, scoped))
         setSyncStatus('Opmerkingen lokaal verwerkt (geen AI geconfigureerd)')
@@ -1671,6 +1945,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       return
     }
 
+    captureManualEdit()
     setRewritingId(comment.id)
     setSyncStatus('Schrijfagent herschrijft het betreffende onderdeel…')
 
@@ -1681,6 +1956,14 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         setSyncStatus('Kon het bijbehorende tekstdeel niet terugvinden. Selecteer het fragment opnieuw of gebruik "Verwerk opmerkingen".')
         return
       }
+      recordVersion(activeDraftIdRef.current, {
+        kind: 'verwerking',
+        label: `Onderdeel herschreven na opmerking: ${summarize(comment.note, 60)}`,
+        stage,
+        html: liveDraftHtml(),
+        provider: rewrite.provider,
+        model: rewrite.model,
+      })
       setFindings(reviewDraft(liveDraftHtml(), effectiveDocuments, scopeFor(result)))
       setSyncStatus(`Onderdeel herschreven met ${rewrite.provider} (${rewrite.model}) — beoordeel: akkoord of terugdraaien`)
     } catch (error) {
@@ -1936,6 +2219,8 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   // Markeringen en herschrijf-ankers zijn editor-only; verwijder ze uit de export.
   const getExportHtml = () => stripCommentMarks(liveDraftHtml())
 
+  const deadlineLabel = useMemo(() => shortDeadlineLabel(project), [project])
+
   const exportPdf = async () => {
     syncDraftFromEditor()
     const html = getExportHtml()
@@ -1963,6 +2248,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       await exportDocxDocument(html, activeDraft ? `${project.title} — ${activeDraft.title}` : project.title, filename)
       setSyncStatus('Word-document gedownload.')
     } catch (error) {
+      console.error('[word-export]', error)
       const message = error instanceof Error ? error.message : 'Word-export mislukt.'
       setSyncStatus(`Word-export mislukt: ${message}`)
     }
@@ -2351,12 +2637,22 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="project-deadline">Deadline</Label>
-              <Input
-                id="project-deadline"
-                type="date"
-                value={project.deadline}
-                onChange={(event) => setProject({ ...project, deadline: event.target.value })}
-              />
+              <div className="grid grid-cols-[minmax(0,1fr)_104px] gap-1.5">
+                <Input
+                  id="project-deadline"
+                  type="date"
+                  value={project.deadline}
+                  onChange={(event) => setProject({ ...project, deadline: event.target.value })}
+                />
+                <Input
+                  id="project-deadline-time"
+                  type="time"
+                  aria-label="Sluitingstijd"
+                  title="Sluitingstijd (lokale tijd)"
+                  value={project.deadlineTime ?? ''}
+                  onChange={(event) => setProject({ ...project, deadlineTime: event.target.value || undefined })}
+                />
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -2541,8 +2837,19 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           <div className="min-w-0">
             <p className="mb-[5px] text-xs font-bold uppercase text-muted-foreground">Besteed Het Uit · AI-Schrijfagent</p>
             <h1 className="break-words text-[25px] leading-tight font-bold">{project.title}</h1>
+            <SaveStatusIndicator className="mt-1" />
           </div>
           <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            <Button asChild variant="outline" title="Indieningsscherm: alle stukken, bijlagen en eisen met status en bestand, plus de countdown naar de deadline">
+              <Link href={`/projecten/${encodeURIComponent(projectId)}/indiening`}>
+                <PackageCheck size={17} /> Indiening
+                {deadlineLabel ? (
+                  <span className={cn('text-xs font-normal', deadlineLabel === 'verstreken' ? 'text-destructive' : 'text-muted-foreground')}>
+                    · {deadlineLabel}
+                  </span>
+                ) : null}
+              </Link>
+            </Button>
             <Button variant="outline" onClick={exportPdf} disabled={exportingPdf}>
               <FileDown size={17} /> {exportingPdf ? 'PDF...' : 'PDF'}
             </Button>
@@ -2556,6 +2863,18 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
               sourceTenderId={activeTenderId || project.tendernedId || null}
               onSaved={loadLessons}
             />
+            <Button
+              variant="outline"
+              onClick={() => {
+                // De tekst die nu in de editor staat eerst vastleggen, zodat de lijst klopt.
+                captureManualEdit()
+                setVersionDialogOpen(true)
+              }}
+              title="Alle generaties, verwerkingen en eigen bewerkingsrondes van dit stuk"
+            >
+              <History size={17} /> Versies
+              {activeVersions.length ? <Badge variant="secondary">{activeVersions.length}</Badge> : null}
+            </Button>
             <Button disabled={generating} onClick={() => void analyzeAndGenerate(stage)}>
               {generating ? <Loader2 size={17} className="animate-spin" /> : <Sparkles size={17} />}
               {generating ? 'Genereren…' : notStarted ? 'Start schrijfagent' : 'Genereer'}
@@ -2639,9 +2958,21 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
               const html = active ? draft : item.html
               const status = isStartDraft(html) ? 'niet gestart' : draftStatusLabel({ ...item, html })
               const itemStage = active ? stage : item.stage
-              const words = isStartDraft(html) ? 0 : countWords(html)
-              const target = analysis ? scopeAnalysisToDocument(analysis, item.requested).targetWordCount : undefined
+              const started = !isStartDraft(html)
+              const words = started ? countWords(html) : 0
               const limits = formatDocumentLimits(item.requested)
+              // Elk stuk aan zijn eigen limieten toetsen: een te lang stuk valt op vorm af,
+              // ook als de rest van de inschrijving klopt.
+              const itemChecks = started
+                ? checkVolume(
+                    { words, chars: countCharacters(html), pages: active ? pageCount : otherDraftPages.get(item.id) },
+                    documentLimits(item.requested, analysis),
+                  )
+                : []
+              const itemLevel = volumeLevel(itemChecks)
+              const itemOver = overLimitSummary(itemChecks)
+              const wordCheck = itemChecks.find((check) => check.unit === 'woorden')
+              const pageCheck = itemChecks.find((check) => check.unit === 'paginas')
               return (
                 <div
                   key={item.id}
@@ -2680,10 +3011,18 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
                           >
                             {status === 'niet gestart' ? 'niet gestart' : stageMeta[itemStage].label}
                           </span>
-                          {words ? (
-                            <span className="tabular-nums">
+                          {started ? (
+                            <span
+                              className={cn(
+                                'tabular-nums',
+                                itemLevel === 'over' && 'font-bold text-red-600 dark:text-red-400',
+                                itemLevel === 'krap' && 'font-semibold text-amber-700 dark:text-amber-400',
+                              )}
+                              title={itemOver ? `Over de limiet: ${itemOver}` : undefined}
+                            >
                               {words.toLocaleString('nl-NL')}
-                              {target ? `/${target.toLocaleString('nl-NL')}` : ''} w
+                              {wordCheck ? `/${wordCheck.max.toLocaleString('nl-NL')}` : ''} w
+                              {pageCheck ? ` · ${printedPages(pageCheck.used)}/${pageCheck.max} p` : ''}
                             </span>
                           ) : limits ? (
                             <span>{limits}</span>
@@ -2798,20 +3137,9 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
             </p>
             <Progress value={stats.score} className="mt-2" />
           </button>
-          <div className="min-w-0 rounded-md border border-violet-200 bg-violet-50 p-3 dark:border-violet-900/50 dark:bg-violet-950/40">
-            <span className="block text-[22px] font-extrabold text-violet-700 dark:text-violet-300">
-              {stats.words}{stats.wordTarget ? `/${stats.wordTarget}` : ''}
-            </span>
-            <p className="mt-1 text-xs text-muted-foreground">Woorden{stats.wordTarget ? ' (max)' : ''}</p>
-          </div>
-          {stats.charTarget ? (
-            <div className="min-w-0 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/50 dark:bg-amber-950/40">
-              <span className="block text-[22px] font-extrabold text-amber-700 dark:text-amber-300">
-                {stats.chars.toLocaleString('nl-NL')}/{stats.charTarget.toLocaleString('nl-NL')}
-              </span>
-              <p className="mt-1 text-xs text-muted-foreground">Karakters (max)</p>
-            </div>
-          ) : null}
+          {volumeTiles.map((tile) => (
+            <VolumeTile key={tile.unit} {...tile} />
+          ))}
           <div className="min-w-0 rounded-md border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/40">
             <span className="block text-[22px] font-extrabold text-emerald-700 dark:text-emerald-300">{stats.leidraad ? 'Ja' : 'Nee'}</span>
             <p className="mt-1 text-xs text-muted-foreground">Leidraad</p>
@@ -3181,6 +3509,19 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
               </Button>
             )}
           </div>
+          {volume.over ? (
+            <p
+              role="alert"
+              data-testid="volume-alert"
+              className="flex items-start gap-2 border-b border-red-300 bg-red-50 px-3 py-2 text-sm font-semibold leading-snug text-red-800 dark:border-red-900 dark:bg-red-950/50 dark:text-red-200"
+            >
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden />
+              <span className="min-w-0 break-words">
+                Over de limiet van de leidraad — {volume.over}. Kort dit stuk in vóór indiening: op vorm kan de
+                inschrijving worden uitgesloten.
+              </span>
+            </p>
+          ) : null}
           <div
             ref={editorRef}
             className={cn('document-editor min-w-0 break-words', generating && 'is-generating')}
@@ -3193,6 +3534,17 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
             onBlur={syncDraftFromEditor}
           />
         </div>
+
+        <VersionHistoryDialog
+          open={versionDialogOpen}
+          onOpenChange={setVersionDialogOpen}
+          draftTitle={activeDraft?.title ?? 'Stuk'}
+          versions={activeVersions}
+          currentHtml={draft}
+          currentStage={stage}
+          busy={generating || Boolean(rewritingId)}
+          onRestore={restoreVersion}
+        />
       </section>
 
       <aside className="h-auto min-w-0 space-y-[14px] overflow-auto border-t bg-muted/30 p-4 sm:p-[18px] xl:h-screen xl:border-l xl:border-t-0">

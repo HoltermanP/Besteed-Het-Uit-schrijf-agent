@@ -9,6 +9,7 @@ import type {
 } from '../../src/types/reviewDraft'
 import type { Requirement, RequirementCheck, TenderAnalysis } from '../../src/types/tenderAnalysis'
 import { normalizeRequirementChecks, requirementsForDocument } from '../../src/lib/requirements'
+import { formatLimits, limitsForAnalysis } from '../../src/lib/volumeLimits'
 
 const DOC_CHAR_LIMIT = 40_000
 const DRAFT_CHAR_LIMIT = 120_000
@@ -201,8 +202,10 @@ function formatAnalysis(analysis: TenderAnalysis | null): string {
     `- Leidraad gevonden: ${analysis.leidraadFound ? 'ja' : 'nee'}`,
   ]
 
-  if (analysis.targetWordCount) lines.push(`- Max. woorden: ${analysis.targetWordCount}`)
-  if (analysis.targetCharCount) lines.push(`- Max. karakters: ${analysis.targetCharCount}`)
+  // Omvangslimieten expliciet meegeven: overschrijding is een vormfout waarop de
+  // inschrijving terzijde kan worden gelegd, dus de reviewer moet erop letten.
+  const limits = formatLimits(limitsForAnalysis(analysis))
+  if (limits) lines.push(`- Omvangslimiet (hard): ${limits}`)
 
   const mandatory = (analysis.contentRequirements ?? []).filter((req) => req.mandatory)
   if (mandatory.length) {

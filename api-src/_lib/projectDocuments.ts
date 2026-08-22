@@ -2,12 +2,14 @@ import { handleUpload, type HandleUploadBody } from '@vercel/blob/client'
 import { detectBlobAccess, isBlobConfigured } from './blobStore'
 
 // Eigen aanbestedingsdocumenten die een gebruiker in een project uploadt (stukken die
-// niet op TenderNed staan, zoals een nota van inlichtingen uit de mail). De tekst wordt
-// in de browser uitgelezen; dit endpoint regelt alleen het archiveren van het origineel
-// in Vercel Blob. De upload gaat rechtstreeks van browser naar Blob (client upload),
+// niet op TenderNed staan, zoals een nota van inlichtingen uit de mail) en definitieve
+// indieningsbestanden (ondertekend UEA, referenties, geëxporteerde stukken). De tekst
+// wordt in de browser uitgelezen; dit endpoint regelt alleen het archiveren van het
+// origineel in Vercel Blob. De upload gaat rechtstreeks van browser naar Blob (client upload),
 // zodat de 4,5 MB-requestlimiet van serverless functies niet geldt.
 
-const BLOB_PREFIX = 'projectdocumenten'
+/** Toegestane mappen: eigen aanbestedingsdocumenten en definitieve indieningsbestanden. */
+const BLOB_PREFIXES = ['projectdocumenten/', 'indiening/']
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 export async function handleProjectDocumentsRequest(request: Request): Promise<Response> {
@@ -39,7 +41,7 @@ export async function handleProjectDocumentsRequest(request: Request): Promise<R
     body,
     request,
     onBeforeGenerateToken: async (pathname) => {
-      if (!pathname.startsWith(`${BLOB_PREFIX}/`) || pathname.includes('..')) {
+      if (!BLOB_PREFIXES.some((prefix) => pathname.startsWith(prefix)) || pathname.includes('..')) {
         throw new Error('Ongeldig uploadpad.')
       }
       return {

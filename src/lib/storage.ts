@@ -3,7 +3,8 @@
 // De UI leest en schrijft synchroon via een in-memory cache. Die cache wordt bij het
 // opstarten éénmalig gehydrateerd uit /api/state (zie StorageGate); daarna worden
 // wijzigingen gebufferd en gebundeld teruggeschreven naar de database. Bij het sluiten
-// van het tabblad gaat een laatste flush via navigator.sendBeacon.
+// van het tabblad gaat een laatste flush via navigator.sendBeacon; staat er dan nog werk
+// open, dan vraagt de browser eerst om bevestiging (beforeunload).
 
 const cache = new Map<string, string>()
 const dirtyKeys = new Set<string>()
@@ -16,6 +17,55 @@ let flushChain: Promise<void> = Promise.resolve()
 const FLUSH_DELAY_MS = 800
 const KEEPALIVE_MAX_BYTES = 60_000
 const LEGACY_PREFIX = 'bid-agent-'
+
+// ── Opslagstatus ─────────────────────────────────────────────────────────────
+// Zichtbaar voor de gebruiker ("niet opgeslagen / bezig / opgeslagen 14:32"), zodat
+// die weet of werk echt in de database staat. Componenten abonneren zich via
+// subscribeSaveStatus (geschikt voor useSyncExternalStore).
+
+export type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
+
+export interface SaveStatus {
+  state: SaveState
+  /** ISO-tijdstip van de laatste geslaagde schrijfactie. */
+  savedAt: string | null
+  error: string | null
+}
+
+let saveStatus: SaveStatus = { state: 'idle', savedAt: null, error: null }
+const saveListeners = new Set<() => void>()
+let saving = false
+
+function updateSaveStatus(patch: Partial<SaveStatus>) {
+  saveStatus = { ...saveStatus, ...patch }
+  saveListeners.forEach((listener) => listener())
+}
+
+function hasPendingChanges() {
+  return dirtyKeys.size > 0 || removedKeys.size > 0
+}
+
+function markDirty() {
+  // Tijdens een lopende schrijfactie blijft "bezig" staan; na afloop valt de status
+  // vanzelf terug op "niet opgeslagen" zolang er nog wijzigingen wachten.
+  if (!saving) updateSaveStatus({ state: 'dirty' })
+}
+
+export function getSaveStatus(): SaveStatus {
+  return saveStatus
+}
+
+export function subscribeSaveStatus(listener: () => void): () => void {
+  saveListeners.add(listener)
+  return () => {
+    saveListeners.delete(listener)
+  }
+}
+
+/** Staat er werk open dat nog niet (zeker) in de database staat? */
+export function hasUnsavedChanges(): boolean {
+  return saving || hasPendingChanges()
+}
 
 // ── Bedrijfsscheiding ────────────────────────────────────────────────────────
 // Werkdata (projecten, dossiers, bronnen, bedrijfsconfig, opgeslagen
@@ -63,6 +113,7 @@ export function purgeCompanyData(companyId: string) {
     dirtyKeys.delete(key)
     removedKeys.add(key)
   })
+  if (targets.length) markDirty()
   scheduleFlush()
 }
 
@@ -146,6 +197,8 @@ async function flushNow(): Promise<void> {
   const sentRemoved = [...removedKeys]
   dirtyKeys.clear()
   removedKeys.clear()
+  saving = true
+  updateSaveStatus({ state: 'saving' })
 
   try {
     const body = JSON.stringify(payload)
@@ -160,10 +213,19 @@ async function flushNow(): Promise<void> {
       keepalive: body.length < KEEPALIVE_MAX_BYTES,
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    saving = false
+    updateSaveStatus({
+      // Kwamen er tijdens het schrijven nieuwe wijzigingen binnen, dan staan die nog open.
+      state: hasPendingChanges() ? 'dirty' : 'saved',
+      savedAt: new Date().toISOString(),
+      error: null,
+    })
   } catch (error) {
     // Terugleggen zodat een volgende flush het opnieuw probeert.
     sentDirty.forEach((key) => dirtyKeys.add(key))
     sentRemoved.forEach((key) => removedKeys.add(key))
+    saving = false
+    updateSaveStatus({ state: 'error', error: error instanceof Error ? error.message : String(error) })
     scheduleFlush(5000)
     console.warn('Opslaan naar database mislukt; wordt opnieuw geprobeerd.', error)
     throw error
@@ -200,6 +262,15 @@ function registerUnloadFlush() {
     // sendBeacon kan alleen POST; de state-route accepteert POST als alias van PUT.
     navigator.sendBeacon('/api/state', new Blob([JSON.stringify(payload)], { type: 'application/json' }))
   })
+  // Waarschuw bij het sluiten of verversen van het tabblad zolang er werk openstaat of
+  // nog onderweg is; de beacon hierboven is immers best effort. Navigatie binnen de app
+  // (Next-router) raakt dit niet.
+  window.addEventListener('beforeunload', (event) => {
+    if (!hasUnsavedChanges()) return
+    event.preventDefault()
+    // Oudere browsers tonen de dialoog alleen met een (willekeurige) returnValue.
+    event.returnValue = ''
+  })
 }
 
 export function getStoredRaw(key: string): string | null {
@@ -208,9 +279,13 @@ export function getStoredRaw(key: string): string | null {
 
 export function setStoredRaw(key: string, value: string) {
   const scoped = scopeKey(key)
+  // Ongewijzigde waarde: niets te doen (voorkomt loze schrijfacties en een onterechte
+  // "niet opgeslagen"-melding).
+  if (cache.get(scoped) === value && !dirtyKeys.has(scoped) && !removedKeys.has(scoped)) return
   cache.set(scoped, value)
   removedKeys.delete(scoped)
   dirtyKeys.add(scoped)
+  markDirty()
   scheduleFlush()
 }
 
@@ -219,6 +294,7 @@ export function removeStored(key: string) {
   cache.delete(scoped)
   dirtyKeys.delete(scoped)
   removedKeys.add(scoped)
+  markDirty()
   scheduleFlush()
 }
 

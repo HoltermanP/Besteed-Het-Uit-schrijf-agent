@@ -208,8 +208,10 @@ function tableBlocks(tableEl: Element, ctx: Ctx): (Paragraph | Table)[] {
 
   const rows = Array.from(tableEl.querySelectorAll('tr')).filter(
     // Geneste tabellen (org-reports) worden via de cel zelf gerenderd; sla die rijen hier over.
-    (tr) => tr.closest('table') === tableEl,
+    // Rijen zonder cellen (lege <tr>) overslaan: een rij zonder cellen is ongeldige OOXML.
+    (tr) => tr.closest('table') === tableEl && Array.from(tr.children).some((c) => /^(td|th)$/i.test(c.tagName)),
   )
+  // Een Table zonder rijen laat de docx-library crashen ("Invalid array length").
   if (!rows.length) return result
 
   result.push(
@@ -235,14 +237,41 @@ function listBlocks(listEl: Element, ctx: Ctx): Paragraph[] {
   })
 }
 
-function docMetaTable(dl: Element): Table {
-  const items = Array.from(dl.children).filter((child) => child.tagName.toLowerCase() === 'div')
+/**
+ * Metadata-blok (<dl class="doc-meta">) → tabel met label/waarde-rijen. Ondersteunt
+ * zowel <div><dt/><dd/></div>-wrappers als losse <dt>/<dd>-paren (de AI schrijft
+ * beide vormen). Zonder paren: geen tabel — een docx-Table zonder rijen laat de
+ * docx-library crashen ("Invalid array length").
+ */
+function docMetaRows(dl: Element): { label: string; value: string }[] {
+  const rows: { label: string; value: string }[] = []
+  const text = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
+  let pending: string | null = null
+  Array.from(dl.children).forEach((child) => {
+    const tag = child.tagName.toLowerCase()
+    if (tag === 'div') {
+      const dt = child.querySelector('dt')
+      const dd = child.querySelector('dd')
+      if (dt || dd) rows.push({ label: text(dt), value: text(dd) })
+    } else if (tag === 'dt') {
+      if (pending !== null) rows.push({ label: pending, value: '' })
+      pending = text(child)
+    } else if (tag === 'dd') {
+      rows.push({ label: pending ?? '', value: text(child) })
+      pending = null
+    }
+  })
+  if (pending !== null) rows.push({ label: pending, value: '' })
+  return rows.filter((row) => row.label || row.value)
+}
+
+function docMetaTable(dl: Element): Table[] {
+  const items = docMetaRows(dl)
+  if (!items.length) return []
   const bottom = { style: BorderStyle.SINGLE, size: 4, color: LINE }
   const none = { style: BorderStyle.NONE, size: 0, color: 'auto' }
   const cellBorders: ITableCellBorders = { top: none, bottom, left: none, right: none }
-  const rows = items.map((item) => {
-    const label = item.querySelector('dt')?.textContent ?? ''
-    const value = item.querySelector('dd')?.textContent ?? ''
+  const rows = items.map(({ label, value }) => {
     return new TableRow({
       children: [
         new TableCell({
@@ -261,7 +290,7 @@ function docMetaTable(dl: Element): Table {
       ],
     })
   })
-  return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows })
+  return [new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows })]
 }
 
 function paragraphForP(p: Element): Paragraph {
@@ -324,7 +353,7 @@ function blockToElements(el: Element, ctx: Ctx): (Paragraph | Table)[] {
     case 'ol':
       return listBlocks(el, ctx)
     case 'dl':
-      return cls.contains('doc-meta') ? [docMetaTable(el)] : containerBlocks(el, ctx)
+      return cls.contains('doc-meta') ? docMetaTable(el) : containerBlocks(el, ctx)
     case 'figure':
       return containerBlocks(el, ctx)
     case 'figcaption':

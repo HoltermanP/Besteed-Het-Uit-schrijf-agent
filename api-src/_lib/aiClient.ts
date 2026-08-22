@@ -36,6 +36,13 @@ export type AiCompletionOptions = {
    * stadia brons/zilver/goud waar een menselijke reviewronde tussen zit.
    */
   cacheTtl?: '5m' | '1h'
+  /**
+   * Aantal user-berichten (vanaf het begin) dat als cache-grens wordt gemarkeerd
+   * (standaard 1). De schrijfagent zet 2: bronnenblok én taakcontext blijven
+   * gelijk over alle sectie-aanroepen van één generatie. Maximaal 3 (Anthropic
+   * staat 4 markers toe, inclusief de system prompt).
+   */
+  cacheUserMessages?: number
   /** Taaknaam voor de verbruikslog, zodat tokengebruik per taak meetbaar is. */
   label?: string
 }
@@ -133,9 +140,10 @@ function logUsage(label: string | undefined, model: string, usage: AnthropicUsag
 
 /**
  * Prompt caching: markeer het einde van de stabiele prefix — de system prompt en
- * het eerste user-bericht (waar de grote documentblokken zitten). Vervolg-passes
- * van de schrijfagent en herhaalde aanroepen met dezelfde bronnen lezen die
- * prefix dan uit cache tegen ~10% van de reguliere inputprijs.
+ * het eerste user-bericht (waar de grote documentblokken zitten), optioneel ook
+ * de volgende user-berichten (cacheUserMessages). Sectie-aanroepen van de
+ * schrijfagent en herhaalde aanroepen met dezelfde bronnen lezen die prefix
+ * dan uit cache tegen ~10% van de reguliere inputprijs.
  */
 function buildAnthropicPayload(messages: AiMessage[], options: AiCompletionOptions) {
   const { system, chatMessages } = splitMessages(messages)
@@ -154,10 +162,11 @@ function buildAnthropicPayload(messages: AiMessage[], options: AiCompletionOptio
     ? [{ type: 'text', text: system, cache_control: cacheControl }]
     : undefined
 
-  let firstUserMarked = false
+  const markCount = Math.min(3, Math.max(1, options.cacheUserMessages ?? 1))
+  let marked = 0
   const anthropicMessages = chatMessages.map((message) => {
-    if (message.role === 'user' && !firstUserMarked) {
-      firstUserMarked = true
+    if (message.role === 'user' && marked < markCount) {
+      marked += 1
       const block: AnthropicTextBlock = {
         type: 'text',
         text: message.content,

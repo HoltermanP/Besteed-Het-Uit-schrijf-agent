@@ -78,14 +78,18 @@ function safePathSegment(name: string): string {
   return name.replace(/[\\/]+/g, '_').replace(/[\u0000-\u001f]/g, '').trim() || 'document'
 }
 
-// Origineel rechtstreeks vanuit de browser naar Vercel Blob zetten. Mislukt dit (geen
-// token, netwerk), dan blijft het document wél bruikbaar — alleen zonder "Openen"-link.
-async function archiveOriginal(projectId: string, file: File): Promise<string | undefined> {
+/**
+ * Bestand rechtstreeks vanuit de browser naar Vercel Blob zetten (client upload, dus
+ * zonder de requestlimiet van serverless functies). Geeft de blob-URL terug, of
+ * undefined als er geen archief is of de upload mislukt — het bestand blijft dan
+ * bruikbaar, alleen zonder "Openen"-link. Ook gebruikt voor indieningsbestanden.
+ */
+export async function archiveFileInBlob(pathname: string, file: File): Promise<string | undefined> {
   try {
     const status = await fetchArchiveStatus()
     if (!status.available || !status.access) return undefined
     const { upload } = await import('@vercel/blob/client')
-    const blob = await upload(`${BLOB_PREFIX}/${safePathSegment(projectId)}/${safePathSegment(file.name)}`, file, {
+    const blob = await upload(pathname, file, {
       access: status.access,
       handleUploadUrl: HANDLE_UPLOAD_URL,
       contentType: file.type || undefined,
@@ -96,6 +100,10 @@ async function archiveOriginal(projectId: string, file: File): Promise<string | 
   } catch {
     return undefined
   }
+}
+
+function archiveOriginal(projectId: string, file: File): Promise<string | undefined> {
+  return archiveFileInBlob(`${BLOB_PREFIX}/${safePathSegment(projectId)}/${safePathSegment(file.name)}`, file)
 }
 
 type TextResult = { text: string; error?: string }

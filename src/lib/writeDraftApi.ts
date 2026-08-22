@@ -1,15 +1,25 @@
 import { getApiConfig, isWriterConfigured } from './apiConfig'
 import type {
   WriteDraftError,
+  WriteDraftJobSnapshot,
+  WriteDraftJobStart,
   WriteDraftRequest,
   WriteDraftResponse,
 } from '../types/writeDraft'
 
-type StreamEvent =
-  | { type: 'delta'; text: string; accumulated: string }
-  | { type: 'status'; message: string }
-  | { type: 'done'; html: string; model: string; provider: WriteDraftResponse['provider'] }
-  | { type: 'error'; error: string }
+/*
+ * Het schrijven van een stuk is een opdracht op de server, geen browserverbinding.
+ * De werkplek start de opdracht, bewaart het opdracht-id bij het stuk en volgt de
+ * voortgang met korte statusverzoeken. Sluit het tabblad of valt de verbinding weg,
+ * dan schrijft de server door; bij terugkomst wordt de opdracht weer opgepakt
+ * (zie followDraftJob) en staat het resultaat klaar.
+ */
+
+/** Tijd tussen twee statusverzoeken; op een achtergrondtabblad rustiger. */
+const POLL_MS = 1_500
+const POLL_HIDDEN_MS = 5_000
+/** Zoveel mislukte statusverzoeken op rij (± 1 minuut) gelden als "verbinding kwijt". */
+const MAX_POLL_FAILURES = 20
 
 export type WriterStatus = {
   available: boolean
@@ -17,8 +27,42 @@ export type WriterStatus = {
   model: string | null
 }
 
-function buildPayload(request: Omit<WriteDraftRequest, 'ai' | 'stream'>): WriteDraftRequest {
-  const payload: WriteDraftRequest = { ...request, stream: true }
+export type FollowJobHandlers = {
+  onProgress?: (accumulated: string) => void
+  onStatus?: (message: string) => void
+  /** Stop met volgen; de opdracht zelf loopt op de server gewoon door. */
+  signal?: AbortSignal
+}
+
+/** De opdracht bestaat niet meer op de server (opgeruimd of database geleegd). */
+export class DraftJobLost extends Error {
+  constructor() {
+    super('De schrijfopdracht is niet meer bij de server bekend.')
+    this.name = 'DraftJobLost'
+  }
+}
+
+/** De server is even niet bereikbaar; de opdracht draait door en kan later worden opgepakt. */
+export class DraftJobDisconnected extends Error {
+  constructor(readonly jobId: string) {
+    super('Geen verbinding met de server. De schrijfagent gaat door; het stuk staat er zodra je terug bent.')
+    this.name = 'DraftJobDisconnected'
+  }
+}
+
+/** Het volgen is bewust gestopt (ander stuk geopend, pagina verlaten). */
+export class DraftJobUnwatched extends Error {
+  constructor(readonly jobId: string) {
+    super('Het volgen van de schrijfopdracht is gestopt.')
+    this.name = 'DraftJobUnwatched'
+  }
+}
+
+function buildPayload(
+  request: Omit<WriteDraftRequest, 'ai' | 'stream'>,
+  job: WriteDraftJobStart,
+): WriteDraftRequest & WriteDraftJobStart {
+  const payload = { ...request, ...job } as WriteDraftRequest & WriteDraftJobStart
   const apiConfig = getApiConfig()
   if (isWriterConfigured(apiConfig)) {
     payload.ai = {
@@ -30,40 +74,6 @@ function buildPayload(request: Omit<WriteDraftRequest, 'ai' | 'stream'>): WriteD
     }
   }
   return payload
-}
-
-function parseStreamEvent(line: string): StreamEvent | null {
-  const trimmed = line.trim()
-  if (!trimmed.startsWith('data:')) return null
-  const raw = trimmed.slice(5).trim()
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as StreamEvent
-  } catch {
-    return null
-  }
-}
-
-function processStreamLines(lines: string[], handlers: {
-  onDelta?: (accumulated: string) => void
-  onStatus?: (message: string) => void
-  onDone?: (result: WriteDraftResponse) => void
-  onError?: (message: string) => void
-}) {
-  for (const line of lines) {
-    const event = parseStreamEvent(line)
-    if (!event) continue
-    if (event.type === 'delta') handlers.onDelta?.(event.accumulated)
-    if (event.type === 'status') handlers.onStatus?.(event.message)
-    if (event.type === 'done') {
-      handlers.onDone?.({
-        html: event.html,
-        model: event.model,
-        provider: event.provider,
-      })
-    }
-    if (event.type === 'error') handlers.onError?.(event.error)
-  }
 }
 
 export function isNoAiConfigError(message: string): boolean {
@@ -80,77 +90,123 @@ export async function fetchWriterStatus(): Promise<WriterStatus> {
   }
 }
 
-export async function generateDraftViaApi(
+/** Start een schrijfopdracht op de server en geef de eerste momentopname terug. */
+export async function startDraftJob(
   request: Omit<WriteDraftRequest, 'ai' | 'stream'>,
-  onProgress?: (accumulated: string) => void,
-  onStatus?: (message: string) => void,
-): Promise<WriteDraftResponse> {
-  const payload = buildPayload(request)
-
-  const response = await fetch('/api/write-draft', {
+  job: WriteDraftJobStart,
+): Promise<WriteDraftJobSnapshot> {
+  const response = await fetch('/api/write-draft/job', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-    },
-    body: JSON.stringify(payload),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildPayload(request, job)),
   })
 
-  const contentType = response.headers.get('content-type') ?? ''
-
   if (!response.ok) {
+    const contentType = response.headers.get('content-type') ?? ''
     if (contentType.includes('application/json')) {
       const data = (await response.json()) as WriteDraftError
-      throw new Error(data.error || 'Genereren van concept mislukt.')
+      throw new Error(data.error || 'Starten van de schrijfagent mislukt.')
     }
     const detail = (await response.text()).trim()
-    throw new Error(detail || 'Genereren van concept mislukt.')
+    throw new Error(detail || 'Starten van de schrijfagent mislukt.')
   }
 
-  if (!contentType.includes('text/event-stream') || !response.body) {
-    const data = (await response.json()) as WriteDraftResponse | WriteDraftError
-    if ('error' in data) throw new Error(data.error)
-    onProgress?.(data.html)
-    return data
-  }
+  return (await response.json()) as WriteDraftJobSnapshot
+}
 
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let result: WriteDraftResponse | null = null
-  let streamError: string | null = null
+async function fetchJobSnapshot(jobId: string, since: number, signal?: AbortSignal): Promise<WriteDraftJobSnapshot> {
+  const response = await fetch(`/api/write-draft/job?id=${encodeURIComponent(jobId)}&since=${since}`, {
+    cache: 'no-store',
+    signal,
+  })
+  if (response.status === 404) throw new DraftJobLost()
+  if (!response.ok) throw new Error(`Status van de schrijfopdracht opvragen mislukt (HTTP ${response.status}).`)
+  return (await response.json()) as WriteDraftJobSnapshot
+}
 
-  const handleLines = (lines: string[]) => {
-    processStreamLines(lines, {
-      onDelta: onProgress,
-      onStatus,
-      onDone: (value) => {
-        result = value
-      },
-      onError: (message) => {
-        streamError = message
-      },
-    })
-  }
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(finish, ms)
+    function finish() {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', finish)
+      resolve()
+    }
+    signal?.addEventListener('abort', finish, { once: true })
+  })
+}
+
+/**
+ * Volg een lopende opdracht tot het stuk klaar is. Gebruikt bij het starten én bij het
+ * terugkeren in een nieuwe sessie: het opdracht-id staat bij het stuk in de werkruimte.
+ * Een korte storing wordt uitgezeten; blijft de server onbereikbaar, dan stopt het volgen
+ * met DraftJobDisconnected — de opdracht zelf loopt door.
+ */
+export async function followDraftJob(
+  jobId: string,
+  handlers: FollowJobHandlers = {},
+): Promise<WriteDraftResponse> {
+  const { onProgress, onStatus, signal } = handlers
+  let since = 0
+  let failures = 0
+  let lastMessage = ''
 
   while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
+    if (signal?.aborted) throw new DraftJobUnwatched(jobId)
 
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-    handleLines(lines)
+    let snapshot: WriteDraftJobSnapshot | null = null
+    try {
+      snapshot = await fetchJobSnapshot(jobId, since, signal)
+      failures = 0
+    } catch (error) {
+      if (error instanceof DraftJobLost) throw error
+      if (signal?.aborted) throw new DraftJobUnwatched(jobId)
+      failures += 1
+      if (failures >= MAX_POLL_FAILURES) throw new DraftJobDisconnected(jobId)
+    }
+
+    if (snapshot) {
+      since = snapshot.version
+      if (snapshot.partialHtml) onProgress?.(snapshot.partialHtml)
+      if (snapshot.message && snapshot.message !== lastMessage) {
+        lastMessage = snapshot.message
+        onStatus?.(snapshot.message)
+      }
+      if (snapshot.status === 'gereed' && snapshot.html) {
+        return {
+          html: snapshot.html,
+          model: snapshot.model ?? '',
+          provider: (snapshot.provider ?? 'anthropic') as WriteDraftResponse['provider'],
+        }
+      }
+      if (snapshot.status === 'mislukt') {
+        throw new Error(snapshot.error || snapshot.message || 'Genereren mislukt.')
+      }
+    }
+
+    const hidden = typeof document !== 'undefined' && document.hidden
+    await wait(hidden ? POLL_HIDDEN_MS : POLL_MS, signal)
   }
+}
 
-  if (buffer.trim()) {
-    handleLines(buffer.split('\n'))
-  }
+export type GenerateDraftOptions = FollowJobHandlers & {
+  /** Waar het resultaat hoort; hiermee vindt een volgende sessie de opdracht terug. */
+  job: WriteDraftJobStart
+  /** Zodra de opdracht op de server staat: bewaar het id bij het stuk. */
+  onStarted?: (snapshot: WriteDraftJobSnapshot) => void
+}
 
-  if (streamError) throw new Error(streamError)
-  if (!result) {
-    throw new Error('Genereren stopte voortijdig. Probeer opnieuw of controleer de AI-configuratie.')
-  }
-
-  return result
+/**
+ * Start de schrijfagent en wacht op het resultaat. Het wachten is niet meer dan volgen:
+ * mislukt het volgen, dan blijft de opdracht op de server staan en pikt de werkplek hem
+ * later weer op.
+ */
+export async function generateDraftViaApi(
+  request: Omit<WriteDraftRequest, 'ai' | 'stream'>,
+  options: GenerateDraftOptions,
+): Promise<WriteDraftResponse> {
+  const snapshot = await startDraftJob(request, options.job)
+  options.onStarted?.(snapshot)
+  if (snapshot.message) options.onStatus?.(snapshot.message)
+  return followDraftJob(snapshot.id, options)
 }

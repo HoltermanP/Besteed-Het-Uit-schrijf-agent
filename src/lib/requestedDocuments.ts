@@ -5,6 +5,9 @@ import type {
   TenderAnalysis,
   WordLimit,
 } from '../types/tenderAnalysis'
+import { limitsFromWordLimits, strictestMax } from './volumeLimits'
+
+export { strictestMax }
 
 /**
  * Gedeelde helpers rond "op te stellen documenten": de stukken die een uitvraag van de
@@ -141,16 +144,6 @@ export function dedupeRequestedDocuments(list: RequestedDocument[]): RequestedDo
   return [...byId.values()]
 }
 
-/** Strengste maximum (kleinste max) binnen een eenheid. */
-export function strictestMax(limits: WordLimit[], unit: WordLimit['unit']): number | undefined {
-  return limits
-    .filter((limit) => limit.unit === unit && limit.max)
-    .reduce<number | undefined>((min, limit) => {
-      const value = limit.max!
-      return min === undefined ? value : Math.min(min, value)
-    }, undefined)
-}
-
 /**
  * Standaard-inschrijfstuk wanneer de analyse geen losse schrijfstukken heeft herkend:
  * één document dat alle inhoudseisen en de globale limieten draagt.
@@ -239,6 +232,7 @@ export function scopeAnalysisToDocument(
     contentRequirements,
     targetWordCount: strictestMax(wordLimits, 'woorden'),
     targetCharCount: strictestMax(wordLimits, 'karakters'),
+    targetPageCount: strictestMax(wordLimits, 'paginas'),
   }
 }
 
@@ -254,3 +248,12 @@ export function formatDocumentLimits(doc: RequestedDocument): string {
     })
     .join(' · ')
 }
+
+/** De bindende maxima van een stuk: de eigen limieten, of die van de uitvraag als het stuk er geen heeft. */
+export function documentLimits(doc: RequestedDocument, analysis: TenderAnalysis | null | undefined) {
+  const own = limitsFromWordLimits(doc.wordLimits ?? [])
+  if (own.maxWords || own.maxChars || own.maxPages) return own
+  const sole = writableDocuments(analysis ?? null).length <= 1
+  return sole ? limitsFromWordLimits(analysis?.wordLimits ?? []) : own
+}
+

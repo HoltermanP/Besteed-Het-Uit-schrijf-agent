@@ -54,7 +54,7 @@ Analyseer de aanbestedingsstukken (vooral de leidraad) en bepaal concreet:
 Regels:
 - Baseer je UITSLUITEND op de bronnen; verzin geen feiten, limieten of eisen.
 - Verbeter en verrijk de meegegeven heuristische baseline; verwijder velden niet zonder reden.
-- targetWordCount/targetCharCount = het STRIKTE bindende maximum voor het hoofd-inschrijfstuk (kies het strafste relevante maximum). Laat weg (null) als er geen maximum is.
+- targetWordCount/targetCharCount/targetPageCount = het STRIKTE bindende maximum voor het hoofd-inschrijfstuk (kies per eenheid het strafste relevante maximum). Laat weg (null) als er in die eenheid geen maximum is. Een paginalimiet ("maximaal 2 A4", "ten hoogste 4 pagina's") hoort in targetPageCount én in wordLimits met unit "paginas".
 - submissionRequirements.category ∈ {"vorm","opmaak","indiening","geschiktheid","uitsluiting","proces","overig"}.
 - mandatory = true alleen als de bron het verplicht stelt (verplicht/dient/moet/op straffe van uitsluiting).
 - source = de bestandsnaam waaruit de eis komt.
@@ -75,7 +75,8 @@ Antwoord UITSLUITEND met geldig JSON in exact deze vorm:
   "underlyingIntent": { "explicitQuestion": "", "underlyingNeed": "", "questionBehindQuestion": "", "buyerPriorities": [], "implicitSuccessFactors": [], "writingGuidance": "", "teamBrief": "" },
   "gaps": [],
   "targetWordCount": null,
-  "targetCharCount": null
+  "targetCharCount": null,
+  "targetPageCount": null
 }`
 
 function asArray<T>(value: unknown): T[] {
@@ -232,6 +233,7 @@ function parseAnalysisJson(content: string, baseline: TenderAnalysis): TenderAna
     gaps,
     targetWordCount: posInt(parsed.targetWordCount) ?? baseline.targetWordCount,
     targetCharCount: posInt(parsed.targetCharCount) ?? baseline.targetCharCount,
+    targetPageCount: posInt(parsed.targetPageCount) ?? baseline.targetPageCount,
   }
   // Eén-call-pad kent geen aparte eisen-extractie: het register wordt afgeleid uit de
   // (door de AI aangescherpte) analysevelden.
@@ -354,6 +356,7 @@ function mergeExtracts(baseline: TenderAnalysis, extracts: TenderDocumentExtract
     gaps,
     targetWordCount: strictestMax(wordLimits, 'woorden') ?? baseline.targetWordCount,
     targetCharCount: strictestMax(wordLimits, 'karakters') ?? baseline.targetCharCount,
+    targetPageCount: strictestMax(wordLimits, 'paginas') ?? baseline.targetPageCount,
   }
 }
 
@@ -408,6 +411,7 @@ ${JSON.stringify(
       evaluationCriteria: merged.evaluationCriteria,
       targetWordCount: merged.targetWordCount,
       targetCharCount: merged.targetCharCount,
+      targetPageCount: merged.targetPageCount,
     },
     null,
     2,

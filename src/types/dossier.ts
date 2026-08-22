@@ -43,7 +43,10 @@ export type TenderProject = {
   title: string
   tendernedId: string
   buyer: string
+  /** Sluitingsdatum (YYYY-MM-DD). */
   deadline: string
+  /** Sluitingstijd (HH:MM, lokale tijd); ontbreekt = einde van de dag. */
+  deadlineTime?: string
   neonUrl?: string
 }
 
@@ -122,6 +125,79 @@ export type DraftDocument = {
   updatedAt: string
 }
 
+/**
+ * Wat er gebeurde waardoor deze versie ontstond: een generatie door de schrijfagent, een
+ * verwerking (opmerkingen of verbeterronde), een eigen bewerkingsronde van de schrijver,
+ * of het herstellen van een oudere versie.
+ */
+export type DraftVersionKind = 'generatie' | 'verwerking' | 'bewerking' | 'herstel'
+
+/**
+ * Momentopname van één stuk. Bij elke generatie, verwerking, eigen bewerkingsronde en
+ * herstelactie wordt er één bewaard, zodat "Genereer" nooit werk weggooit. De
+ * geschiedenis staat bewust náást het dossier-snapshot (eigen opslagsleutel): het
+ * snapshot wordt bij elke toetsaanslag herschreven, de geschiedenis alleen bij een
+ * nieuwe versie.
+ */
+export type DraftVersion = {
+  id: string
+  kind: DraftVersionKind
+  /** Korte omschrijving van wat deze versie opleverde. */
+  label: string
+  stage: Stage
+  html: string
+  words: number
+  createdAt: string
+  provider?: string
+  model?: string
+  /** Id van de versie waaruit is hersteld (alleen bij kind 'herstel'). */
+  restoredFromId?: string
+}
+
+/** Versiegeschiedenis van alle stukken van één project, op stuk-id (DraftDocument.id). */
+export type DraftVersionHistory = Record<string, DraftVersion[]>
+
+/** Status van één onderdeel op het indieningsscherm. */
+export type SubmissionStatus = 'open' | 'bezig' | 'gereed' | 'nvt'
+
+/** Het (definitieve) bestand dat bij een onderdeel van de indiening hoort. */
+export type SubmissionFile = {
+  name: string
+  size: number
+  type: string
+  /** URL in Vercel Blob; ontbreekt als alleen de bestandsgegevens zijn vastgelegd. */
+  url?: string
+  uploadedAt: string
+}
+
+/** Per onderdeel (stuk, bijlage of eis) vastgelegd: status, eigenaar, notitie en bestand. */
+export type SubmissionEntry = {
+  /** Handmatige status; ontbreekt = afgeleid (stadium van het stuk, status van de eis). */
+  status?: SubmissionStatus
+  /** Wie uit het bidteam dit oppakt. */
+  owner?: string
+  note?: string
+  file?: SubmissionFile | null
+  updatedAt: string
+}
+
+/** Bijlage die de bidmanager zelf aan de indieningsset toevoegt (niet uit de analyse). */
+export type CustomSubmissionItem = {
+  id: string
+  title: string
+  kind: 'formulier' | 'bewijsstuk'
+  mandatory: boolean
+}
+
+/** Indieningsscherm: de checklist van alle stukken, bijlagen en eisen richting de deadline. */
+export type SubmissionState = {
+  entries: Record<string, SubmissionEntry>
+  customItems: CustomSubmissionItem[]
+  /** Moment waarop de bidmanager de inschrijving als ingediend heeft gemarkeerd. */
+  submittedAt?: string | null
+  submittedNote?: string
+}
+
 // Volledige momentopname van een project; per project bewaard zodat je
 // later verder kunt waar je was gebleven.
 export type DossierSnapshot = {
@@ -147,5 +223,7 @@ export type DossierSnapshot = {
   analysisSource?: string | null
   /** Status per eis uit het eisenregister (analysis.requirements), op eis-id. */
   requirementStatuses?: Record<string, RequirementStatusEntry>
+  /** Indieningschecklist (status, eigenaar en bestand per onderdeel). */
+  submission?: SubmissionState
   updatedAt: string
 }

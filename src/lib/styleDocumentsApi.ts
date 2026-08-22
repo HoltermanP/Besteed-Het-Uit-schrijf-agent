@@ -1,5 +1,6 @@
 import type { StyleDocument, StyleDocumentCategory, StyleDocumentPromptType } from '../types/styleDocument'
 import { getApiConfig, isWriterConfigured } from './apiConfig'
+import { getActiveCompanyId } from './companies'
 
 type StyleDocumentsResponse = {
   documents: StyleDocument[]
@@ -14,7 +15,7 @@ type StyleDocumentError = {
 }
 
 export async function fetchStyleDocuments(): Promise<StyleDocument[]> {
-  const response = await fetch('/api/style-documents')
+  const response = await fetch(`/api/style-documents?companyId=${encodeURIComponent(getActiveCompanyId())}`)
   const data = (await response.json()) as StyleDocumentsResponse | StyleDocumentError
   if (!response.ok || 'error' in data) {
     throw new Error('error' in data ? data.error : 'Schrijfstijl-documenten ophalen mislukt.')
@@ -33,6 +34,7 @@ export async function uploadStyleDocument(input: {
   formData.append('name', input.name.trim() || input.file.name)
   formData.append('category', input.category)
   formData.append('promptType', input.promptType)
+  formData.append('companyId', getActiveCompanyId())
 
   const response = await fetch('/api/style-documents', {
     method: 'POST',
@@ -48,9 +50,10 @@ export async function uploadStyleDocument(input: {
 }
 
 export async function deleteStyleDocument(id: string): Promise<void> {
-  const response = await fetch(`/api/style-documents?id=${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  })
+  const response = await fetch(
+    `/api/style-documents?id=${encodeURIComponent(id)}&companyId=${encodeURIComponent(getActiveCompanyId())}`,
+    { method: 'DELETE' },
+  )
   const data = (await response.json()) as { ok?: boolean; error?: string }
   if (!response.ok || data.error) {
     throw new Error(data.error ?? 'Verwijderen mislukt.')
@@ -68,6 +71,7 @@ export async function createRulesTextDocument(input: {
   formData.append('category', input.category)
   formData.append('promptType', input.promptType ?? 'rules')
   formData.append('content', input.content)
+  formData.append('companyId', getActiveCompanyId())
 
   const response = await fetch('/api/style-documents', {
     method: 'POST',
@@ -91,7 +95,7 @@ export async function updateStyleDocument(input: {
   const response = await fetch('/api/style-documents', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, companyId: getActiveCompanyId() }),
   })
 
   const data = (await response.json()) as StyleDocumentUploadResponse | StyleDocumentError
@@ -117,7 +121,7 @@ export async function analyzeStyleDocument(id: string): Promise<StyleDocument> {
   const response = await fetch('/api/style-documents', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'analyze', id, ai }),
+    body: JSON.stringify({ action: 'analyze', id, companyId: getActiveCompanyId(), ai }),
   })
 
   const data = (await response.json()) as StyleDocumentUploadResponse | StyleDocumentError
@@ -143,7 +147,7 @@ export async function distillRulesFromDocument(id: string): Promise<string> {
   const response = await fetch('/api/style-documents', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'distill-rules', id, ai }),
+    body: JSON.stringify({ action: 'distill-rules', id, companyId: getActiveCompanyId(), ai }),
   })
 
   const data = (await response.json()) as { rules?: string; error?: string }

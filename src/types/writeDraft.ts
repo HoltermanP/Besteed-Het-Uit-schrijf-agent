@@ -62,6 +62,14 @@ export type WriteDraftRequest = {
   siblingDocuments?: WriteDraftSibling[]
   /** Goedgekeurde voorstellen en antwoorden uit de verbeterronde (zilver/goud). */
   improvements?: WriteDraftImprovements
+  /**
+   * Opmaakdichtheid die de werkplek aan een echt concept van deze inschrijving heeft
+   * gemeten: hoeveel zichtbare woorden er in één A4 van de PDF-export passen. Hiermee
+   * rekent de schrijfagent een paginalimiet ("max. 2 A4") om naar een woordbudget dat
+   * klopt met wat er straks daadwerkelijk wordt geëxporteerd. Ontbreekt bij het eerste
+   * stuk van een project; dan geldt de geijkte standaard.
+   */
+  layout?: { wordsPerPage: number }
   currentDraft?: string
   ai?: WriteDraftAiConfig
   stream?: boolean
@@ -75,4 +83,45 @@ export type WriteDraftResponse = {
 
 export type WriteDraftError = {
   error: string
+}
+
+/*
+ * Achtergrondopdracht van de schrijfagent. De browser start een opdracht en volgt die met
+ * korte statusverzoeken; het schrijven zelf draait op de server. Valt de verbinding weg of
+ * gaat het tabblad dicht, dan loopt de opdracht door en is het resultaat er later gewoon.
+ */
+
+export type WriteDraftJobStatus = 'lopend' | 'gereed' | 'mislukt'
+
+/** Wat de browser meestuurt om de opdracht later bij het juiste stuk terug te vinden. */
+export type WriteDraftJobStart = {
+  projectId: string
+  draftId: string
+  draftTitle: string
+  /** Waarvoor de opdracht draait; alleen voor de melding aan de gebruiker. */
+  kind: 'schrijven' | 'opmerkingen' | 'verbeterronde'
+}
+
+export type WriteDraftJobSnapshot = {
+  id: string
+  projectId: string
+  draftId: string
+  draftTitle: string
+  stage: WriteDraftRequest['stage']
+  kind: string
+  status: WriteDraftJobStatus
+  /** Statusmelding voor de gebruiker ("Secties schrijven (3/7 gereed)…"). */
+  message: string
+  /** Loopt op bij elke voortgangsschrijving; met `since` haalt de client alleen nieuwe tekst op. */
+  version: number
+  /** Het document tot nu toe; null als er sinds `since` niets veranderde. */
+  partialHtml: string | null
+  /** Het afgeronde stuk; alleen gevuld bij status 'gereed'. */
+  html: string | null
+  error: string | null
+  provider: string | null
+  model: string | null
+  startedAt: string
+  updatedAt: string
+  finishedAt: string | null
 }

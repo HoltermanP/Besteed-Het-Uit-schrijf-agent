@@ -9,9 +9,12 @@ import { isDatabaseConfigured, prisma } from './prisma'
 
 const DEV_STORE_PATH = path.join(process.cwd(), '.data', 'lessons-learned.json')
 const MAX_TEXT_CHARS = 8_000
+const DEFAULT_COMPANY_ID = 'default'
+
+type StoredLessonLearned = LessonLearned & { companyId?: string }
 
 type DevStore = {
-  lessons: LessonLearned[]
+  lessons: StoredLessonLearned[]
 }
 
 let devStoreCache: DevStore | null = null
@@ -115,24 +118,31 @@ function sanitizeInput(input: LessonLearnedInput): LessonLearnedInput {
   }
 }
 
-export async function listLessons(): Promise<LessonLearned[]> {
+export async function listLessons(companyId = DEFAULT_COMPANY_ID): Promise<LessonLearned[]> {
   if (isDatabaseConfigured()) {
-    const records = await prisma.lessonLearned.findMany({ orderBy: { createdAt: 'desc' } })
+    const records = await prisma.lessonLearned.findMany({
+      where: { companyId },
+      orderBy: { createdAt: 'desc' },
+    })
     return records.map(mapRecord)
   }
 
   const store = await readDevStore()
-  return [...store.lessons].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  )
+  return store.lessons
+    .filter((item) => (item.companyId ?? DEFAULT_COMPANY_ID) === companyId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 }
 
-export async function createLesson(rawInput: LessonLearnedInput): Promise<LessonLearned> {
+export async function createLesson(
+  rawInput: LessonLearnedInput,
+  companyId = DEFAULT_COMPANY_ID,
+): Promise<LessonLearned> {
   const input = sanitizeInput(rawInput)
 
   if (isDatabaseConfigured()) {
     const record = await prisma.lessonLearned.create({
       data: {
+        companyId,
         projectTitle: input.projectTitle,
         buyer: input.buyer ?? null,
         outcome: input.outcome,
@@ -148,8 +158,9 @@ export async function createLesson(rawInput: LessonLearnedInput): Promise<Lesson
   }
 
   const now = new Date().toISOString()
-  const lesson: LessonLearned = {
+  const lesson: StoredLessonLearned = {
     id: crypto.randomUUID(),
+    companyId,
     projectTitle: input.projectTitle,
     buyer: input.buyer ?? null,
     outcome: input.outcome,
@@ -170,6 +181,7 @@ export async function createLesson(rawInput: LessonLearnedInput): Promise<Lesson
 
 export async function updateLesson(input: {
   id: string
+  companyId?: string
   projectTitle?: string
   buyer?: string | null
   outcome?: LessonOutcome
@@ -180,6 +192,7 @@ export async function updateLesson(input: {
   recommendation?: string
 }): Promise<LessonLearned> {
   if (!input.id?.trim()) throw new Error('Leerpunt-id ontbreekt.')
+  const companyId = input.companyId || DEFAULT_COMPANY_ID
 
   const data = {
     ...(input.projectTitle?.trim() ? { projectTitle: trimText(input.projectTitle, 300) } : {}),
@@ -193,16 +206,18 @@ export async function updateLesson(input: {
   }
 
   if (isDatabaseConfigured()) {
-    const existing = await prisma.lessonLearned.findUnique({ where: { id: input.id } })
+    const existing = await prisma.lessonLearned.findFirst({ where: { id: input.id, companyId } })
     if (!existing) throw new Error('Leerpunt niet gevonden.')
     const record = await prisma.lessonLearned.update({ where: { id: input.id }, data })
     return mapRecord(record)
   }
 
   const store = await readDevStore()
-  const index = store.lessons.findIndex((item) => item.id === input.id)
+  const index = store.lessons.findIndex(
+    (item) => item.id === input.id && (item.companyId ?? DEFAULT_COMPANY_ID) === companyId,
+  )
   if (index < 0) throw new Error('Leerpunt niet gevonden.')
-  const updated: LessonLearned = {
+  const updated: StoredLessonLearned = {
     ...store.lessons[index],
     ...data,
     updatedAt: new Date().toISOString(),
@@ -212,16 +227,19 @@ export async function updateLesson(input: {
   return updated
 }
 
-export async function deleteLesson(id: string): Promise<void> {
+export async function deleteLesson(id: string, companyId = DEFAULT_COMPANY_ID): Promise<void> {
   if (!id?.trim()) throw new Error('Leerpunt-id ontbreekt.')
 
   if (isDatabaseConfigured()) {
-    await prisma.lessonLearned.delete({ where: { id } })
+    const { count } = await prisma.lessonLearned.deleteMany({ where: { id, companyId } })
+    if (!count) throw new Error('Leerpunt niet gevonden.')
     return
   }
 
   const store = await readDevStore()
-  const next = store.lessons.filter((item) => item.id !== id)
+  const next = store.lessons.filter(
+    (item) => !(item.id === id && (item.companyId ?? DEFAULT_COMPANY_ID) === companyId),
+  )
   if (next.length === store.lessons.length) throw new Error('Leerpunt niet gevonden.')
   store.lessons = next
   await writeDevStore(store)
@@ -230,13 +248,15 @@ export async function deleteLesson(id: string): Promise<void> {
 export async function handleLessonsLearnedRequest(request: Request): Promise<Response> {
   try {
     if (request.method === 'GET') {
-      const lessons = await listLessons()
+      const companyId = new URL(request.url).searchParams.get('companyId') || DEFAULT_COMPANY_ID
+      const lessons = await listLessons(companyId)
       return Response.json({ lessons })
     }
 
     if (request.method === 'POST') {
-      const body = (await request.json()) as LessonLearnedInput
-      const lesson = await createLesson(body)
+      const body = (await request.json()) as LessonLearnedInput & { companyId?: string }
+      const { companyId, ...input } = body
+      const lesson = await createLesson(input, companyId || DEFAULT_COMPANY_ID)
       return Response.json({ lesson }, { status: 201 })
     }
 
@@ -250,8 +270,9 @@ export async function handleLessonsLearnedRequest(request: Request): Promise<Res
     if (request.method === 'DELETE') {
       const url = new URL(request.url)
       const id = url.searchParams.get('id')
+      const companyId = url.searchParams.get('companyId') || DEFAULT_COMPANY_ID
       if (!id) throw new Error('Leerpunt-id ontbreekt.')
-      await deleteLesson(id)
+      await deleteLesson(id, companyId)
       return Response.json({ ok: true })
     }
 

@@ -20,6 +20,7 @@ import {
   Lightbulb,
   Medal,
   MessageSquarePlus,
+  PackageCheck,
   Rocket,
   Search,
   ShieldCheck,
@@ -113,6 +114,7 @@ const tocItems = [
   { href: '#genereren', label: 'Genereren & analyse' },
   { href: '#review', label: 'Menselijke review' },
   { href: '#exporteren', label: 'Exporteren' },
+  { href: '#indiening', label: 'Indiening & deadline' },
   { href: '#configuratie', label: 'Bedrijfsconfiguratie' },
   { href: '#schrijfkader', label: 'Schrijfkader' },
   { href: '#lessons', label: 'Lessons learned' },
@@ -429,8 +431,9 @@ export default function HandleidingPage() {
             <li>
               <strong>Leidraadanalyse</strong> (<Term>Analyseer dossier</Term>): analyseert de aanbesteding en toont
               de samenvatting, de <em>vraag achter de vraag</em> (expliciete vraag, achterliggende behoefte,
-              prioriteiten van de opdrachtgever), formele eisen zoals woord- en karakterlimieten, verplichte
-              documenten, specifieke inschrijvingseisen en eventuele gaten in je dossier.
+              prioriteiten van de opdrachtgever), formele eisen zoals woord-, karakter- en paginalimieten
+              (&ldquo;max. 2 A4&rdquo;), verplichte documenten, specifieke inschrijvingseisen en eventuele gaten in je
+              dossier. De schrijfagent rekent een paginalimiet om naar een woordbudget en houdt zich daaraan.
             </li>
             <li>
               <strong>Eisen aan de inschrijving</strong> (rechterkolom): het eisenregister dat de analyse uit de
@@ -523,6 +526,47 @@ export default function HandleidingPage() {
               },
             ]}
           />
+        </Section>
+
+        <Section
+          id="indiening"
+          icon={<PackageCheck size={17} />}
+          title="Indiening & deadline"
+          intro="Op de laatste dag wil je één scherm: alles wat de deur uit moet, met status en bestand, en de tijd die je nog hebt. Open het via de knop Indiening in de balk boven het document."
+        >
+          <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
+            <li>
+              <strong>Countdown:</strong> bovenaan telt de klok af naar de sluitingsdatum én -tijd uit het dossier
+              (van TenderNed overgenomen, of zelf in te stellen). Zonder tijd geldt het einde van de dag. De kleur
+              verspringt bij minder dan drie dagen en bij minder dan 24 uur; na de deadline staat er hoe lang die
+              verstreken is.
+            </li>
+            <li>
+              <strong>Schrijfstukken:</strong> elk stuk uit de werkplek met zijn stadium. Niet gestart telt als{' '}
+              <em>open</em>, brons/zilver als <em>bezig</em>, goud als <em>gereed</em>. Exporteer direct naar PDF of
+              Word, of upload het definitieve bestand zoals je het indient (bijvoorbeeld na opmaak in Word).
+            </li>
+            <li>
+              <strong>Bijlagen:</strong> de formulieren en bewijsstukken die de analyse uit de leidraad haalde — UEA,
+              referenties, verklaringen, prijsblad — aangevuld met bijlagen die je zelf toevoegt. Per bijlage leg je
+              eigenaar, status en het bestand vast.
+            </li>
+            <li>
+              <strong>Eisen aan het bidteam:</strong> de eisen uit het eisenregister die buiten de tekst om geregeld
+              moeten worden (ondertekening, certificaten, akkoord op voorwaarden), met de vraag aan het bidteam. Wat
+              je hier afvinkt, staat ook in het eisenregister op <em>voldaan</em>; een bewijsbestand kun je erbij
+              hangen.
+            </li>
+            <li>
+              <strong>Bestanden:</strong> uploads gaan naar het documentarchief (Vercel Blob) en zijn daarna vanaf
+              elk apparaat te openen. Zonder archief worden alleen naam, grootte en tijdstip vastgelegd. Zodra er een
+              bestand bij een onderdeel hangt, springt de status op <em>gereed</em> tenzij je die zelf anders zet.
+            </li>
+            <li>
+              <strong>Ingediend:</strong> is alles de deur uit, markeer de inschrijving dan als ingediend; het
+              tijdstip wordt bewaard bij het project.
+            </li>
+          </ul>
         </Section>
 
         <Section
@@ -706,8 +750,10 @@ export default function HandleidingPage() {
               op dan algemene beloften.
             </li>
             <li>
-              <strong>Respecteer de limieten.</strong> Houd de tegels Woorden en Karakters in de gaten; de formele
-              eisen uit de leidraad worden automatisch gesignaleerd.
+              <strong>Respecteer de limieten.</strong> De tegels Woorden, Karakters en Pagina&rsquo;s tonen de stand
+              ten opzichte van de leidraad; het paginagetal komt uit dezelfde bouwer als de PDF-export, dus het is
+              precies wat je indient. Kleurt een tegel rood, dan gaat het stuk over de limiet en verschijnt er een
+              waarschuwing boven het concept — kort dan in, want op vorm kun je worden uitgesloten.
             </li>
             <li>
               <strong>Reviewen loont.</strong> Het verschil tussen Brons en Goud zit in jouw opmerkingen: hoe

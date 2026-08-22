@@ -1,6 +1,7 @@
 import type { RequestedDocument, TenderAnalysis } from '../types/tenderAnalysis'
 import type { SourceDocument } from '../types/tenderAnalysis'
 import { formatDocumentLimits } from './requestedDocuments'
+import { formatLimits, limitsForAnalysis } from './volumeLimits'
 
 type Stage = 'brons' | 'zilver' | 'goud'
 
@@ -130,9 +131,8 @@ export function buildHtmlDraft(
     ? 'binnen vier weken na gunning'
     : 'direct na gunning'
 
-  const wordHint = analysis?.targetWordCount
-    ? ` (streef naar max. ${analysis.targetWordCount} woorden volgens leidraad)`
-    : ''
+  const limitHint = analysis ? formatLimits(limitsForAnalysis(analysis)) : ''
+  const wordHint = limitHint ? ` (leidraadlimiet: ${limitHint})` : ''
 
   const styleLead = analysis
     ? summarize(analysis.styleProfile.blendedGuidance, 280)

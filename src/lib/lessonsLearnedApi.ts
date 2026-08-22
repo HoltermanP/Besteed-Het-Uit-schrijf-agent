@@ -1,4 +1,5 @@
 import { getApiConfig, isReviewConfigured, isWriterConfigured } from './apiConfig'
+import { getActiveCompanyId } from './companies'
 import type { TenderAnalysis } from '../types/tenderAnalysis'
 import type {
   EvaluateProjectResponse,
@@ -33,7 +34,7 @@ function buildAi(): LessonAiConfig | undefined {
 }
 
 export async function fetchLessons(): Promise<LessonLearned[]> {
-  const response = await fetch('/api/insights')
+  const response = await fetch(`/api/insights?companyId=${encodeURIComponent(getActiveCompanyId())}`)
   const data = (await response.json()) as LessonsResponse | ApiError
   if (!response.ok || 'error' in data) {
     throw new Error('error' in data ? data.error : 'Leerpunten ophalen mislukt.')
@@ -45,7 +46,7 @@ export async function createLesson(input: LessonLearnedInput): Promise<LessonLea
   const response = await fetch('/api/insights', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, companyId: getActiveCompanyId() }),
   })
   const data = (await response.json()) as LessonResponse | ApiError
   if (!response.ok || 'error' in data) {
@@ -68,7 +69,7 @@ export async function updateLesson(input: {
   const response = await fetch('/api/insights', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, companyId: getActiveCompanyId() }),
   })
   const data = (await response.json()) as LessonResponse | ApiError
   if (!response.ok || 'error' in data) {
@@ -78,9 +79,10 @@ export async function updateLesson(input: {
 }
 
 export async function deleteLesson(id: string): Promise<void> {
-  const response = await fetch(`/api/insights?id=${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  })
+  const response = await fetch(
+    `/api/insights?id=${encodeURIComponent(id)}&companyId=${encodeURIComponent(getActiveCompanyId())}`,
+    { method: 'DELETE' },
+  )
   const data = (await response.json()) as { ok?: boolean; error?: string }
   if (!response.ok || data.error) {
     throw new Error(data.error ?? 'Leerpunt verwijderen mislukt.')

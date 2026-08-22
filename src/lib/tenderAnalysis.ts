@@ -12,6 +12,15 @@ import type {
 } from '../types/tenderAnalysis'
 import { dedupeRequestedDocuments, requestedDocumentId } from './requestedDocuments'
 import { deriveRequirementsFromAnalysis } from './requirements'
+import {
+  checkVolume,
+  countCharacters,
+  countWords,
+  limitsForAnalysis,
+  printedPages,
+  strictestMax,
+  type VolumeCounts,
+} from './volumeLimits'
 
 const LEIDRAAD_HINTS = ['leidraad', 'inschrijfleidraad', 'aanbestedingsleidraad', 'beoordelingsleidraad']
 const TOPIC_KEYWORDS = [
@@ -768,6 +777,8 @@ export function analyzeTenderDocuments(
       return min === undefined ? value : Math.min(min, value)
     }, undefined)
 
+  const pageTarget = strictestMax(wordLimits, 'paginas')
+
   const partial = {
     leidraadFound: Boolean(leidraad),
     leidraadSource: leidraad?.name,
@@ -808,29 +819,25 @@ export function analyzeTenderDocuments(
     gaps,
     targetWordCount: wordTarget,
     targetCharCount: charTarget,
+    targetPageCount: pageTarget,
   }
 }
 
-export function countWords(html: string) {
-  const plain = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-  return plain ? plain.split(' ').length : 0
-}
-
-export function countCharacters(html: string) {
-  return html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().length
-}
+export { countCharacters, countWords }
 
 export function hasVolumeLimit(analysis: TenderAnalysis): boolean {
-  return Boolean(
-    analysis.targetWordCount ||
-      analysis.targetCharCount ||
-      analysis.wordLimits.some((limit) => limit.unit === 'paginas' && limit.max),
-  )
+  const limits = limitsForAnalysis(analysis)
+  return Boolean(limits.maxWords || limits.maxChars || limits.maxPages)
 }
 
+/**
+ * Toets het concept aan de analyse. `pages` is het gemeten paginagetal van de PDF-export
+ * (zie countProposalPdfPages); zonder meting wordt een paginalimiet geschat uit de woorden.
+ */
 export function reviewAgainstAnalysis(
   html: string,
   analysis: TenderAnalysis,
+  pages?: number,
 ): Array<{ priority: 'kritiek' | 'hoog' | 'normaal'; title: string; detail: string }> {
   const findings: Array<{ priority: 'kritiek' | 'hoog' | 'normaal'; title: string; detail: string }> = []
   const plain = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').toLowerCase()
@@ -845,21 +852,24 @@ export function reviewAgainstAnalysis(
     })
   }
 
-  if (analysis.targetWordCount && words > analysis.targetWordCount) {
-    findings.push({
-      priority: 'hoog',
-      title: 'Woordlimiet overschreden',
-      detail: `Concept telt ${words} woorden; leidraad maximaal ${analysis.targetWordCount} woorden.`,
+  // Overschrijding van een woord-, karakter- of paginalimiet is een vormfout waarop de
+  // inschrijving terzijde kan worden gelegd — vandaar 'kritiek' en niet 'hoog'.
+  const counts: VolumeCounts = { words, chars, pages }
+  const limits = limitsForAnalysis(analysis)
+  checkVolume(counts, limits)
+    .filter((check) => check.level === 'over')
+    .forEach((check) => {
+      const titles = {
+        woorden: 'Woordlimiet overschreden',
+        karakters: 'Karakterlimiet overschreden',
+        paginas: 'Paginalimiet overschreden',
+      } as const
+      const detail =
+        check.unit === 'paginas'
+          ? `Het stuk beslaat ${printedPages(check.used)} pagina's${check.estimated ? ' (geschat)' : ''}; de leidraad staat maximaal ${check.max} toe. Kort in — op vorm kan de inschrijving worden uitgesloten.`
+          : `Concept telt ${check.label}. Kort in — op vorm kan de inschrijving worden uitgesloten.`
+      findings.push({ priority: 'kritiek', title: titles[check.unit], detail })
     })
-  }
-
-  if (analysis.targetCharCount && chars > analysis.targetCharCount) {
-    findings.push({
-      priority: 'hoog',
-      title: 'Karakterlimiet overschreden',
-      detail: `Concept telt ${chars.toLocaleString('nl-NL')} karakters; leidraad maximaal ${analysis.targetCharCount.toLocaleString('nl-NL')} karakters.`,
-    })
-  }
 
   if (analysis.targetWordCount && words < analysis.targetWordCount * 0.9) {
     findings.push({

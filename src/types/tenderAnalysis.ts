@@ -243,6 +243,8 @@ export type TenderAnalysis = {
   gaps: string[]
   targetWordCount?: number
   targetCharCount?: number
+  /** Strengste paginalimiet ("max. 2 A4"); bindend voor de omvang van het stuk. */
+  targetPageCount?: number
   /** Bron van de analyse: true zodra een AI de heuristische baseline heeft aangescherpt */
   aiAnalyzed?: boolean
   analysisProvider?: string

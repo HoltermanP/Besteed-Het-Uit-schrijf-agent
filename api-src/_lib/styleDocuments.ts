@@ -15,8 +15,9 @@ import { isDatabaseConfigured, prisma } from './prisma'
 const DEV_STORE_PATH = path.join(process.cwd(), '.data', 'style-documents.json')
 const MAX_CONTENT_CHARS = 120_000
 const MAX_FILE_BYTES = 4 * 1024 * 1024
+const DEFAULT_COMPANY_ID = 'default'
 
-type StoredStyleDocument = StyleDocument
+type StoredStyleDocument = StyleDocument & { companyId?: string }
 
 type DevStore = {
   documents: StoredStyleDocument[]
@@ -101,16 +102,19 @@ function trimContent(content: string): string {
   return `${normalized.slice(0, MAX_CONTENT_CHARS)}\n\n[tekst ingekort voor opslag]`
 }
 
-export async function listStyleDocuments(): Promise<StyleDocument[]> {
+export async function listStyleDocuments(companyId = DEFAULT_COMPANY_ID): Promise<StyleDocument[]> {
   if (isDatabaseConfigured()) {
-    const records = await prisma.styleDocument.findMany({ orderBy: { createdAt: 'desc' } })
+    const records = await prisma.styleDocument.findMany({
+      where: { companyId },
+      orderBy: { createdAt: 'desc' },
+    })
     return records.map(mapRecord)
   }
 
   const store = await readDevStore()
-  return store.documents.sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  )
+  return store.documents
+    .filter((doc) => (doc.companyId ?? DEFAULT_COMPANY_ID) === companyId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 }
 
 export async function createStyleDocument(input: {
@@ -120,6 +124,7 @@ export async function createStyleDocument(input: {
   fileName: string
   mimeType: string
   buffer: Buffer
+  companyId?: string
 }): Promise<StyleDocument> {
   validateStyleFileName(input.fileName)
   if (input.buffer.byteLength > MAX_FILE_BYTES) {
@@ -134,6 +139,7 @@ export async function createStyleDocument(input: {
     category: input.category,
     promptType: input.promptType,
     content: extracted,
+    companyId: input.companyId,
   })
 }
 
@@ -142,6 +148,7 @@ export async function createStyleDocumentFromText(input: {
   category: StyleDocumentCategory
   promptType: StyleDocumentPromptType
   content: string
+  companyId?: string
 }): Promise<StyleDocument> {
   const name = input.name.trim()
   const content = input.content.trim()
@@ -158,6 +165,7 @@ export async function createStyleDocumentFromText(input: {
     category: input.category,
     promptType: input.promptType,
     content: trimContent(content),
+    companyId: input.companyId,
   })
 }
 
@@ -168,12 +176,15 @@ async function persistStyleDocument(input: {
   category: StyleDocumentCategory
   promptType: StyleDocumentPromptType
   content: string
+  companyId?: string
 }): Promise<StyleDocument> {
   const now = new Date()
+  const companyId = input.companyId || DEFAULT_COMPANY_ID
 
   if (isDatabaseConfigured()) {
     const record = await prisma.styleDocument.create({
       data: {
+        companyId,
         name: input.name,
         fileName: input.fileName,
         mimeType: input.mimeType,
@@ -185,8 +196,9 @@ async function persistStyleDocument(input: {
     return mapRecord(record)
   }
 
-  const document: StyleDocument = {
+  const document: StoredStyleDocument = {
     id: crypto.randomUUID(),
+    companyId,
     name: input.name,
     fileName: input.fileName,
     mimeType: input.mimeType,
@@ -207,14 +219,16 @@ async function persistStyleDocument(input: {
 
 export async function updateStyleDocument(input: {
   id: string
+  companyId?: string
   name?: string
   category?: StyleDocumentCategory
   content?: string
 }): Promise<StyleDocument> {
   if (!input.id.trim()) throw new Error('Document-id ontbreekt.')
+  const companyId = input.companyId || DEFAULT_COMPANY_ID
 
   if (isDatabaseConfigured()) {
-    const existing = await prisma.styleDocument.findUnique({ where: { id: input.id } })
+    const existing = await prisma.styleDocument.findFirst({ where: { id: input.id, companyId } })
     if (!existing) throw new Error('Document niet gevonden.')
 
     const record = await prisma.styleDocument.update({
@@ -229,11 +243,13 @@ export async function updateStyleDocument(input: {
   }
 
   const store = await readDevStore()
-  const index = store.documents.findIndex((doc) => doc.id === input.id)
+  const index = store.documents.findIndex(
+    (doc) => doc.id === input.id && (doc.companyId ?? DEFAULT_COMPANY_ID) === companyId,
+  )
   if (index < 0) throw new Error('Document niet gevonden.')
 
   const current = store.documents[index]
-  const updated: StyleDocument = {
+  const updated: StoredStyleDocument = {
     ...current,
     ...(input.name?.trim() ? { name: input.name.trim() } : {}),
     ...(input.category ? { category: input.category } : {}),
@@ -245,16 +261,20 @@ export async function updateStyleDocument(input: {
   return updated
 }
 
-async function getStyleDocument(id: string): Promise<StyleDocument | null> {
+async function getStyleDocument(id: string, companyId: string): Promise<StyleDocument | null> {
   if (isDatabaseConfigured()) {
-    const record = await prisma.styleDocument.findUnique({ where: { id } })
+    const record = await prisma.styleDocument.findFirst({ where: { id, companyId } })
     return record ? mapRecord(record) : null
   }
   const store = await readDevStore()
-  return store.documents.find((doc) => doc.id === id) ?? null
+  return (
+    store.documents.find(
+      (doc) => doc.id === id && (doc.companyId ?? DEFAULT_COMPANY_ID) === companyId,
+    ) ?? null
+  )
 }
 
-async function saveAnalysis(id: string, profile: SourceProfile): Promise<StyleDocument> {
+async function saveAnalysis(id: string, companyId: string, profile: SourceProfile): Promise<StyleDocument> {
   const analysis = JSON.stringify(profile)
 
   if (isDatabaseConfigured()) {
@@ -266,9 +286,11 @@ async function saveAnalysis(id: string, profile: SourceProfile): Promise<StyleDo
   }
 
   const store = await readDevStore()
-  const index = store.documents.findIndex((doc) => doc.id === id)
+  const index = store.documents.findIndex(
+    (doc) => doc.id === id && (doc.companyId ?? DEFAULT_COMPANY_ID) === companyId,
+  )
   if (index < 0) throw new Error('Document niet gevonden.')
-  const updated: StyleDocument = {
+  const updated: StoredStyleDocument = {
     ...store.documents[index],
     analysis: profile,
     analyzedAt: new Date().toISOString(),
@@ -281,11 +303,13 @@ async function saveAnalysis(id: string, profile: SourceProfile): Promise<StyleDo
 
 export async function analyzeStyleDocument(input: {
   id: string
+  companyId?: string
   ai?: AiRuntimeConfig
 }): Promise<StyleDocument> {
   if (!input.id.trim()) throw new Error('Document-id ontbreekt.')
+  const companyId = input.companyId || DEFAULT_COMPANY_ID
 
-  const document = await getStyleDocument(input.id)
+  const document = await getStyleDocument(input.id, companyId)
   if (!document) throw new Error('Document niet gevonden.')
 
   const ai = resolveAiFromRequest(input.ai, 'WRITER_MODEL', 'analysis')
@@ -294,16 +318,18 @@ export async function analyzeStyleDocument(input: {
     content: document.content,
   })
 
-  return saveAnalysis(input.id, profile)
+  return saveAnalysis(input.id, companyId, profile)
 }
 
 export async function distillRulesForDocument(input: {
   id: string
+  companyId?: string
   ai?: AiRuntimeConfig
 }): Promise<string> {
   if (!input.id.trim()) throw new Error('Document-id ontbreekt.')
+  const companyId = input.companyId || DEFAULT_COMPANY_ID
 
-  const document = await getStyleDocument(input.id)
+  const document = await getStyleDocument(input.id, companyId)
   if (!document) throw new Error('Document niet gevonden.')
 
   const ai = resolveAiFromRequest(input.ai, 'WRITER_MODEL', 'analysis')
@@ -314,16 +340,19 @@ export async function distillRulesForDocument(input: {
   })
 }
 
-export async function deleteStyleDocument(id: string): Promise<void> {
+export async function deleteStyleDocument(id: string, companyId = DEFAULT_COMPANY_ID): Promise<void> {
   if (!id.trim()) throw new Error('Document-id ontbreekt.')
 
   if (isDatabaseConfigured()) {
-    await prisma.styleDocument.delete({ where: { id } })
+    const { count } = await prisma.styleDocument.deleteMany({ where: { id, companyId } })
+    if (!count) throw new Error('Document niet gevonden.')
     return
   }
 
   const store = await readDevStore()
-  const next = store.documents.filter((doc) => doc.id !== id)
+  const next = store.documents.filter(
+    (doc) => !(doc.id === id && (doc.companyId ?? DEFAULT_COMPANY_ID) === companyId),
+  )
   if (next.length === store.documents.length) {
     throw new Error('Document niet gevonden.')
   }
@@ -334,7 +363,8 @@ export async function deleteStyleDocument(id: string): Promise<void> {
 export async function handleStyleDocumentsRequest(request: Request): Promise<Response> {
   try {
     if (request.method === 'GET') {
-      const documents = await listStyleDocuments()
+      const companyId = new URL(request.url).searchParams.get('companyId') || DEFAULT_COMPANY_ID
+      const documents = await listStyleDocuments(companyId)
       return Response.json({ documents })
     }
 
@@ -345,6 +375,7 @@ export async function handleStyleDocumentsRequest(request: Request): Promise<Res
       const promptType = String(formData.get('promptType') ?? 'rules') as StyleDocumentPromptType
       const name = String(formData.get('name') ?? '')
       const content = String(formData.get('content') ?? '')
+      const companyId = String(formData.get('companyId') ?? '') || DEFAULT_COMPANY_ID
 
       if (file instanceof File) {
         const buffer = Buffer.from(await file.arrayBuffer())
@@ -355,6 +386,7 @@ export async function handleStyleDocumentsRequest(request: Request): Promise<Res
           fileName: file.name,
           mimeType: file.type,
           buffer,
+          companyId,
         })
         return Response.json({ document }, { status: 201 })
       }
@@ -365,6 +397,7 @@ export async function handleStyleDocumentsRequest(request: Request): Promise<Res
           category,
           promptType,
           content,
+          companyId,
         })
         return Response.json({ document }, { status: 201 })
       }
@@ -376,25 +409,28 @@ export async function handleStyleDocumentsRequest(request: Request): Promise<Res
       const body = (await request.json()) as {
         action?: string
         id?: string
+        companyId?: string
         name?: string
         category?: StyleDocumentCategory
         content?: string
         ai?: AiRuntimeConfig
       }
       if (!body.id?.trim()) throw new Error('Document-id ontbreekt.')
+      const companyId = body.companyId || DEFAULT_COMPANY_ID
 
       if (body.action === 'analyze') {
-        const document = await analyzeStyleDocument({ id: body.id, ai: body.ai })
+        const document = await analyzeStyleDocument({ id: body.id, companyId, ai: body.ai })
         return Response.json({ document })
       }
 
       if (body.action === 'distill-rules') {
-        const rules = await distillRulesForDocument({ id: body.id, ai: body.ai })
+        const rules = await distillRulesForDocument({ id: body.id, companyId, ai: body.ai })
         return Response.json({ rules })
       }
 
       const document = await updateStyleDocument({
         id: body.id,
+        companyId,
         name: body.name,
         category: body.category,
         content: body.content,
@@ -405,8 +441,9 @@ export async function handleStyleDocumentsRequest(request: Request): Promise<Res
     if (request.method === 'DELETE') {
       const url = new URL(request.url)
       const id = url.searchParams.get('id')
+      const companyId = url.searchParams.get('companyId') || DEFAULT_COMPANY_ID
       if (!id) throw new Error('Document-id ontbreekt.')
-      await deleteStyleDocument(id)
+      await deleteStyleDocument(id, companyId)
       return Response.json({ ok: true })
     }
 
