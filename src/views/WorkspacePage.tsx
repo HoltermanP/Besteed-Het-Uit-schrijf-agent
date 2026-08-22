@@ -98,7 +98,16 @@ import {
   reconcileDrafts,
 } from '../lib/drafts'
 import { isNeonConfigured, isWriterConfigured, migrateLegacyNeonUrl } from '../lib/apiConfig'
-import { generateDraftViaApi, fetchWriterStatus, isNoAiConfigError, type WriterStatus } from '../lib/writeDraftApi'
+import {
+  DraftJobDisconnected,
+  DraftJobLost,
+  DraftJobUnwatched,
+  fetchWriterStatus,
+  followDraftJob,
+  generateDraftViaApi,
+  isNoAiConfigError,
+  type WriterStatus,
+} from '../lib/writeDraftApi'
 import { rewriteFragmentViaApi } from '../lib/rewriteFragmentApi'
 import { reviewDraftViaApi } from '../lib/reviewDraftApi'
 import { extractRequirementsViaApi } from '../lib/extractRequirementsApi'
@@ -135,7 +144,12 @@ import EvaluationDialog from '../components/EvaluationDialog'
 import SaveStatusIndicator from '../components/SaveStatusIndicator'
 import { fetchLessons, lessonsToPromptContent, selectRelevantLessons } from '../lib/lessonsLearnedApi'
 import type { LessonLearned } from '../types/lessonLearned'
-import type { WriteDraftDocument, WriteDraftSibling } from '../types/writeDraft'
+import type {
+  WriteDraftDocument,
+  WriteDraftJobSnapshot,
+  WriteDraftResponse,
+  WriteDraftSibling,
+} from '../types/writeDraft'
 import { downloadTenderToDatabase, getSavedTenders } from '../lib/tenderDatabase'
 import { fetchPublicationDetail } from '../lib/tenderNedApi'
 import { buildTenderSourceDocuments } from '../lib/projectFactory'
@@ -144,6 +158,7 @@ import type {
   CommentStatus,
   DossierSnapshot,
   DraftDocument,
+  DraftJobRef,
   DraftVersion,
   DraftVersionHistory,
   ImprovementRound,
@@ -719,6 +734,12 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       updatedAt,
       source: projectId.startsWith('prj-') ? 'blank' : 'tender',
     })
+    // Er is zojuist een schrijfopdracht gestart: het opdracht-id moet nú in de database
+    // staan, want dat is na het sluiten van het tabblad de weg terug naar het werk.
+    if (flushJobRefRef.current) {
+      flushJobRefRef.current = false
+      void flushStorage()
+    }
   }, [projectId, project, documents, tenderDocuments, comments, stage, draft, analysis, analysisSource, requirementStatuses, drafts, activeDraftId])
 
   useEffect(() => {
@@ -759,6 +780,129 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
     const editor = editorRef.current
     if (editor) editor.innerHTML = target.html
   }
+
+  // ── Schrijfopdrachten op de server ─────────────────────────────────────────
+  // De schrijfagent draait als opdracht op de server, niet in deze browserverbinding. Bij
+  // het stuk staat welk opdracht-id erbij hoort; daardoor overleeft een generatie het
+  // sluiten van het tabblad of een weggevallen verbinding, en wordt de opdracht bij
+  // terugkomst (ook op een ander apparaat) weer opgepakt.
+
+  /** Opdrachten die nu al gevolgd worden; voorkomt dubbel meekijken op dezelfde opdracht. */
+  const watchedJobsRef = useRef<Set<string>>(new Set())
+  /** Stopt het meekijken zodra de projectomgeving wordt verlaten (de opdracht loopt door). */
+  const watchStopRef = useRef<AbortController | null>(null)
+  /** Vlag: het opdracht-id moet met voorrang naar de database (zie het dossier-effect). */
+  const flushJobRefRef = useRef(false)
+
+  const rememberJob = (
+    draftId: string,
+    snapshot: WriteDraftJobSnapshot,
+    kind: DraftJobRef['kind'],
+    jobStage: Stage,
+  ) => {
+    persistDraft(draftId, { job: { id: snapshot.id, stage: jobStage, kind, startedAt: snapshot.startedAt } })
+    // Sluit de gebruiker het tabblad direct na de start, dan is dit id de enige weg terug
+    // naar het lopende werk; wachten op de gebruikelijke vertraagde opslag kan dan niet.
+    flushJobRefRef.current = true
+  }
+
+  /** Neem het resultaat van een afgeronde opdracht over in het stuk. */
+  const applyJobResult = (draftId: string, job: DraftJobRef, result: WriteDraftResponse) => {
+    const doc = draftsRef.current.find((item) => item.id === draftId)
+    const title = doc?.title ?? 'Stuk'
+    const active = activeDraftIdRef.current === draftId
+    const patch: Partial<Omit<DraftDocument, 'id'>> = { html: result.html, stage: job.stage, job: null }
+    if (job.kind === 'verbeterronde' && doc?.round) patch.round = markRoundProcessed(doc.round)
+    const nextComments = (doc?.comments ?? []).map((comment) =>
+      comment.status === 'open' ? { ...comment, status: 'akkoord' as CommentStatus } : comment,
+    )
+    if (job.kind === 'opmerkingen') patch.comments = nextComments
+
+    persistDraft(draftId, patch)
+    recordVersion(draftId, {
+      kind: job.kind === 'schrijven' ? 'generatie' : 'verwerking',
+      label: `"${title}" afgerond door de schrijfagent (${stageMeta[job.stage].label})`,
+      stage: job.stage,
+      html: result.html,
+      provider: result.provider,
+      model: result.model,
+    })
+    if (active) {
+      updateEditorHtml(result.html)
+      setStage(job.stage)
+      if (job.kind === 'opmerkingen') setComments(nextComments)
+      setFindings(reviewDraft(result.html, effectiveDocuments, scopeFor(analysis)))
+    }
+    setSyncStatus(`"${title}" gereed met ${result.provider} (${result.model})`)
+  }
+
+  /**
+   * Een mislukt kanaal is geen mislukte opdracht: valt de verbinding weg of stoppen we
+   * bewust met meekijken, dan blijft de opdracht op de server staan en wordt hij later
+   * opgepakt. Geeft true als de fout zo is afgehandeld.
+   */
+  const handleFollowError = (error: unknown, title: string): boolean => {
+    if (error instanceof DraftJobDisconnected || error instanceof DraftJobUnwatched) {
+      setSyncStatus(
+        `Geen verbinding met de server; de schrijfagent werkt door aan "${title}". Het stuk staat er zodra je terug bent.`,
+      )
+      return true
+    }
+    return false
+  }
+
+  /** Kijk mee met een lopende opdracht en verwerk het resultaat zodra het stuk klaar is. */
+  const watchJob = async (draftId: string, job: DraftJobRef) => {
+    if (watchedJobsRef.current.has(job.id)) return
+    watchedJobsRef.current.add(job.id)
+    const title = draftsRef.current.find((item) => item.id === draftId)?.title ?? 'stuk'
+    const isActive = () => activeDraftIdRef.current === draftId
+    const blocksEditor = isActive()
+    if (blocksEditor) setGenerating(true)
+    setSyncStatus(`De schrijfagent werkt op de server verder aan "${title}"…`)
+    try {
+      const result = await followDraftJob(job.id, {
+        onProgress: (html) => {
+          if (isActive()) updateEditorHtml(html)
+        },
+        onStatus: (message) => setSyncStatus(`${title}: ${message}`),
+        signal: watchStopRef.current?.signal,
+      })
+      applyJobResult(draftId, job, result)
+    } catch (error) {
+      if (handleFollowError(error, title)) return
+      // De opdracht is echt afgelopen (mislukt) of niet meer bekend: verwijzing opruimen,
+      // anders blijft het stuk eeuwig "bezig" lijken. De geschreven tekst blijft staan.
+      persistDraft(draftId, { job: null })
+      setSyncStatus(
+        error instanceof DraftJobLost
+          ? `De schrijfopdracht voor "${title}" is niet meer bekend bij de server. Start de schrijfagent opnieuw.`
+          : `Genereren van "${title}" mislukt: ${error instanceof Error ? error.message : 'onbekende fout'}`,
+      )
+    } finally {
+      watchedJobsRef.current.delete(job.id)
+      if (blocksEditor) setGenerating(false)
+    }
+  }
+
+  // Het meekijken stopt bij het verlaten van de projectomgeving; de opdracht zelf draait op
+  // de server door en wordt bij terugkomst opnieuw opgepakt.
+  useEffect(() => {
+    const controller = new AbortController()
+    watchStopRef.current = controller
+    return () => controller.abort()
+  }, [])
+
+  // Pik lopende opdrachten op: bij het openen van het project, na een gesloten tabblad en
+  // nadat een weggevallen verbinding het meekijken afbrak. Tijdens een generatie die vanuit
+  // deze sessie loopt gebeurt dat niet — die kijkt zelf al mee.
+  useEffect(() => {
+    if (generating || batchRunning) return
+    for (const item of drafts) {
+      if (item.job && !watchedJobsRef.current.has(item.job.id)) void watchJob(item.id, item.job)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drafts, generating, batchRunning])
 
   const switchDraft = (id: string) => {
     if (id === activeDraftIdRef.current || generating || rewritingId) return
@@ -863,13 +1007,26 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           currentDraft: stripCommentMarks(html),
           layout: measureLayout(),
         },
-        (accumulated) => {
-          updateEditorHtml(accumulated || html)
+        {
+          job: {
+            projectId,
+            draftId: activeDraftIdRef.current,
+            draftTitle: current?.title ?? project.title,
+            kind: 'verbeterronde',
+          },
+          onStarted: (snapshot) => rememberJob(activeDraftIdRef.current, snapshot, 'verbeterronde', target),
+          onProgress: (accumulated) => updateEditorHtml(accumulated || html),
+          onStatus: (message) => setSyncStatus(message),
+          signal: watchStopRef.current?.signal,
         },
-        (message) => setSyncStatus(message),
       )
       updateEditorHtml(aiResult.html)
-      persistDraft(activeDraftIdRef.current, { html: aiResult.html, stage: target, round: markRoundProcessed(round) })
+      persistDraft(activeDraftIdRef.current, {
+        html: aiResult.html,
+        stage: target,
+        round: markRoundProcessed(round),
+        job: null,
+      })
       recordVersion(activeDraftIdRef.current, {
         kind: 'verwerking',
         label: `Verbeterronde verwerkt naar ${stageMeta[target].label}`,
@@ -884,6 +1041,8 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
         `Verbeterronde verwerkt naar ${stageMeta[target].label} met ${aiResult.provider} (${aiResult.model}) — voer een nieuwe AI-review uit voor de volgende ronde`,
       )
     } catch (error) {
+      // Verbinding weg: de opdracht loopt op de server door en wordt straks opgepakt.
+      if (handleFollowError(error, current?.title ?? 'dit stuk')) return
       const message = error instanceof Error ? error.message : 'Verwerken mislukt.'
       if (isNoAiConfigError(message)) {
         // Zonder AI: antwoorden en goedgekeurde voorstellen zichtbaar in het concept zetten,
@@ -991,6 +1150,10 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
   // Leg het handwerk van de schrijver vast vóór een AI-actie, een wissel van stuk of het
   // herstellen van een oudere versie.
   const captureManualEdit = (label = 'Eigen bewerkingsronde') => {
+    // Tijdens het schrijven bouwt de agent de tekst stap voor stap op; die tussenstand is
+    // geen handwerk van de schrijver. De aanroepers leggen het handwerk vast vóór ze de
+    // agent starten.
+    if (generating || rewritingId) return
     const html = liveDraftHtml()
     if (!html.trim() || isStartDraft(html)) return
     recordVersion(activeDraftIdRef.current, { kind: 'bewerking', label, stage, html })
@@ -1394,13 +1557,17 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
             targetStage === 'brons' || isStartDraft(previousDraft) ? undefined : stripCommentMarks(previousDraft),
           layout: measureLayout(),
         },
-        (accumulated) => {
-          updateEditorHtml(accumulated || '<p class="generation-placeholder">Concept wordt opgebouwd…</p>')
+        {
+          job: { projectId, draftId: doc.id, draftTitle: doc.title, kind: 'schrijven' },
+          onStarted: (snapshot) => rememberJob(doc.id, snapshot, 'schrijven', targetStage),
+          onProgress: (accumulated) =>
+            updateEditorHtml(accumulated || '<p class="generation-placeholder">Concept wordt opgebouwd…</p>'),
+          onStatus: (message) => setSyncStatus(message),
+          signal: watchStopRef.current?.signal,
         },
-        (message) => setSyncStatus(message),
       )
       updateEditorHtml(aiResult.html)
-      persistDraft(doc.id, { html: aiResult.html, stage: targetStage })
+      persistDraft(doc.id, { html: aiResult.html, stage: targetStage, job: null })
       recordVersion(doc.id, {
         kind: 'generatie',
         label: `"${doc.title}" gegenereerd (${stageMeta[targetStage].label})`,
@@ -1416,6 +1583,9 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           : `"${doc.title}" gegenereerd met ${aiResult.provider} (${aiResult.model}), opgeslagen in database`,
       )
     } catch (error) {
+      // Verbinding weg: het schrijven loopt op de server door. De (deels geschreven) tekst
+      // in de editor blijft staan; het resultaat komt binnen zodra de opdracht is opgepakt.
+      if (handleFollowError(error, doc.title)) return
       const message = error instanceof Error ? error.message : 'Genereren mislukt.'
       if (isNoAiConfigError(message)) {
         setSyncStatus('Geen AI geconfigureerd — lokaal concept wordt gebouwd…')
@@ -1824,12 +1994,21 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
           currentDraft: stripCommentMarks(draft),
           layout: measureLayout(),
         },
-        (accumulated) => {
-          updateEditorHtml(accumulated || draft)
+        {
+          job: {
+            projectId,
+            draftId: activeDraftIdRef.current,
+            draftTitle: activeDraft?.title ?? project.title,
+            kind: 'opmerkingen',
+          },
+          onStarted: (snapshot) => rememberJob(activeDraftIdRef.current, snapshot, 'opmerkingen', 'zilver'),
+          onProgress: (accumulated) => updateEditorHtml(accumulated || draft),
+          onStatus: (message) => setSyncStatus(message),
+          signal: watchStopRef.current?.signal,
         },
       )
       updateEditorHtml(aiResult.html)
-      persistDraft(activeDraftIdRef.current, { html: aiResult.html, stage: 'zilver' })
+      persistDraft(activeDraftIdRef.current, { html: aiResult.html, stage: 'zilver', job: null })
       recordVersion(activeDraftIdRef.current, {
         kind: 'verwerking',
         label: `${openComments.length} opmerking(en) verwerkt (Zilver)`,
@@ -1843,6 +2022,8 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
       setFindings(reviewDraft(aiResult.html, effectiveDocuments, scoped))
       setSyncStatus(`Opmerkingen verwerkt met ${aiResult.provider} (${aiResult.model})`)
     } catch (error) {
+      // Verbinding weg: de opdracht loopt op de server door en wordt straks opgepakt.
+      if (handleFollowError(error, activeDraft?.title ?? 'dit stuk')) return
       const message = error instanceof Error ? error.message : 'Verwerken mislukt.'
       if (isNoAiConfigError(message)) {
         const additions = openComments
@@ -3001,6 +3182,15 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-semibold">{item.title}</span>
                         <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted-foreground">
+                          {item.job ? (
+                            <span
+                              data-testid="draft-job-badge"
+                              className="flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0 font-bold uppercase tracking-wide text-primary"
+                              title="De schrijfagent werkt op de server aan dit stuk; sluiten van het tabblad stopt dat niet."
+                            >
+                              <Loader2 size={10} className="animate-spin" /> schrijft
+                            </span>
+                          ) : null}
                           <span
                             className={cn(
                               'rounded-full px-1.5 py-0 font-bold uppercase tracking-wide',
@@ -3491,7 +3681,7 @@ function ProjectWorkspace({ projectId }: { projectId: string }) {
               {generating ? <Loader2 size={17} className="shrink-0 animate-spin" /> : <Bot size={17} className="shrink-0" />}
               <span className="min-w-0 break-words">
                 {generating
-                  ? 'Concept wordt opgebouwd…'
+                  ? 'Concept wordt op de server opgebouwd — je kunt dit tabblad sluiten; het stuk staat er als je terugkomt.'
                   : notStarted
                     ? 'De schrijfagent is nog niet gestart — het veld toont alleen een samenvatting van de aanbesteding.'
                     : stagePrompts[stage]}

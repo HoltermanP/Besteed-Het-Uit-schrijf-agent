@@ -283,11 +283,12 @@ export async function runWriteJob(id: string): Promise<void> {
       patch.checkpoint = JSON.stringify(checkpoint)
       checkpointDirty = false
     }
-    queue = queue.then(() => updateJob(id, patch))
+    // Een mislukte schrijfactie mag de keten niet breken; de volgende poging pakt hem op.
+    queue = queue.then(() => updateJob(id, patch)).catch(() => undefined)
   }
 
   const heartbeat = setInterval(() => {
-    queue = queue.then(() => updateJob(id, { heartbeatAt: new Date() }))
+    queue = queue.then(() => updateJob(id, { heartbeatAt: new Date() })).catch(() => undefined)
   }, HEARTBEAT_MS)
 
   try {

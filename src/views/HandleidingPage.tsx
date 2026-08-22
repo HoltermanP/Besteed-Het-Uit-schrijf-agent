@@ -429,6 +429,14 @@ export default function HandleidingPage() {
               &ldquo;Genereren…&rdquo; met voortgang.
             </li>
             <li>
+              <strong>Het schrijven draait op de server:</strong> een stuk van duizenden woorden kost minuten. Zodra
+              je op <Term>Genereer</Term> klikt, gaat de opdracht naar de server en loopt daar door — ook als je
+              tabblad dichtgaat, je laptop dichtklapt of je verbinding wegvalt. Het stuk staat in de stukkenlijst
+              zolang met <em>schrijft</em> gemarkeerd; open je het project later (of op een ander apparaat) opnieuw,
+              dan wordt de opdracht automatisch weer opgepakt en vind je het afgeronde stuk terug. Je hoeft dus niet
+              te blijven kijken en verliest geen half document meer.
+            </li>
+            <li>
               <strong>Leidraadanalyse</strong> (<Term>Analyseer dossier</Term>): analyseert de aanbesteding en toont
               de samenvatting, de <em>vraag achter de vraag</em> (expliciete vraag, achterliggende behoefte,
               prioriteiten van de opdrachtgever), formele eisen zoals woord-, karakter- en paginalimieten
@@ -459,6 +467,14 @@ export default function HandleidingPage() {
               (of Goud). De schrijfagent verwerkt uitsluitend wat is goedgekeurd en beantwoord; voor onbeantwoorde
               vragen schrijft hij niets op basis van aannames — de review blijft daarom vragen om informatie totdat
               de onderbouwing er is.
+            </li>
+            <li>
+              <strong>Versies</strong> (knop <Term>Versies</Term> bovenaan): elke generatie, elke verwerking van
+              opmerkingen of een verbeterronde en elke eigen bewerkingsronde wordt per stuk bewaard. In het tabblad{' '}
+              <Term>Geschiedenis</Term> zie je wat wanneer is geschreven en door welk model; in{' '}
+              <Term>Vergelijken</Term> leg je twee versies naast elkaar met de verschillen per alinea, tabel of kop.
+              Met <Term>Herstel</Term> zet je een oudere versie terug in de editor — de tekst die op dat moment in de
+              editor staat, gaat eerst als versie de geschiedenis in. <Term>Genereer</Term> gooit dus nooit werk weg.
             </li>
             <li>
               <strong>Kansscore:</strong> de score-tegel toont je winkans op basis van match tussen profiel en
@@ -711,6 +727,13 @@ export default function HandleidingPage() {
               Controleer de statusregel in de linkerkolom: staat &ldquo;Schrijfagent actief&rdquo; op niet actief, dan
               ontbreekt een API-configuratie. Vraag de beheerder om de schrijfagent-API in te stellen via de
               adminpagina.
+            </Faq>
+            <Faq question="Wat gebeurt er als ik het tabblad sluit terwijl de agent schrijft?">
+              Niets ergs: het schrijven is een opdracht op de server, niet in je browser. Die loopt door en het
+              resultaat wordt bij het stuk bewaard. Open het project later weer — desnoods op een andere computer —
+              dan pikt de werkplek de opdracht op en staat het afgeronde stuk er. Duurt het schrijven langer dan één
+              serverbeurt, dan gaat het werk verder waar het gebleven was; al geschreven secties worden nooit
+              opnieuw gedaan of weggegooid.
             </Faq>
             <Faq question="Mijn upload wordt geweigerd.">
               Ondersteunde formaten zijn PDF (tot 50 MB), Word (.docx en .doc), PowerPoint, Excel (.xlsx en .xls),

@@ -105,6 +105,20 @@ export type ImprovementRound = {
 }
 
 /**
+ * Verwijzing naar een schrijfopdracht die op de server draait. Staat deze bij een stuk, dan
+ * is de schrijfagent bezig (of net klaar) en pikt de werkplek de opdracht op zodra het
+ * project weer geopend wordt — ook op een ander apparaat.
+ */
+export type DraftJobRef = {
+  id: string
+  /** Het stadium dat deze opdracht oplevert. */
+  stage: Stage
+  /** Waarvoor de opdracht draait; bepaalt de melding en de nabewerking van het resultaat. */
+  kind: 'schrijven' | 'opmerkingen' | 'verbeterronde'
+  startedAt: string
+}
+
+/**
  * Eén te schrijven stuk binnen een project, met eigen concept, stadium en opmerkingen.
  * De lijst volgt uit de leidraadanalyse (requestedDocuments van soort 'schrijfstuk');
  * daarnaast kan de gebruiker eigen stukken toevoegen.
@@ -122,6 +136,8 @@ export type DraftDocument = {
   comments: ReviewComment[]
   /** Laatste verbeterronde (AI-review) van dit stuk; antwoorden en goedgekeurde voorstellen gaan mee naar de volgende versie. */
   round?: ImprovementRound | null
+  /** Lopende schrijfopdracht op de server; blijft staan tot het resultaat is verwerkt. */
+  job?: DraftJobRef | null
   updatedAt: string
 }
 
