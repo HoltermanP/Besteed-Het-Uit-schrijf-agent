@@ -58,7 +58,7 @@ export type AiTaskTier = 'writer' | 'analysis' | 'light'
 // Alleen van toepassing op Anthropic; bij OpenAI-compatibele endpoints kennen
 // we het beschikbare modelaanbod niet en blijft het geconfigureerde model staan.
 const ANTHROPIC_TIER_MODELS: Record<AiTaskTier, string> = {
-  writer: 'claude-opus-4-8',
+  writer: 'claude-opus-5-5',
   analysis: 'claude-sonnet-4-6',
   light: 'claude-haiku-4-5',
 }
@@ -92,7 +92,67 @@ function normalizeAnthropicBaseUrl(baseUrl: string): string {
 }
 
 function usesAdaptiveThinking(model: string): boolean {
-  return /claude-(opus-4-[678]|sonnet-4-6|fable-5|mythos-5)/i.test(model)
+  return /claude-(opus-4-[678]|opus-5|sonnet-4-6|sonnet-5|fable-5|mythos-5)/i.test(model)
+}
+
+/**
+ * Modellen die zonder `thinking`-veld tóch denken (Opus 5.x, Sonnet 5, Fable/Mythos 5.x;
+ * bij Opus 5.5 en Fable kan het zelfs niet uit). Uitzetten doen we niet: effort is daar de
+ * knop. Wel telt het denkwerk mee in max_tokens, dus krijgen ze ruimte bovenop het budget
+ * voor de tekst — anders wordt een sectie afgekapt en is juist de opmaak aan het einde weg.
+ */
+export function thinksByDefault(model: string): boolean {
+  return /claude-(opus-5|sonnet-5|fable-5|mythos-5)/i.test(model)
+}
+
+const THINKING_HEADROOM_TOKENS = 32_000
+
+function maxTokensFor(ai: AiRuntimeConfig, options: AiCompletionOptions): number {
+  const reply = options.maxTokens ?? 16_000
+  return thinksByDefault(ai.model) ? reply + THINKING_HEADROOM_TOKENS : reply
+}
+
+/**
+ * De veiligheidsclassifiers van Opus 5.x en Fable 5.x kunnen een verzoek weigeren (HTTP 200,
+ * stop_reason "refusal"). Met server-side fallback draait de API het verzoek dan zelf opnieuw
+ * op het aanbevolen vervangende model; alleen rechtstreeks bij Anthropic, want een proxy of
+ * compatibel endpoint kent de beta niet.
+ */
+function serverFallbackFor(ai: AiRuntimeConfig, baseUrl: string): boolean {
+  return /claude-(opus-5|fable-5)/i.test(ai.model) && baseUrl === DEFAULT_ANTHROPIC_BASE_URL
+}
+
+const SERVER_FALLBACK_BETA = 'server-side-fallback-2026-07-01'
+
+function anthropicRequest(ai: AiRuntimeConfig, options: AiCompletionOptions, body: Record<string, unknown>) {
+  const baseUrl = normalizeAnthropicBaseUrl(normalizeBaseUrl(ai.baseUrl, DEFAULT_ANTHROPIC_BASE_URL))
+  const headers: Record<string, string> = {
+    'x-api-key': ai.apiKey,
+    'anthropic-version': ANTHROPIC_VERSION,
+    'content-type': 'application/json',
+  }
+  if (options.useThinking && usesAdaptiveThinking(ai.model)) {
+    body.thinking = { type: 'adaptive' }
+  }
+  // effort staat los van thinking: ook zonder adaptive thinking bepaalt dit de
+  // denkdiepte/inspanning van het model, dus altijd meesturen wanneer gezet.
+  if (options.effort) {
+    body.output_config = { effort: options.effort }
+  }
+  if (serverFallbackFor(ai, baseUrl)) {
+    headers['anthropic-beta'] = SERVER_FALLBACK_BETA
+    body.fallbacks = 'default'
+  }
+  return { url: `${baseUrl}/v1/messages`, headers }
+}
+
+type AnthropicStopDetails = { category?: string | null; explanation?: string | null } | null
+
+function refusalError(ai: AiRuntimeConfig, details: AnthropicStopDetails | undefined): Error {
+  const category = details?.category ? ` (categorie: ${details.category})` : ''
+  return new Error(
+    `Het model ${ai.model} weigerde dit verzoek${category}. Probeer het opnieuw of kies in API-beheer een ander schrijfmodel.`,
+  )
 }
 
 function splitMessages(messages: AiMessage[]) {
@@ -128,8 +188,14 @@ type AnthropicUsage = {
 //
 // Het vastleggen gebeurt bewust zonder await en met een eigen vangnet: een trage of
 // haperende database mag een generatie die de gebruiker minuten kost nooit laten klappen.
-function logUsage(ai: AiRuntimeConfig, options: AiCompletionOptions, usage: AnthropicUsage | undefined) {
+function logUsage(
+  ai: AiRuntimeConfig,
+  options: AiCompletionOptions,
+  usage: AnthropicUsage | undefined,
+  servedBy?: string,
+) {
   if (!usage) return
+  const model = servedBy || ai.model
   const tokens = {
     inputTokens: usage.input_tokens ?? 0,
     outputTokens: usage.output_tokens ?? 0,
@@ -141,7 +207,7 @@ function logUsage(ai: AiRuntimeConfig, options: AiCompletionOptions, usage: Anth
     '[ai-verbruik]',
     JSON.stringify({
       taak: options.label ?? 'onbekend',
-      model: ai.model,
+      model,
       input: tokens.inputTokens,
       output: tokens.outputTokens,
       cacheWrite: tokens.cacheWriteTokens,
@@ -151,7 +217,7 @@ function logUsage(ai: AiRuntimeConfig, options: AiCompletionOptions, usage: Anth
 
   void recordAiUsage({
     provider: ai.provider,
-    model: ai.model,
+    model,
     task: options.label ?? 'onbekend',
     ...tokens,
     cacheRequested: Boolean(options.cachePrompt),
@@ -231,28 +297,15 @@ async function completeAnthropic(
   const { systemBlocks, anthropicMessages } = buildAnthropicPayload(messages, options)
   const body: Record<string, unknown> = {
     model: ai.model,
-    max_tokens: options.maxTokens ?? 16_000,
+    max_tokens: maxTokensFor(ai, options),
     messages: anthropicMessages,
   }
 
   if (systemBlocks) body.system = systemBlocks
-  // effort staat los van thinking: ook zonder adaptive thinking bepaalt dit de
-  // denkdiepte/inspanning van het model, dus altijd meesturen wanneer gezet.
-  if (options.useThinking && usesAdaptiveThinking(ai.model)) {
-    body.thinking = { type: 'adaptive' }
-  }
-  if (options.effort) {
-    body.output_config = { effort: options.effort }
-  }
-
-  const baseUrl = normalizeAnthropicBaseUrl(normalizeBaseUrl(ai.baseUrl, DEFAULT_ANTHROPIC_BASE_URL))
-  const response = await fetch(`${baseUrl}/v1/messages`, {
+  const { url, headers } = anthropicRequest(ai, options, body)
+  const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'x-api-key': ai.apiKey,
-      'anthropic-version': ANTHROPIC_VERSION,
-      'content-type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(options.timeoutMs ?? 120_000),
   })
@@ -263,10 +316,15 @@ async function completeAnthropic(
   }
 
   const payload = (await response.json()) as {
+    model?: string
     content?: Array<{ type?: string; text?: string }>
     usage?: AnthropicUsage
+    stop_reason?: string
+    stop_details?: AnthropicStopDetails
   }
-  logUsage(ai, options, payload.usage)
+  logUsage(ai, options, payload.usage, payload.model)
+  // Ook na een fallback kan de keten als geheel weigeren; de inhoud is dan leeg of half.
+  if (payload.stop_reason === 'refusal') throw refusalError(ai, payload.stop_details)
   const text = payload.content
     ?.filter((block) => block.type === 'text')
     .map((block) => block.text ?? '')
@@ -277,6 +335,13 @@ async function completeAnthropic(
   return text
 }
 
+type AnthropicStreamEvent = {
+  type?: string
+  delta?: { type?: string; text?: string; stop_reason?: string; stop_details?: AnthropicStopDetails }
+  message?: { model?: string; usage?: AnthropicUsage }
+  usage?: AnthropicUsage
+}
+
 async function* streamAnthropic(
   ai: AiRuntimeConfig,
   messages: AiMessage[],
@@ -285,29 +350,16 @@ async function* streamAnthropic(
   const { systemBlocks, anthropicMessages } = buildAnthropicPayload(messages, options)
   const body: Record<string, unknown> = {
     model: ai.model,
-    max_tokens: options.maxTokens ?? 16_000,
+    max_tokens: maxTokensFor(ai, options),
     messages: anthropicMessages,
     stream: true,
   }
 
   if (systemBlocks) body.system = systemBlocks
-  // effort staat los van thinking: ook zonder adaptive thinking bepaalt dit de
-  // denkdiepte/inspanning van het model, dus altijd meesturen wanneer gezet.
-  if (options.useThinking && usesAdaptiveThinking(ai.model)) {
-    body.thinking = { type: 'adaptive' }
-  }
-  if (options.effort) {
-    body.output_config = { effort: options.effort }
-  }
-
-  const baseUrl = normalizeAnthropicBaseUrl(normalizeBaseUrl(ai.baseUrl, DEFAULT_ANTHROPIC_BASE_URL))
-  const response = await fetch(`${baseUrl}/v1/messages`, {
+  const { url, headers } = anthropicRequest(ai, options, body)
+  const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'x-api-key': ai.apiKey,
-      'anthropic-version': ANTHROPIC_VERSION,
-      'content-type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(options.timeoutMs ?? 180_000),
   })
@@ -333,6 +385,38 @@ async function* streamAnthropic(
     if (usage.cache_creation_input_tokens != null) usageTotals.cache_creation_input_tokens = usage.cache_creation_input_tokens
     if (usage.cache_read_input_tokens != null) usageTotals.cache_read_input_tokens = usage.cache_read_input_tokens
   }
+  // Na een server-side fallback noemt message_start het model dat het werk echt deed;
+  // dat model bepaalt het tarief in de verbruiksadministratie.
+  let servedBy: string | undefined
+  let stopReason: string | undefined
+  let stopDetails: AnthropicStopDetails | undefined
+
+  // Denkblokken (thinking_delta) worden overgeslagen: alleen de tekst is het antwoord.
+  const handleLine = (line: string): string | null => {
+    if (!line.startsWith('data: ')) return null
+    const payload = line.slice(6).trim()
+    if (!payload || payload === '[DONE]') return null
+    try {
+      const event = JSON.parse(payload) as AnthropicStreamEvent
+      if (event.type === 'message_start') {
+        mergeUsage(event.message?.usage)
+        servedBy = event.message?.model ?? servedBy
+      }
+      if (event.type === 'message_delta') {
+        mergeUsage(event.usage)
+        if (event.delta?.stop_reason) {
+          stopReason = event.delta.stop_reason
+          stopDetails = event.delta.stop_details
+        }
+      }
+      if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+        return event.delta.text || null
+      }
+    } catch {
+      // onvolledige SSE-regel overslaan
+    }
+    return null
+  }
 
   while (true) {
     const { done, value } = await reader.read()
@@ -343,53 +427,19 @@ async function* streamAnthropic(
     buffer = lines.pop() ?? ''
 
     for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const payload = line.slice(6).trim()
-      if (!payload || payload === '[DONE]') continue
-      try {
-        const event = JSON.parse(payload) as {
-          type?: string
-          delta?: { type?: string; text?: string }
-          message?: { usage?: AnthropicUsage }
-          usage?: AnthropicUsage
-        }
-        if (event.type === 'message_start') mergeUsage(event.message?.usage)
-        if (event.type === 'message_delta') mergeUsage(event.usage)
-        if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-          const text = event.delta.text
-          if (text) yield text
-        }
-      } catch {
-        // onvolledige SSE-regel overslaan
-      }
+      const text = handleLine(line)
+      if (text) yield text
     }
   }
 
-  if (buffer.trim()) {
-    for (const line of buffer.split('\n')) {
-      if (!line.startsWith('data: ')) continue
-      const payload = line.slice(6).trim()
-      if (!payload || payload === '[DONE]') continue
-      try {
-        const event = JSON.parse(payload) as {
-          type?: string
-          delta?: { type?: string; text?: string }
-          message?: { usage?: AnthropicUsage }
-          usage?: AnthropicUsage
-        }
-        if (event.type === 'message_start') mergeUsage(event.message?.usage)
-        if (event.type === 'message_delta') mergeUsage(event.usage)
-        if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-          const text = event.delta.text
-          if (text) yield text
-        }
-      } catch {
-        // onvolledige SSE-regel overslaan
-      }
-    }
+  for (const line of buffer.split('\n')) {
+    const text = handleLine(line)
+    if (text) yield text
   }
 
-  if (Object.keys(usageTotals).length) logUsage(ai, options, usageTotals)
+  if (Object.keys(usageTotals).length) logUsage(ai, options, usageTotals, servedBy)
+  // Een weigering midden in de stroom laat een halve tekst achter: niet als af behandelen.
+  if (stopReason === 'refusal') throw refusalError(ai, stopDetails)
 }
 
 async function* streamOpenAiCompatible(

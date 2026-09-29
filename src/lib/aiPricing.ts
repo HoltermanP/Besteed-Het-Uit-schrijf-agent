@@ -15,21 +15,25 @@ export type ModelPrice = {
   input: number
   /** Dollar per miljoen uitvoertokens. */
   output: number
+  /** Afwijkende factor voor uit de cache gelezen invoer; zonder deze geldt CACHE_MULTIPLIERS.read. */
+  cacheRead?: number
 }
 
 /**
- * Tarieven per miljoen tokens (Anthropic, stand augustus 2026). Alleen modellen die deze
+ * Tarieven per miljoen tokens (Anthropic, stand september 2026). Alleen modellen die deze
  * app daadwerkelijk kan aanroepen. Een model dat hier niet in staat, wordt wél geteld in
  * tokens maar krijgt geen bedrag — de verbruikspagina meldt dat dan als "tarief onbekend"
  * in plaats van een verzonnen bedrag te tonen.
  */
 const MODEL_PRICES: Record<string, ModelPrice> = {
+  'claude-fable-5-1': { input: 10, output: 50, cacheRead: 0.025 },
   'claude-fable-5': { input: 10, output: 50 },
+  'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.05 },
   'claude-opus-5': { input: 5, output: 25 },
   'claude-opus-4-8': { input: 5, output: 25 },
   'claude-opus-4-7': { input: 5, output: 25 },
   'claude-opus-4-6': { input: 5, output: 25 },
-  'claude-sonnet-5': { input: 3, output: 15 },
+  'claude-sonnet-5': { input: 2, output: 10 },
   'claude-sonnet-4-6': { input: 3, output: 15 },
   'claude-haiku-4-5': { input: 1, output: 5 },
 }
@@ -80,7 +84,7 @@ export function costUsdMicros(
   const billableInput =
     usage.inputTokens +
     usage.cacheWriteTokens * writeMultiplier +
-    usage.cacheReadTokens * CACHE_MULTIPLIERS.read
+    usage.cacheReadTokens * (price.cacheRead ?? CACHE_MULTIPLIERS.read)
 
   const dollars = (billableInput * price.input + usage.outputTokens * price.output) / 1_000_000
   return Math.round(dollars * 1_000_000)

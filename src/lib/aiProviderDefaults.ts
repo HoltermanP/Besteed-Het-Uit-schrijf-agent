@@ -3,8 +3,8 @@ import type { AiProvider } from '../types/apiConfig'
 export const aiProviderDefaults: Record<AiProvider, { baseUrl: string; model: string; hint: string }> = {
   anthropic: {
     baseUrl: 'https://api.anthropic.com',
-    model: 'claude-opus-4-8',
-    hint: 'Anthropic Messages API. Aanbevolen model: claude-opus-4-8.',
+    model: 'claude-opus-5-5',
+    hint: 'Anthropic Messages API. Aanbevolen model: claude-opus-5-5.',
   },
   openai: {
     baseUrl: 'https://api.openai.com/v1',

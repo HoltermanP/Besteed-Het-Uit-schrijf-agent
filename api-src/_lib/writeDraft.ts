@@ -2,6 +2,7 @@ import {
   completeChat,
   resolveAiFromRequest,
   streamChat,
+  thinksByDefault,
   type AiCompletionOptions,
   type AiRuntimeConfig,
   type AiMessage,
@@ -213,8 +214,21 @@ const VOLUME_TARGET_RATIO = 0.95
 const LEAD_WORDS = 60
 const CLOSING_WORDS = 130
 const MIN_SECTION_WORDS = 100
+/**
+ * Plafond per sectie. Ook binnen één aanroep laat het model de opmaak verderop los zodra
+ * een sectie lang wordt; een groot onderwerp wordt daarom over meer secties verdeeld.
+ */
+const MAX_SECTION_WORDS = 700
+/** Meer secties dan dit maakt het stuk versnipperd; bij een groter budget groeit het plafond mee. */
+const MAX_SECTIONS = 16
+/** Vanaf deze omvang moet ook de tweede helft van een sectie opmaak bevatten. */
+const TAIL_CHECK_WORDS = 450
+/** Eén opmaakelement (opsomming, tabel of model) per zoveel woorden. */
+const WORDS_PER_FORMAT_ELEMENT = 300
 /** Absolute ondergrens per sectie wanneer een krappe paginalimiet geen 100 woorden toelaat. */
 const ABSOLUTE_MIN_SECTION_WORDS = 60
+/** Herstelpogingen per sectie waarin de verplichte opmaak ontbreekt. */
+const REPAIR_ATTEMPTS = 2
 /** Inkortrondes na het schrijven; elke ronde haalt de grootste secties omlaag. */
 const TRIM_ROUNDS = 2
 /** Zoveel secties tegelijk inkorten per ronde. */
@@ -332,6 +346,10 @@ function stripTags(html: string): string {
     .replace(/&amp;/g, '&')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function sectionCap(sectionBudget: number): number {
+  return Math.max(MAX_SECTION_WORDS, Math.ceil(sectionBudget / MAX_SECTIONS))
 }
 
 function countVisibleWords(html: string): number {
@@ -756,12 +774,20 @@ function withTask(base: AiMessage[], task: string): AiMessage[] {
   return [...base, { role: 'user', content: task }]
 }
 
-function chatOptions(request: WriteDraftRequest, overrides: Partial<AiCompletionOptions>): AiCompletionOptions {
+function chatOptions(
+  ai: AiRuntimeConfig,
+  request: WriteDraftRequest,
+  overrides: Partial<AiCompletionOptions>,
+): AiCompletionOptions {
+  // Modellen die altijd denken (Opus 5.x) halen op een lager effort-niveau al de kwaliteit
+  // die Opus 4.8 op high/xhigh haalde, en denken per niveau langer: een niveau lager
+  // houdt de secties snel en betaalbaar, en de tijdslimiet ruimer vangt het denkwerk op.
+  const thinking = thinksByDefault(ai.model)
   return {
     maxTokens: 12_000,
-    timeoutMs: 180_000,
+    timeoutMs: thinking ? 300_000 : 180_000,
     useThinking: false,
-    effort: request.stage === 'goud' ? 'xhigh' : 'high',
+    effort: thinking ? (request.stage === 'goud' ? 'high' : 'medium') : request.stage === 'goud' ? 'xhigh' : 'high',
     // System prompt, bronnenblok en taakcontext zijn identiek over alle
     // deelopdrachten van één generatie én over de stadia heen — prompt caching
     // scheelt daar ~90% input. 1h-TTL omdat er tussen stadia doorgaans een
@@ -846,14 +872,19 @@ function buildPlanPrompt(request: WriteDraftRequest, target: WordTarget, existin
   const sectionBudget = Math.max(MIN_SECTION_WORDS, target.total - LEAD_WORDS - (closingAllowed ? CLOSING_WORDS : 0))
   // Bij een krappe limiet past niet elke gewenste indeling: meer secties dan het budget
   // toelaat levert onvermijdelijk een te lang stuk, dus wordt het aantal begrensd.
-  const maxSections = target.hardMax ? Math.max(2, Math.floor(sectionBudget / MIN_SECTION_WORDS)) : 16
+  const maxSections = target.hardMax ? Math.max(2, Math.floor(sectionBudget / MIN_SECTION_WORDS)) : MAX_SECTIONS
+  const cap = sectionCap(sectionBudget)
+  const minSections = Math.min(MAX_SECTIONS, Math.ceil(sectionBudget / cap))
   const lines = [
     `OPZET VAN HET STUK — deelopdracht 1 (nog géén lopende tekst)`,
     `Maak de opzet voor "${docTitle}": welke secties, wat elke sectie beantwoordt, het woordbudget per sectie en welk managementmodel (indien passend) de inhoud van die sectie versterkt. Elke sectie wordt daarna in een aparte aanroep op basis van jouw opzet uitgeschreven — de opzet moet dus volledig en zelfdragend zijn.`,
     '',
     'Regels:',
     '- Secties spiegelen de indeling die de leidraad voor dit stuk voorschrijft (zelfde benaming, nummering, volgorde). De deelvragen/onderwerpen onder "DIT STUK" krijgen elk een eigen sectie, in die volgorde; voeg alleen secties toe die de leidraad vraagt',
-    `- Woordbudget: de secties samen circa ${sectionBudget.toLocaleString('nl-NL')} woorden zichtbare tekst (lead en slotsectie vallen daarbuiten). Verdeel naar de weging van de (sub)criteria; elke sectie minimaal ${MIN_SECTION_WORDS} woorden${target.hardMax ? '; het totaal is een hard maximum' : ''}`,
+    `- Woordbudget: de secties samen circa ${sectionBudget.toLocaleString('nl-NL')} woorden zichtbare tekst (lead en slotsectie vallen daarbuiten). Verdeel naar de weging van de (sub)criteria; elke sectie minimaal ${MIN_SECTION_WORDS} en maximaal ${cap} woorden${target.hardMax ? '; het totaal is een hard maximum' : ''}`,
+    ...(minSections > 1
+      ? [`- Dus minimaal ${minSections} secties: een onderwerp dat meer dan ${cap} woorden vraagt, verdeel je over opeenvolgende secties met elk een eigen deelaspect en eigen titel`]
+      : []),
     '- brief per sectie: de kernzin van ons antwoord, wat concreet wordt uitgewerkt (wie/wat/wanneer/hoe vaak) en welk bewijs uit de bedrijfsbronnen erin hoort — specifiek genoeg om de sectie los te kunnen schrijven zonder overlap met andere secties',
     '- model per sectie: het inhoudelijk best passende erkende managementmodel ("process-flow", "timeline", "org-chart", "matrix-2x2" of "model-grid") met modelTitle (bijv. "PDCA-cyclus", "Risicomatrix (kans × impact)", "SWOT-analyse"), of "none" als een model niets toevoegt. Wissel van modeltype tussen opeenvolgende secties; gebruik modellen verspreid over het hele stuk, niet alleen vooraan',
     `- closing: ${closingAllowed ? 'true — slotsectie "Onze toezeggingen in het kort" met toezeggingentabel' : 'false — het budget is te krap voor een slotsectie'}`,
@@ -968,6 +999,12 @@ function parsePlan(content: string, request: WriteDraftRequest, target: WordTarg
       section.words = Math.max(floor, Math.round(section.words * factor))
     })
   }
+  // Het plafond gaat voor het totaal: liever een iets korter stuk dan een sectie waarin de
+  // opmaak wegzakt. De opzet vraagt al om genoeg secties, dus dit knipt alleen uitschieters.
+  const cap = sectionCap(body)
+  sections.forEach((section) => {
+    section.words = Math.min(section.words, cap)
+  })
 
   const fallbackTitle = request.targetDocument?.title ?? request.project.title
   return {
@@ -989,7 +1026,7 @@ async function createPlan(
   const content = await completeChat(
     ai,
     withTask(base, buildPlanPrompt(request, target, existing)),
-    chatOptions(request, {
+    chatOptions(ai, request, {
       maxTokens: 6_000,
       timeoutMs: 150_000,
       jsonMode: ai.provider !== 'anthropic',
@@ -1026,7 +1063,7 @@ function renderHeader(request: WriteDraftRequest, plan: DraftPlan): string {
 // Stap 2 — secties
 // ---------------------------------------------------------------------------
 
-type SectionStats = { words: number; lists: number; tables: number; figures: number }
+type SectionStats = { words: number; lists: number; tables: number; figures: number; tailFormatted: boolean }
 
 function sectionStats(html: string): SectionStats {
   return {
@@ -1035,18 +1072,43 @@ function sectionStats(html: string): SectionStats {
     // Gewone datatabellen; de tabellen binnen managementmodellen tellen als figuur.
     tables: (html.match(/<table\b(?![^>]*class="(?:process-flow|timeline|org-chart|org-reports|matrix-2x2|model-grid)")/gi) ?? []).length,
     figures: (html.match(/<figure\b/gi) ?? []).length,
+    tailFormatted: /<(ul|ol|table|figure)\b/i.test(secondHalf(html)),
   }
+}
+
+/**
+ * Tweede helft van een sectie, gemeten in zichtbare woorden (niet in tekens: de tags van een
+ * tabel zouden het midden anders naar voren trekken). Het blok dat over het midden valt, telt mee.
+ */
+function secondHalf(html: string): string {
+  const total = countVisibleWords(html)
+  let seen = 0
+  const parts = html.split(/(?=<(?:p|ul|ol|div|table|figure|h3|blockquote)\b)/i)
+  for (let index = 0; index < parts.length; index += 1) {
+    seen += countVisibleWords(parts[index])
+    if (seen > total / 2) return parts.slice(index).join('')
+  }
+  return ''
 }
 
 /** Verplichte opmaak per sectie, afhankelijk van de omvang; de controle achteraf toetst hetzelfde. */
 function formattingRequirement(words: number, model: ModelKind): string {
   if (words >= 250) {
+    const elements = requiredFormatElements(words)
+    const spread =
+      words >= TAIL_CHECK_WORDS
+        ? `; in totaal minimaal ${elements} opmaakelementen (opsommingen, tabellen, model), verspreid over de hele sectie — ook de tweede helft bevat er minimaal één`
+        : ''
     return `minimaal één opsomming (<ul>/<ol>) én minimaal één ${
       model === 'none' ? 'tabel (<div class="table-wrap"><table> met <caption>)' : 'tabel of het toegewezen managementmodel'
-    }; alinea's blijven de drager van de inhoud`
+    }${spread}; alinea's blijven de drager van de inhoud`
   }
   if (words >= 120) return 'minimaal één opsomming (<ul>/<ol>) of tabel'
   return 'compact: alinea\'s, eventueel één korte opsomming'
+}
+
+function requiredFormatElements(words: number): number {
+  return Math.max(2, Math.floor(words / WORDS_PER_FORMAT_ELEMENT))
 }
 
 function missingFormatting(stats: SectionStats): string[] {
@@ -1054,6 +1116,15 @@ function missingFormatting(stats: SectionStats): string[] {
   if (stats.words >= 250) {
     if (stats.lists < 1) missing.push('een opsomming (<ul>/<ol>)')
     if (stats.tables + stats.figures < 1) missing.push('een tabel (<div class="table-wrap"><table> met <caption>) of het toegewezen managementmodel')
+    const elements = stats.lists + stats.tables + stats.figures
+    const required = requiredFormatElements(stats.words)
+    if (stats.words >= TAIL_CHECK_WORDS && elements < required) {
+      missing.push(`in totaal minimaal ${required} opmaakelementen (nu ${elements}), verspreid over de sectie`)
+    }
+    // Het oude faalpatroon: opmaak bovenaan, daarna alleen nog alinea's.
+    if (stats.words >= TAIL_CHECK_WORDS && !stats.tailFormatted) {
+      missing.push('opmaak in de tweede helft van de sectie (een opsomming, tabel of model — niet alleen alinea\'s)')
+    }
   } else if (stats.words >= 120 && stats.lists + stats.tables + stats.figures < 1) {
     missing.push('een opsomming of tabel')
   }
@@ -1190,7 +1261,7 @@ async function streamSection(
   label: string,
   onChunk: (accumulated: string) => void,
 ): Promise<string> {
-  const options = chatOptions(request, { label })
+  const options = chatOptions(ai, request, { label })
   let accumulated = ''
   for await (const chunk of streamChat(ai, messages, options)) {
     accumulated += chunk
@@ -1363,14 +1434,26 @@ export async function writeDraftInParts(
       .filter((item) => item.missing.length)
     if (repairs.length) {
       send({ type: 'status', message: `Opmaak herstellen in ${repairs.length} sectie${repairs.length === 1 ? '' : 's'}…` })
-      await runPool(repairs, SECTION_CONCURRENCY, async ({ section, index, missing }) => {
-        const repaired = await reworkSection(ai, request, base, section, buildRepairPrompt(section, finals[index], missing), 'schrijfagent-opmaak')
-        if (repaired && missingFormatting(sectionStats(repaired)).length < missing.length) {
-          finals[index] = repaired
-          views[index] = repaired
-          pushView(true)
+      await runPool(repairs, SECTION_CONCURRENCY, async ({ section, index }) => {
+        // Tweede poging op wat de eerste liet liggen; blijft er daarna iets over, dan staat
+        // de beste versie er en wordt het gemeld in plaats van stilzwijgend geaccepteerd.
+        for (let attempt = 0; attempt < REPAIR_ATTEMPTS; attempt += 1) {
+          const missing = missingFormatting(sectionStats(finals[index]))
+          if (!missing.length) return
+          const repaired = await reworkSection(ai, request, base, section, buildRepairPrompt(section, finals[index], missing), 'schrijfagent-opmaak')
+          if (repaired && missingFormatting(sectionStats(repaired)).length < missing.length) {
+            finals[index] = repaired
+            views[index] = repaired
+            pushView(true)
+          }
         }
       })
+      const unrepaired = plan.sections.filter((_, index) => missingFormatting(sectionStats(finals[index])).length)
+      if (unrepaired.length) {
+        const numbers = unrepaired.map((section) => section.number).join(', ')
+        console.warn(`[schrijfagent] opmaak na herstel nog onvolledig in sectie ${numbers}`)
+        send({ type: 'status', message: `Opmaak in sectie ${numbers} kon niet volledig worden hersteld — controleer die sectie.` })
+      }
     }
 
     // Inkorten tot onder het leidraadmaximum. Eén ronde is niet genoeg: secties schieten
@@ -1449,7 +1532,7 @@ async function reworkSection(
   label: string,
 ): Promise<string | null> {
   try {
-    const content = await completeChat(ai, withTask(base, prompt), chatOptions(request, { label }))
+    const content = await completeChat(ai, withTask(base, prompt), chatOptions(ai, request, { label }))
     const html = extractSection(content)
     return html ? normalizeSection(html, section.number) : null
   } catch (error) {

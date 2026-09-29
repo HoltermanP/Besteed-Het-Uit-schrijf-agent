@@ -375,7 +375,7 @@ export default function AdminPage() {
                 id="writer-model"
                 value={config.writer.model}
                 onChange={(event) => updateSection('writer', { model: event.target.value })}
-                placeholder="claude-opus-4-8"
+                placeholder="claude-opus-5-5"
               />
             </div>
             <div className="space-y-2">
